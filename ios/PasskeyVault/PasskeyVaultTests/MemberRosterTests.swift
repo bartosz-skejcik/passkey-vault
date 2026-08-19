@@ -96,7 +96,11 @@ struct MemberRosterTests {
         let noKeyMember = Self.fixtureMember(publicKey: nil, fingerprint: nil, verifiedAt: nil)
         let unverifiedMember = Self.fixtureMember(
             publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            fingerprint: "deadbeef00112233445566778899aabbccddeeff00112233445566778899aa",
+            // WR-12: 64 hex chars (a genuine SHA-256 length) -- the
+            // original 62-char fixture was itself malformed and nothing
+            // in this suite noticed, which was corroborating evidence for
+            // CR-01's fail-open guard.
+            fingerprint: "deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb",
             verifiedAt: nil
         )
 
@@ -108,8 +112,31 @@ struct MemberRosterTests {
         #expect(noKeyState != unverifiedState, "the two states must never collapse into one")
     }
 
+    /// WR-12: the falsifying case the production code should reject rather
+    /// than render as if it were a genuine SHA-256 fingerprint. Guards
+    /// `MemberFingerprintDisplayState.resolve` (which only checks
+    /// non-nil/non-empty, not length) and `MemberListView
+    /// .displayFingerprint` (which now fails closed to the raw string
+    /// instead of a plausible six-word output) against a shortened,
+    /// padded, or otherwise malformed value from the server.
+    @Test func aMalformedFingerprintIsNeverRenderedAsAPlausibleSixWordOutput() {
+        let malformed = Self.fixtureMember(
+            publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            fingerprint: "deadbeef",
+            verifiedAt: nil
+        )
+        // The display state still resolves (the member DID publish a key --
+        // that part of the contract holds) ...
+        #expect(MemberFingerprintDisplayState.resolve(malformed) == .notYetVerified(fingerprint: "deadbeef"))
+        // ... but the RENDER path must never turn that malformed value into
+        // a confident-looking six-word comparison string.
+        #expect(MemberListView.displayFingerprint("deadbeef") == "deadbeef")
+        #expect(throws: IdentityFingerprintError.self) { try IdentityFingerprint.words("deadbeef") }
+    }
+
     @Test func verifiedIsDistinctFromNotYetVerifiedForTheSameFingerprint() {
-        let fingerprint = "cafebabe00112233445566778899aabbccddeeff00112233445566778899aa"
+        // WR-12: 64 hex chars, same fix as the fixture above.
+        let fingerprint = "cafebabe00112233445566778899aabbccddeeff00112233445566778899aabb"
         let publicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
         let unverified = Self.fixtureMember(publicKey: publicKey, fingerprint: fingerprint, verifiedAt: nil)
         let verified = Self.fixtureMember(publicKey: publicKey, fingerprint: fingerprint, verifiedAt: "2026-01-02")
