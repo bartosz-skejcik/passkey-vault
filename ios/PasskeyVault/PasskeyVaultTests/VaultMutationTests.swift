@@ -348,6 +348,57 @@ struct VaultMutationTests {
         }
         #expect(row.revision == 2)
     }
+
+    // MARK: - CR-01 (39-REVIEW.md, iteration 2): the snapshot branch must not
+    // claim a persist a failed disk write refused.
+
+    /// A `CiphertextCacheStore` whose `write` always throws -- the fake
+    /// `containerUnavailable`/`writeFailed` shape `VaultStore.writeSnapshot`'s
+    /// own doc comment names as the trigger for this defect. `read`/`purge`
+    /// are inert; this fake exists only to force the write path to fail.
+    private final class ThrowingCiphertextCacheStore: CiphertextCacheStore {
+        func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? { nil }
+        func write(_ snapshot: CachedSnapshot) throws { throw CiphertextCacheStoreError.containerUnavailable }
+        func purge() {}
+    }
+
+    /// Before this fix, `persistSnapshotToCache` assigned
+    /// `currentSnapshot = snapshot` BEFORE attempting `cacheStore.write`, and
+    /// only logged on failure -- so `SyncStatusView` (rendering from the
+    /// in-memory mirror) kept claiming "Last synced n seconds ago" after a
+    /// disk write the App Group container had actually refused, and the
+    /// failure was invisible (`lastError` was never set on this branch).
+    /// This test drives `refresh()` all the way through the REAL snapshot
+    /// decode path (`VaultMutationStubURLProtocol` answers `GET /api/sync`
+    /// with a snapshot body carrying one item) against a cache store whose
+    /// `write` always throws, and asserts the memory mirror never advances
+    /// past the failed write and the failure is recorded, not merely logged.
+    @MainActor
+    @Test func aSnapshotBranchRefreshDoesNotAdvanceTheMemoryMirrorWhenTheDiskWriteFails() async throws {
+        let userKey = try FfiUserKey.generate()
+        let accountId = "cr01-snapshot-write-failure@example.invalid"
+        VaultMutationStubURLProtocol.handler = { request in
+            guard request.httpMethod == "GET", request.url?.path == "/api/sync" else { return nil }
+            let body = """
+            {"revision":1,"items":[{"id":"item-1","enc_key":"ek","enc_data":"ed","revision":1,\
+            "updated_at":"2026-08-19T00:00:00Z","last_used_at":null,"is_shared":false,\
+            "collection_id":null,"last_editor_email":null}],"folders":[]}
+            """
+            return (200, Data(body.utf8))
+        }
+        let api = VaultAPI(baseURL: Self.fakeBaseURL, tokenProvider: { "tok" }, session: Self.stubSession())
+        let cacheStore = ThrowingCiphertextCacheStore()
+        let store = VaultStore(userKey: userKey, api: api, accountId: accountId, cacheStore: cacheStore)
+
+        try await store.refresh()
+
+        #expect(
+            store.currentSnapshot == nil,
+            "the in-memory mirror must not claim a persist the disk write refused -- this would have been non-nil before CR-01's fix"
+        )
+        #expect(store.lastError != nil, "a failed cache write must be recorded on lastError, not merely logged")
+        #expect(store.items.count == 1, "the decoded items still populate the in-memory list -- only the CACHE PERSISTENCE claim is what this test pins")
+    }
 }
 
 // MARK: - HTTPBodyStream helper

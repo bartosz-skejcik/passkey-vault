@@ -609,6 +609,17 @@ final class VaultStore {
     /// the in-memory `items` array are already correct at this point in
     /// `refresh()`; a cache-persistence failure must not be reported to the
     /// caller as a failed sync.
+    ///
+    /// CR-01 (39-REVIEW.md, iteration 2): routed through the shared
+    /// `writeSnapshot(_:context:)` helper -- this branch used to assign
+    /// `currentSnapshot = snapshot` BEFORE attempting the write and only log
+    /// on failure, so `SyncStatusView` (which renders from the in-memory
+    /// mirror) kept claiming "Last synced n seconds ago" after a
+    /// `containerUnavailable`/`writeFailed` error even though nothing
+    /// reached the App Group container. `writeSnapshot` only advances
+    /// `currentSnapshot` after a successful write and records `lastError`
+    /// on failure, matching the up-to-date branch's already-correct
+    /// behaviour (WR-03, iteration 1).
     private func persistSnapshotToCache(revision: Int, items rows: [VaultItemRow], folders folderRows: [FolderRow]) {
         let snapshot = CachedSnapshot(
             revision: revision,
@@ -618,14 +629,7 @@ final class VaultStore {
             items: rows.map(CachedSnapshot.Item.init(row:)),
             folders: folderRows.map(CachedSnapshot.Folder.init(row:))
         )
-        currentSnapshot = snapshot
-        do {
-            try cacheStore.write(snapshot)
-        } catch {
-            Self.log.error(
-                "failed to persist sync cache: \(String(describing: error), privacy: .public)"
-            )
-        }
+        writeSnapshot(snapshot, context: "snapshot")
     }
 
     /// Plan 39-06 (SYNC-04, T-39-23). The up-to-date branch structurally

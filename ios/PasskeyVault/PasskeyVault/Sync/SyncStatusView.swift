@@ -27,6 +27,13 @@ struct SyncStatusView: View {
     /// `nil` before any successful pull has ever completed for this
     /// account -- `SyncFreshness.describe`'s own `nil` contract.
     let snapshot: CachedSnapshot?
+    /// CR-01 (39-REVIEW.md, iteration 2): `VaultStore.lastError` had no
+    /// reader anywhere in the app -- a failed cache write (the memory
+    /// mirror advancing, disk refusing) was silently swallowed, so this is
+    /// the one place SYNC-04's "the timestamp must be honest" requirement
+    /// is actually enforced end to end. `nil` renders nothing; this view
+    /// never invents a message of its own.
+    let lastError: String?
     /// Injected so this view's render is a pure function of its two
     /// arguments, mirroring `SyncFreshness.describe`'s own no-global-clock
     /// discipline up to this call site. Defaults to "now" for production
@@ -34,9 +41,17 @@ struct SyncStatusView: View {
     var reference: Date = Date()
 
     var body: some View {
-        Text(verbatim: SyncFreshness.describe(syncedAtMs: snapshot?.syncedAtMs, reference: reference))
-            .font(.caption)
-            .foregroundStyle(Color("PVTextMuted"))
-            .accessibilityIdentifier("vault.sync.lastSynced")
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: SyncFreshness.describe(syncedAtMs: snapshot?.syncedAtMs, reference: reference))
+                .font(.caption)
+                .foregroundStyle(Color("PVTextMuted"))
+                .accessibilityIdentifier("vault.sync.lastSynced")
+            if let lastError {
+                Text(verbatim: lastError)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("vault.sync.lastError")
+            }
+        }
     }
 }

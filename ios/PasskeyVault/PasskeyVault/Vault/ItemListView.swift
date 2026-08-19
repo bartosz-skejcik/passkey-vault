@@ -410,7 +410,7 @@ struct ItemListView: View {
                             // single-source gate, which enumerates this
                             // file's deliberate absence from its allowlist.
                             .safeAreaInset(edge: .top) {
-                                SyncStatusView(snapshot: store.currentSnapshot)
+                                SyncStatusView(snapshot: store.currentSnapshot, lastError: store.lastError)
                                     .padding(.horizontal)
                                     .padding(.top, 4)
                             }
