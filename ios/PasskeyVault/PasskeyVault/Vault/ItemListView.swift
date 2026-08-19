@@ -1642,6 +1642,11 @@ struct ItemListView: View {
             }
             .padding(10)
             .background(Color("PVSurfaceAlt"), in: RoundedRectangle(cornerRadius: 10))
+            // `.contain` keeps this container a real accessibility element so
+            // the identifier below survives -- without it SwiftUI can flatten
+            // the HStack away and the id never appears in the XCUITest tree
+            // (the same trap the +-panel hit; its fix was this exact modifier).
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("vault.list.copyConfirmation")
         }
     }
