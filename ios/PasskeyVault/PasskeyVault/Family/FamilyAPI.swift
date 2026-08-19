@@ -150,6 +150,44 @@ struct FamilyAPI {
         return CreateInvitationResult(id: decoded.id, expiresAt: decoded.expires_at)
     }
 
+    /// Mirrors `families.rs`'s `FamilyResponse` field-for-field.
+    struct FamilyRecord: Decodable, Equatable {
+        let id: String
+        let name: String
+        let ownerUserId: String
+        let createdAt: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case ownerUserId = "owner_user_id"
+            case createdAt = "created_at"
+        }
+    }
+
+    private struct CreateFamilyRequestBody: Encodable {
+        let name: String
+    }
+
+    /// `POST /api/families` -- `crates/pv-server/src/routes/
+    /// families.rs::create`. CR-04(b) (40-REVIEW.md, iteration 2): the ONLY
+    /// route with no membership check at all (creating the family IS what
+    /// establishes the caller's own membership) -- the missing client call
+    /// this fix adds. A second call (the singleton family already exists)
+    /// 409s, never a silent duplicate; that server behaviour is preserved
+    /// here as a thrown `PvApiError.httpError(status: 409, _)`, never
+    /// papered over as success. Expects **201**.
+    @discardableResult
+    func createFamily(name: String) async throws -> FamilyRecord {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/families")
+        }
+        let body = try JSONEncoder().encode(CreateFamilyRequestBody(name: name))
+        let (data, response) = try await send(path: "/api/families", method: "POST", body: body, token: token)
+        try Self.requireStatus(201, response: response, data: data)
+        return try Self.decode(FamilyRecord.self, from: data)
+    }
+
     /// `GET /api/families/members` -- any family member may list the roster.
     func fetchMembers() async throws -> [FamilyMemberRecord] {
         guard let token = tokenProvider() else {

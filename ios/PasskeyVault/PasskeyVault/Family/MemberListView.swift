@@ -78,6 +78,14 @@ struct MemberListView: View {
     /// recorded as deliberately out of Task 1's scope.
     let removeMemberService: RemoveMemberService
     let userKey: FfiUserKey
+    /// CR-04(b) (40-REVIEW.md, iteration 2): called instead of setting
+    /// `loadError` when `fetchMembers()` 404s -- `families.rs::members`'s
+    /// own doc comment: "a non-member gets 404 (existence never leaks)".
+    /// That is NOT a load failure -- it is the primary, expected state for
+    /// the solo self-hoster persona this fix's own note names, and the
+    /// caller (`FamilyRootView`) renders a real "no family yet" screen
+    /// (create/redeem) instead of this view's generic error+retry state.
+    let onNoFamilyDetected: () -> Void
 
     @State private var members: [FamilyAPI.FamilyMemberRecord] = []
     @State private var isLoading = true
@@ -280,6 +288,16 @@ struct MemberListView: View {
     /// directly unit-testable predicate/formatter pair
     /// (`MemberListRemovalCopyTests.swift`) -- see `performRemoval`'s own
     /// note for what this replaces.
+    /// CR-04(b) (40-REVIEW.md, iteration 2): pulled out as a `static`, pure,
+    /// directly unit-testable predicate (`MemberListNoFamilyTests.swift`)
+    /// -- `families.rs::members`'s own doc comment: a non-member 404s
+    /// (existence never leaks). That is the PRIMARY, expected state for a
+    /// solo self-hoster, never a load failure.
+    static func isNoFamilyError(_ error: Error) -> Bool {
+        if case let PvApiError.httpError(status, _) = error, status == 404 { return true }
+        return false
+    }
+
     static func isRekeySetMismatch(_ error: Error) -> Bool {
         if case RemoveMemberError.rekeySetMismatch = error { return true }
         return false
@@ -406,8 +424,16 @@ struct MemberListView: View {
         do {
             members = try await familyAPI.fetchMembers()
         } catch {
-            // family.membersLoadFailed, ported verbatim.
-            loadError = "Nie udało się wczytać listy członków."
+            // CR-04(b): a 404 here means "not a member of any family" --
+            // `families.rs::members`'s own doc comment -- never a load
+            // failure. Routed to the caller's dedicated empty state
+            // instead of this view's generic error+retry copy.
+            if Self.isNoFamilyError(error) {
+                onNoFamilyDetected()
+            } else {
+                // family.membersLoadFailed, ported verbatim.
+                loadError = "Nie udało się wczytać listy członków."
+            }
         }
         isLoading = false
     }
