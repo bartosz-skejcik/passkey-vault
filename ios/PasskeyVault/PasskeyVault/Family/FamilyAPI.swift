@@ -34,6 +34,25 @@
 //  needs (`crates/pv-server/src/routes/vault.rs::create_share`,
 //  `crates/pv-server/src/routes/collections.rs::add_member`).
 //
+//  EXTENDED by plan 40-07, Tasks 1/2 -- the roster's fingerprint-verify
+//  action (`POST /api/identity/verify/{user_id}`) and the member-removal
+//  surface: `verifyFingerprint`, `fetchMemberAccess` (the OWNER-ONLY
+//  per-member breakdown, `GET /api/families/members/{user_id}/access`), and
+//  `removeMember` (`DELETE /api/families/members/{user_id}`, body carries
+//  `RemoveMemberService`'s entire client-computed re-key batch). The three
+//  batch element types (`NewSealedKeyEntry`, `ItemRewrapEntry`,
+//  `CollectionRekeyBatch`) mirror `crates/pv-server/src/routes/
+//  families.rs`'s identically-named structs field-for-field -- the SAME
+//  shape `DELETE /api/auth/account`'s plain-member branch accepts too
+//  (`routes/account.rs`'s `DeleteAccountRequest.collections` reuses the
+//  server-side element type), so `RemoveMemberService` builds one batch
+//  shape for both submit call sites, never two. `fetchMemberAccess` is
+//  scoped to "someone else" removals ONLY -- `family.rs::
+//  owner_sees_per_member_access_breakdown` asserts a member querying THEIR
+//  OWN id via this route gets 403 unconditionally (40-RESEARCH.md Pitfall
+//  7); `RemoveMemberService.leaveFamily`'s self path never calls this
+//  method.
+//
 
 import Foundation
 
@@ -139,6 +158,141 @@ struct FamilyAPI {
         let (data, response) = try await send(path: "/api/families/members", method: "GET", body: nil, token: token)
         try Self.requireStatus(200, response: response, data: data)
         return try Self.decode([FamilyMemberRecord].self, from: data)
+    }
+
+    /// `POST /api/identity/verify/{user_id}` -- the CALLER (viewer) marks
+    /// `user_id` as fingerprint-verified, out of band (this method sends no
+    /// body -- the server's own `verify` handler reads nothing but the path
+    /// segment and the session). Idempotent; a repeat call refreshes
+    /// `verified_at` rather than erroring. Expects **204**.
+    func verifyFingerprint(userId: String) async throws {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/identity/verify/\(userId)")
+        }
+        let (data, response) = try await send(
+            path: "/api/identity/verify/\(userId)", method: "POST", body: nil, token: token
+        )
+        try Self.requireStatus(204, response: response, data: data)
+    }
+
+    // MARK: - Public API (Phase 40, plan 40-07, Task 2 -- member removal)
+
+    /// One remaining recipient's freshly-`seal()`ed Collection Key, client
+    /// side -- mirrors `families.rs`'s `NewSealedKeyEntry` field-for-field.
+    /// Opaque `sealedKey`, never re-encoded by this file (DR-40-A).
+    struct NewSealedKeyEntry: Encodable, Equatable {
+        let recipientUserId: String
+        let sealedKey: String
+
+        enum CodingKeys: String, CodingKey {
+            case recipientUserId = "recipient_user_id"
+            case sealedKey = "sealed_key"
+        }
+    }
+
+    /// One item's freshly-rewrapped `enc_key` -- mirrors `families.rs`'s
+    /// `ItemRewrapEntry`. Deliberately no `enc_data` field on this type: the
+    /// server-side counterpart carries none either, which is SC 6/KEY-02's
+    /// rewrap-only guarantee made structural, not just disciplinary.
+    struct ItemRewrapEntry: Encodable, Equatable {
+        let itemId: String
+        let encKey: String
+
+        enum CodingKeys: String, CodingKey {
+            case itemId = "item_id"
+            case encKey = "enc_key"
+        }
+    }
+
+    /// One collection's full re-key batch -- mirrors `families.rs`'s
+    /// `CollectionRekeyBatch`. The SAME shape `DELETE
+    /// /api/families/members/{user_id}` (below) and `DELETE /api/auth/account`'s
+    /// plain-member branch both accept -- `RemoveMemberService` is the ONE
+    /// place that builds this shape, for both submit call sites.
+    struct CollectionRekeyBatch: Encodable, Equatable {
+        let collectionId: String
+        let newSealedKeys: [NewSealedKeyEntry]
+        let itemRewraps: [ItemRewrapEntry]
+
+        enum CodingKeys: String, CodingKey {
+            case collectionId = "collection_id"
+            case newSealedKeys = "new_sealed_keys"
+            case itemRewraps = "item_rewraps"
+        }
+    }
+
+    private struct RemoveMemberRequestBody: Encodable {
+        let collections: [CollectionRekeyBatch]
+    }
+
+    /// `DELETE /api/families/members/{user_id}` -- owner-only
+    /// (`FamilyMembership<RequireEdit>`). The body carries the ENTIRE
+    /// client-precomputed re-key batch (`RemoveMemberService`'s job to
+    /// build -- this method never computes any part of it). Expects **204**;
+    /// the server applies the batch inside a transaction and rolls the whole
+    /// thing back on any failure -- this method reports that failure via the
+    /// thrown `PvApiError`, and never mutates local state to claim success on
+    /// a non-204 response (T-40-32).
+    func removeMember(userId: String, collections: [CollectionRekeyBatch]) async throws {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/families/members/\(userId)")
+        }
+        let body = try JSONEncoder().encode(RemoveMemberRequestBody(collections: collections))
+        let (data, response) = try await send(
+            path: "/api/families/members/\(userId)", method: "DELETE", body: body, token: token
+        )
+        try Self.requireStatus(204, response: response, data: data)
+    }
+
+    struct MemberAccessCollectionEntry: Decodable, Equatable {
+        let id: String
+        let accessLevel: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case accessLevel = "access_level"
+        }
+    }
+
+    struct MemberAccessItemShareEntry: Decodable, Equatable {
+        let itemId: String
+        let accessLevel: String
+
+        enum CodingKeys: String, CodingKey {
+            case itemId = "item_id"
+            case accessLevel = "access_level"
+        }
+    }
+
+    /// Decoded `GET /api/families/members/{user_id}/access` response --
+    /// `item_shares` is decoded for completeness (the wire carries it) but
+    /// `RemoveMemberService` reads only `collections`: `apply_member_removal_
+    /// rekey`'s own step 4 severs every `item_shares` row the target held
+    /// unconditionally, server-side, never something the client batch
+    /// carries (40-RESEARCH.md's own note on this route).
+    struct MemberAccessResult: Decodable, Equatable {
+        let collections: [MemberAccessCollectionEntry]
+        let itemShares: [MemberAccessItemShareEntry]
+
+        enum CodingKeys: String, CodingKey {
+            case collections
+            case itemShares = "item_shares"
+        }
+    }
+
+    /// `GET /api/families/members/{user_id}/access` -- OWNER-ONLY. See this
+    /// file's own header and `RemoveMemberService.swift`'s header for why a
+    /// self-removal must never call this (403, unconditionally, even for the
+    /// caller's own id -- 40-RESEARCH.md Pitfall 7).
+    func fetchMemberAccess(userId: String) async throws -> MemberAccessResult {
+        guard let token = tokenProvider() else {
+            throw PvApiError.unexpectedResponse("no session token available for /api/families/members/\(userId)/access")
+        }
+        let (data, response) = try await send(
+            path: "/api/families/members/\(userId)/access", method: "GET", body: nil, token: token
+        )
+        try Self.requireStatus(200, response: response, data: data)
+        return try Self.decode(MemberAccessResult.self, from: data)
     }
 
     // MARK: - Public API (Phase 40, plan 40-08 -- Share-an-item sheet)
