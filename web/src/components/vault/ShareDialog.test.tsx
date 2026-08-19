@@ -1708,6 +1708,97 @@ describe("ShareDialog", () => {
         expect(mockRevokeCollectionAccess).not.toHaveBeenCalled();
       });
     });
+
+    // F-4 fix (31-VERIFICATION.md gap closure): the collection-scoped
+    // sibling of "Face-2 defense" above, for `submitRowsForExistingDestination`
+    // specifically -- no test anywhere exercised its own 409 wrapper before
+    // this. `recipientAlreadyHoldsIntendedLevel`'s contributor ceiling (edit
+    // satisfies any non-hidden_password intent) was ORIGINALLY justified only
+    // by family-wide item_bucket contributor self-escalation -- a state that
+    // cannot occur on THIS path, since `editableExistingFolders` (the
+    // destination selector's own source list) is filtered to
+    // `familyWideKind === null` by CR-02's fix. The two tests below drive the
+    // wrapper's `strict = true` call directly through the real component.
+    describe("F-4: the existing-destination GRANT path requires an EXACT level match on 409, never the contributor ceiling", () => {
+      it("intent 'read', 409 from reshareCollectionToNewMember, recipient ACTUALLY holds 'edit' -- IS reported as failed, never unqualified success", async () => {
+        // Two rows -- A fails (edit != read), B succeeds -- so this is a
+        // genuinely PARTIAL outcome (`committedAnything: true`), mirroring
+        // HI-02/CR-04's own established A-fails/B-succeeds shape, rather
+        // than a single-row TOTAL failure that would render `share-error`
+        // instead of `share-partial-error`.
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A, MEMBER_B]);
+        mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+        await refreshCollectionsNow();
+        // First call (destination-select row seeding): the dialog believes
+        // NEITHER member holds any access yet, so both rows reconcile to a
+        // GRANT. Every later call is the wrapper's own post-409
+        // verification for whichever recipient just conflicted -- MEMBER_A's
+        // REAL persisted level is 'edit' (a stale/second-admin race, not
+        // what the owner intended); MEMBER_B never conflicts at all.
+        mockGetCollectionAccessList
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "edit", created_at: "", suspended: false },
+          ]);
+        mockReshareCollectionToNewMember.mockImplementation(async (_id: string, userId: string) => {
+          if (userId === MEMBER_A.user_id) {
+            return Promise.reject({ status: 409, message: "conflict" });
+          }
+          return undefined;
+        });
+
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={vi.fn()} />);
+        await waitForPopulated();
+
+        fireEvent.change(screen.getByTestId("share-destination-select"), {
+          target: { value: EDIT_HELD_FOLDER.id },
+        });
+        // No "currently" label to wait for -- the seeded access list is
+        // empty (mirrors the sibling "granting a NEW recipient" test's own
+        // wait condition just above).
+        await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+        setRowLevel(MEMBER_A.user_id, "read");
+        setRowLevel(MEMBER_B.user_id, "read");
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(screen.getByTestId("share-partial-error")).toBeInTheDocument());
+        expect(screen.getByTestId("share-partial-error")).toHaveTextContent(MEMBER_A.email);
+        expect(screen.getByTestId("share-partial-error")).not.toHaveTextContent(MEMBER_B.email);
+        // Falsification note (recorded in 31-VERIFICATION.md's Gap Closure
+        // section): reverting the wrapper's `strict = true` argument back to
+        // the lenient default makes this assertion fail -- the contributor
+        // ceiling accepts 'edit' as satisfying an intended 'read', and
+        // `share-partial-error` never renders.
+      });
+
+      it("intent 'read', 409, recipient's ACTUAL level is 'read' (an exact match) -- NOT reported as failed", async () => {
+        mockGetFamilyMembers.mockResolvedValue([MEMBER_A]);
+        mockListCollections.mockResolvedValue([EDIT_HELD_FOLDER]);
+        await refreshCollectionsNow();
+        mockGetCollectionAccessList
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([
+            { user_id: MEMBER_A.user_id, email: MEMBER_A.email, access_level: "read", created_at: "", suspended: false },
+          ]);
+        mockReshareCollectionToNewMember.mockRejectedValue({ status: 409, message: "conflict" });
+
+        const onShared = vi.fn();
+        render(<ShareDialog scope={SCOPE} onClose={vi.fn()} onShared={onShared} />);
+        await waitForPopulated();
+
+        fireEvent.change(screen.getByTestId("share-destination-select"), {
+          target: { value: EDIT_HELD_FOLDER.id },
+        });
+        await waitFor(() => expect(screen.queryByTestId("share-rows-loading")).not.toBeInTheDocument());
+
+        setRowLevel(MEMBER_A.user_id, "read");
+        fireEvent.click(screen.getByTestId("share-submit"));
+
+        await waitFor(() => expect(onShared).toHaveBeenCalled());
+        expect(screen.queryByTestId("share-partial-error")).not.toBeInTheDocument();
+      });
+    });
   });
 
   // 31-05-PLAN.md (MOD-01): the submit CTA distinguishes editing an

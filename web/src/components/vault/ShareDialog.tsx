@@ -371,16 +371,30 @@ function withPublishedPublicKey<T extends { public_key: string | null }>(recipie
  * (and load-bearing) for `read`: a past contributor legitimately holding
  * `edit` there is not a problem this check exists to catch. A failure from
  * THIS check itself (network, parse) fails CLOSED — never silently trusts
- * the original 409 when this verification cannot complete. */
+ * the original 409 when this verification cannot complete.
+ *
+ * F-4 fix (31-VERIFICATION.md gap closure): `strict` (default `false`, so
+ * every EXISTING call site's behavior is byte-for-byte unchanged) drops the
+ * `edit`-ceiling entirely, requiring an EXACT match. The ceiling's whole
+ * justification is family-wide `item_bucket` contributor self-escalation —
+ * a legitimate, EXPECTED state on that surface, never a problem to flag.
+ * `submitRowsForExistingDestination` below is a destination CR-02's own
+ * client-side filter (`familyWideKind === null`) guarantees is never
+ * family-wide, so that justification cannot apply there — an intended
+ * `read` that lands a persisted `edit` on an ordinary shared folder is
+ * exactly CR-03's own step 5 ("Ania still holds edit. She can reveal
+ * passwords the owner believes she was just restricted from."), not a
+ * contributor-escalation false positive. Passes `strict = true`. */
 async function recipientAlreadyHoldsIntendedLevel(
   collectionId: string,
   recipientUserId: string,
   intendedLevel: string,
+  strict: boolean = false,
 ): Promise<boolean> {
   try {
     const accessList = await getCollectionAccessList(collectionId);
     const entry = accessList.find((a) => a.user_id === recipientUserId);
-    const contributorCeilingApplies = intendedLevel !== "hidden_password";
+    const contributorCeilingApplies = !strict && intendedLevel !== "hidden_password";
     return (
       entry !== undefined &&
       (entry.access_level === intendedLevel || (contributorCeilingApplies && entry.access_level === "edit"))
@@ -687,6 +701,16 @@ export async function submitRowsForExistingDestination(
         // `recipientAlreadyHoldsIntendedLevel` verification
         // `grantCollectionToRecipients`/`grantCollectionToRows` already
         // apply, rather than writing a third variant of this check.
+        //
+        // F-4 fix (31-VERIFICATION.md gap closure): passes `strict = true`
+        // -- see `recipientAlreadyHoldsIntendedLevel`'s own doc comment.
+        // `destinationId` here is always a member of `editableExistingFolders`
+        // (`ShareDialog.tsx`'s destination selector), which CR-02's own fix
+        // filters to `familyWideKind === null` -- the contributor-ceiling's
+        // sole justification (family-wide item_bucket self-escalation) is
+        // therefore structurally unreachable on this path, and accepting a
+        // persisted `edit` as satisfying an intended `read` here would be
+        // exactly CR-03's own step 5 regression.
         grant: async (level) => {
           try {
             await reshareCollectionToNewMember(destinationId, row.userId, level, uk);
@@ -696,6 +720,7 @@ export async function submitRowsForExistingDestination(
               destinationId,
               row.userId,
               level,
+              true,
             );
             if (!holdsIntendedLevel) throw err;
           }
