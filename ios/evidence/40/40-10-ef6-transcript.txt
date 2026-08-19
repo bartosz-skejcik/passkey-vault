@@ -1,0 +1,37 @@
+E-F6 live iOS-as-propagator run -- Phase 40, plan 40-10, Task 3
+Recorded: 2026-08-19 5:03:33 PM +0000
+Server origin: http://127.0.0.1:8621
+
+Account iOS (owner, holds the ONLY key, runs the production ResealTrigger): pv-ef6-ios-1787159013-ac379541@example.invalid (user_id f31ffcb5-e488-4e36-98ad-d6be2efa5667)
+Account web (joins the family FIRST, before any family-wide collection exists): pv-ef6-web-1787159013-ac379541@example.invalid (user_id 11a5ca6c-a60f-4013-8cbe-83b45f73b5e4)
+
+Order (what makes this E-F6, mirror of E-F4b with roles swapped): the web member joined the
+family BEFORE the family-wide collection 06615f82-4be6-4efe-8736-b5c809c9573d ("EF6 collection 1787159013-ac379541") existed. iOS
+THEN created it at family_wide_access_level="read", with 1 item -- iOS's own creator row is
+server-hard-coded "edit" (collections::create), confirmed: edit.
+
+Precondition (this run's own falsifiable assertion), BEFORE the iOS unlock:
+  GET /api/families/family-wide-pending as web: missing contains 06615f82-4be6-4efe-8736-b5c809c9573d = true
+  GET /api/vault/collections/06615f82-4be6-4efe-8736-b5c809c9573d as web: status = 404 (expected 404 -- no collection_keys row)
+
+THE iOS UNLOCK (nothing else happened between this line and the receiver-side assertions --
+no other client was opened). This invoked the PRODUCTION ResealTrigger.run(resealable:userKey:)
+/ ResealService.reshareCollection(...) types this plan built directly -- the EXACT call
+SyncCoordinator.pull()'s fireResealTriggerIfPossible() makes on every unlock/sync transition,
+not a reimplementation (unlike every prior Phase 40 live run, which had no production caller
+yet to invoke -- 40-09-SUMMARY.md's own "Next Phase Readiness" note):
+  iOS's own family-wide-pending resealable array named (06615f82-4be6-4efe-8736-b5c809c9573d, 11a5ca6c-a60f-4013-8cbe-83b45f73b5e4) before the run.
+  web member's published public key (GET /api/families/members): present.
+  ResealTrigger.run outcome: attempted=1 succeeded=1 failed=0
+
+Receiver-side proof on the web member, AFTER the iOS unlock:
+  Collection name decrypted: "EF6 collection 1787159013-ac379541" (expected "EF6 collection 1787159013-ac379541")
+  Item decrypted: "{"type":"note","name":"EF6 item","folderId":null,"tags":[],"body":"ef6-1787159013-ac379541"}" (expected "{"type":"note","name":"EF6 item","folderId":null,"tags":[],"body":"ef6-1787159013-ac379541"}")
+  GET /api/families/family-wide-pending as web, AFTER: missing contains 06615f82-4be6-4efe-8736-b5c809c9573d = false (expected false)
+  GET /api/vault/collections/06615f82-4be6-4efe-8736-b5c809c9573d as web, AFTER: status = 200 (expected 200)
+
+Same-key proof: a probe ciphertext sealed under iOS's ORIGINAL Collection Key (captured
+before the reseal) opens under the web member's newly-recovered key: true
+
+Level proof: delivered access_level = read (expected "read", the SHARE's own
+level -- NOT iOS's own "edit" creator row).

@@ -3780,3 +3780,33 @@ this residue is recorded rather than blocking:
 - **`AutoLockPolicy` ROUTED TO PHASE 41 (ACC-06/07).** Still zero production consumers after 39
   (only its own tests reference it). Phase 41's lazy-lock/idle work is its real home — the 41
   executor MUST wire it or explicitly record why not. Do not let a tested-but-unenforced policy ship.
+
+## 9. Plan 40-10 closing note — DR-40-B is now IMPLEMENTED, not merely decided (2026-08-19)
+
+`ResealService.swift`/`ResealTrigger.swift` (`Sharing/`) port `web/src/lib/families/reseal.ts`/
+`resealTrigger.ts` in full — DR-40-B's own invariant list (§1h above) is now backed by production
+code, not a plan-set forward reference. `ResealTrigger` is a Swift `actor`: the reference's own
+"claim every fresh pair SYNCHRONOUSLY, before the first `await`" property is not a discipline this
+port could get wrong — it is Swift's actor reentrancy model, structurally. Verified by falsifying
+it: moving the claim to after an inserted `await` turned the concurrency test RED (two attempts,
+two grant requests, instead of one); reverted.
+
+**Production wiring, so a future reader does not have to hunt for it:** `SyncCoordinator.pull()`'s
+`fireResealTriggerIfPossible()` is the ONE call site — fire-and-forget (`Task { ... }`, never
+awaited by `pull()`'s own return), fetching `family_wide_pending` itself via the existing
+`SharedItemsStore.fetchFamilyWidePending` (one query, two consumers — `PendingKeyState`'s `missing`
+axis is the other, STILL not wired into any view as of this plan, same "built, not yet surfaced"
+precedent 40-05/40-09 already left). `resetAttempts()` is called from both `SyncCoordinator
+.start(...)` (unlock) and `.stop()` (lock).
+
+**E-F6, live, roles swapped from E-F4b (40-09):** a web account joined the family before iOS
+created a family-wide collection at `family_wide_access_level="read"` while iOS's own creator row
+was the server's hard-coded `"edit"` — the exact level-mismatch fixture T-40-43 targets. Unlocking
+was represented by invoking the PRODUCTION `ResealTrigger.run`/`ResealService.reshareCollection`
+directly (the exact call `fireResealTriggerIfPossible()` makes) — a stronger substitution than
+every prior Phase 40 live run, each of which reimplemented the reseal composition as test-only code
+because no production caller existed yet. Result: `collection_keys` row created where none existed,
+`missing` went non-empty→empty, the web member decrypted the real collection name and item,
+delivered level was `"read"` (never iOS's own `"edit"`), and the same probe ciphertext opened under
+both iOS's original key and the web member's newly-recovered one. Evidence:
+`ios/evidence/40/40-10-ef6-transcript.txt`, `40-10-ef6-web-before.png`, `40-10-ef6-web-after.png`.
