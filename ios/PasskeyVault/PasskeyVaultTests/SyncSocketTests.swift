@@ -484,6 +484,7 @@ struct SyncSocketTests {
     // `percentEncodedQueryItems`, exactly the kind of thing a later
     // "simplification" back to `.queryItems` would silently undo with no
     // test to catch it.
+    @MainActor
     @Test func aTokenContainingPlusIsPercentEncodedForFormUrlencodedDecoding() throws {
         let url = try #require(SyncSocket.wsURL(base: URL(string: "https://h")!, token: "a+b/c=d&e"))
         #expect(url.absoluteString == "wss://h/api/sync/ws?token=a%2Bb/c%3Dd%26e")
@@ -498,6 +499,7 @@ struct SyncSocketTests {
     // relativeTo:)`) -- before this fix, `wsURL` and `VaultAPI.send`
     // disagreed for a base URL carrying a path component (a reverse-proxy
     // subpath, a normal self-hoster layout for this product).
+    @MainActor
     @Test func wsURLResolvesUnderABaseURLsOwnSubpathTheSameWayRESTDoes() throws {
         let base = URL(string: "https://h/pv")!
         let wsURL = try #require(SyncSocket.wsURL(base: base, token: "t"))
