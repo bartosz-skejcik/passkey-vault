@@ -328,7 +328,14 @@ struct ItemDetailView: View {
                 }
             }
             if passwordFieldHidden(key: key) {
-                Text(verbatim: "You can use this password, but it's masked on this account.")
+                // `share.hiddenPasswordRecipientNote`, byte-identical
+                // (Phase 40, plan 40-08, Task 2, `40-UI-SPEC.md` §5.10) --
+                // replaces the Phase 38 placeholder ("You can use this
+                // password, but it's masked on this account."). English:
+                // this screen's own established language (unlike
+                // `InviteCreateView.swift`'s Polish) -- see
+                // `HiddenPasswordDisclosure.swift`'s own header.
+                Text(verbatim: HiddenPasswordDisclosure.recipientNoteEn)
                     .font(.caption2)
                     .foregroundStyle(Color("PVTextMuted"))
                     .accessibilityIdentifier("vault.detail.hiddenPasswordNote")
