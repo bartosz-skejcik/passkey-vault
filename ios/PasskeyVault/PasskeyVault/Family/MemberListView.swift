@@ -197,7 +197,12 @@ struct MemberListView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Text(verbatim: "Odcisk tożsamości: \(Self.shortFingerprint(fingerprint))") // invite.fingerprintLabel, composed
+                // invite.fingerprintLabel, composed -- full six-word form
+                // (CR-01), never the 8-hex-char truncation: a short form
+                // gives an attacker ~2^32 keygen+hash trials to forge a
+                // colliding-looking key, which defeats the ONLY mitigation
+                // this screen has for a substituted identity key.
+                Text(verbatim: "Odcisk tożsamości: \(Self.displayFingerprint(fingerprint))")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Color("PVTextMuted"))
                     .accessibilityIdentifier("vault.family.fingerprint.\(member.userId)")
@@ -304,17 +309,18 @@ struct MemberListView: View {
 
     // MARK: - Fingerprint display
 
-    /// The first 8 hex chars of the full SHA-256 `fingerprint`, uppercased,
-    /// grouped 4+4 with a middle dot -- `40-UI-SPEC.md` §5.5's drawn shape
-    /// ("Identity fingerprint: {XXXX·XXXX}"). A short DISPLAY form only; the
-    /// verification action compares the visual glyphs a human reads aloud
-    /// or types, not the full 64-char hex.
-    static func shortFingerprint(_ hex: String) -> String {
-        let upper = hex.uppercased()
-        let firstEight = String(upper.prefix(8))
-        guard firstEight.count == 8 else { return upper }
-        let first = firstEight.prefix(4)
-        let second = firstEight.suffix(4)
-        return "\(first)·\(second)"
+    /// CR-01: the full six-word transform (`IdentityFingerprint.format`,
+    /// ported byte-for-byte from `packages/pv-ui/identity/fingerprint.ts`)
+    /// over the leading 66 bits of the SHA-256 `fingerprint` -- replaces
+    /// the removed `shortFingerprint`'s 8-hex-char (32-bit) truncation,
+    /// which was brute-forceable in minutes and rendered a THIRD,
+    /// inconsistent format from `InviteRedeemView`'s raw 64-char hex.
+    ///
+    /// Fails closed: a malformed fingerprint (wrong length, non-hex) never
+    /// renders a plausible-looking-but-wrong comparison value -- it falls
+    /// back to the full raw hex, which is at least honestly wrong-looking
+    /// rather than silently truncated.
+    static func displayFingerprint(_ hex: String) -> String {
+        (try? IdentityFingerprint.format(hex)) ?? hex
     }
 }

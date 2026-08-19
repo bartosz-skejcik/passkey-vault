@@ -116,7 +116,13 @@ struct InviteRedeemView: View {
                                 Text("Odcisk tożsamości") // invite.fingerprintLabel
                                     .font(.system(size: PVMetrics.footnoteSize, weight: .semibold))
                                     .foregroundStyle(Color("PVTextPrimary"))
-                                Text(fingerprint)
+                                // CR-01: the SAME six-word transform
+                                // `MemberListView` renders -- this screen
+                                // previously showed the raw 64-char hex, a
+                                // THIRD format the roster screen disagreed
+                                // with. Fails closed to the raw hex only if
+                                // the server ever sends a malformed value.
+                                Text(MemberListView.displayFingerprint(fingerprint))
                                     .font(.system(size: PVMetrics.footnoteSize, design: .monospaced))
                                     .foregroundStyle(Color("PVTextMuted"))
                                     .accessibilityIdentifier("vault.inviteRedeem.fingerprintValue")

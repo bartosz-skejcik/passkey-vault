@@ -119,11 +119,23 @@ struct MemberRosterTests {
         #expect(MemberFingerprintDisplayState.resolve(unverified) != MemberFingerprintDisplayState.resolve(verified))
     }
 
-    // MARK: - Short fingerprint display shape ("XXXX·XXXX", `40-UI-SPEC.md` §5.5)
+    // MARK: - Fingerprint display shape (CR-01: full six-word form, not the
+    // removed 8-hex-char truncation -- `packages/pv-ui/identity/fingerprint
+    // .test.ts`'s own known-answer vector, ported.)
 
-    @Test func shortFingerprintGroupsFirstEightHexCharsUppercasedWithAMiddleDot() {
-        let full = "ee87caf0853cfc5400b651ad61a51660b7f7a370299a4ffc502a561bb5022322"
-        #expect(MemberListView.shortFingerprint(full) == "EE87·CAF0")
+    @Test func displayFingerprintRendersTheSixWordFormNotATruncation() throws {
+        let hex = "a3f5c91b7e2d40689fabc123456789deadbeef0011223344556677889900aabb"
+        let expected = "physical · purity · egg · wisdom · staff · crowd"
+        #expect(MemberListView.displayFingerprint(hex) == expected)
+        #expect(try IdentityFingerprint.format(hex) == expected)
+    }
+
+    @Test func displayFingerprintFailsClosedOnMalformedInputRatherThanTruncating() {
+        let malformed = "not-a-real-fingerprint"
+        // Falls back to the raw (honestly wrong-looking) input rather than
+        // silently truncating or padding into a plausible six-word output.
+        #expect(MemberListView.displayFingerprint(malformed) == malformed)
+        #expect(throws: IdentityFingerprintError.self) { try IdentityFingerprint.words(malformed) }
     }
 
     // MARK: - Evidence: three members, three distinct statuses (human-check)
@@ -173,11 +185,11 @@ struct MemberRosterTests {
                     .font(.system(size: 11))
                     .foregroundStyle(Color(white: 0.4))
             case let .notYetVerified(fingerprint):
-                Text("Odcisk tożsamości: \(MemberListView.shortFingerprint(fingerprint)) — Zweryfikuj")
+                Text("Odcisk tożsamości: \(MemberListView.displayFingerprint(fingerprint)) — Zweryfikuj")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Color(white: 0.4))
             case let .verified(fingerprint):
-                Text("Odcisk tożsamości: \(MemberListView.shortFingerprint(fingerprint)) — Zweryfikowano")
+                Text("Odcisk tożsamości: \(MemberListView.displayFingerprint(fingerprint)) — Zweryfikowano")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Color(white: 0.4))
             }
