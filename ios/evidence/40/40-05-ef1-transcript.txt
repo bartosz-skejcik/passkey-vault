@@ -1,19 +1,19 @@
 E-F1 live two-account marker run -- Phase 40, plan 40-05, Task 3
-Recorded: 2026-08-19 6:48:54 AM +0000
+Recorded: 2026-08-19 10:06:03 PM +0000
 Server origin: http://127.0.0.1:8621
 
-Account A: pv-ef1-a-1787122134@example.invalid (user_id a579ad7e-2652-431b-bd3f-66158537bd81)
-Account B: pv-ef1-b-1787122134@example.invalid (user_id 0742d582-8450-477b-8050-2c714c368297)
+Account A: pv-ef1-a-1787177163@example.invalid (user_id 26aa438f-dd1d-4024-8364-b833153130d7)
+Account B: pv-ef1-b-1787177163@example.invalid (user_id 6089850e-b234-48a1-910c-dc98de5f1f7d)
 
-Item X (f15be058-d379-4ad6-aba4-771900061fcb): created by A, shared DIRECTLY to B.
+Item X (c85adb8d-3396-4e9f-8bed-9c7676ca62e2): created by A, shared DIRECTLY to B.
   Resolved on B via SharedItemsStore.ingestDirectShared: receivedFromOther
   Accessibility label: "Shared with you"
 
-Item Y (0a9ae365-81c5-4b03-89fe-e8bd7494f565): created by B, shared DIRECTLY to A (the reverse direction).
+Item Y (c890a98d-e027-44a5-8721-fa88df5f04e7): created by B, shared DIRECTLY to A (the reverse direction).
   Resolved on B via SharedItemsStore.ingestPersonalSync: sharedByMe
   Accessibility label: "Shared with 1"
 
-Item Z (cca80e73-1ed4-49eb-b586-928898b406f4): created by B, purely personal, never shared.
+Item Z (f9bc6ca8-2821-4be8-896a-f477d8685578): created by B, purely personal, never shared.
   Resolved on B via SharedItemsStore.ingestPersonalSync: none
   Accessibility label: ""
 
