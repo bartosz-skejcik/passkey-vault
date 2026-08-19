@@ -40,9 +40,9 @@ Today settings is a fixed-right overlay panel (`SettingsPanel.tsx`) hosting five
 The gap that makes shared folders feel broken.
 
 - [x] **ORG-01**: An item can be moved into, or created directly in, an **existing** shared folder — from the item editor, using the same mental model as choosing a personal folder. (Verified gap: `ItemForm` handles only `folderId`.)
-- [x] **ORG-02**: Moving an item between scopes re-encrypts it under the destination scope's key with correctly-bound AAD, and is refused rather than silently mis-scoped when the destination key is unavailable. A move must never produce a row nobody can decrypt.
+- [ ] **ORG-02**: Moving an item between scopes re-encrypts it under the destination scope's key with correctly-bound AAD, and is refused rather than silently mis-scoped when the destination key is unavailable. A move must never produce a row nobody can decrypt.
 - [x] **ORG-03**: An **existing** shared folder can gain a new member without creating a second folder. (This is v0.4's WINDOWS #13, carried in deliberately: v0.4's research found it needs an "unwrap my own sealed key, reseal to a new recipient" composition that exists nowhere client-side. That composition is this milestone's to build — it is also what FSH-02 needs.)
-- [x] **ORG-04**: Removing an item from a shared folder returns it to personal scope with the same re-encryption discipline, and the previously-shared members lose access to it.
+- [ ] **ORG-04**: Removing an item from a shared folder returns it to personal scope with the same re-encryption discipline, and the previously-shared members lose access to it.
 
 ### FSH — Sharing With the Whole Family
 
@@ -128,8 +128,8 @@ Phases 29–33 (`ROADMAP.md`). Every v0.5 requirement is mapped to exactly one p
 | MOD-03 | Phase 31 | Complete |
 | ORG-03 | Phase 31 | Complete |
 | ORG-01 | Phase 32 | Complete |
-| ORG-02 | Phase 32 | Complete |
-| ORG-04 | Phase 32 | Complete |
+| ORG-02 | Phase 32 | In progress (refusal path built in 32-01; SC3's deliberately-driven proof is 32-04) |
+| ORG-04 | Phase 32 | In progress (move-out built in 32-01; SC4's positive-then-negative live proof is 32-04) |
 | DEBT-04 | Phase 32 | Complete |
 | SET-01 | Phase 29 | Pending |
 | SET-02 | Phase 29 | Pending |
