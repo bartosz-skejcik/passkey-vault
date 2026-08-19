@@ -525,6 +525,27 @@ struct SyncSocketTests {
         )
     }
 
+    /// WR-05 (39-REVIEW.md, iteration 2): thread-safe box recording whether
+    /// `pull` was EVER invoked off the main thread -- `pullCount`
+    /// (the pre-fix assertion below) increments identically whether the
+    /// main-actor hop runs or not, so a counter alone cannot distinguish
+    /// "delivered" from "isolated". This is the assertion that actually
+    /// pins CR-01's claim.
+    private final class MainThreadObservationBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var sawNonMainThread = false
+        func recordCurrentThread() {
+            guard !Thread.isMainThread else { return }
+            lock.lock()
+            sawNonMainThread = true
+            lock.unlock()
+        }
+        func read() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return sawNonMainThread
+        }
+    }
+
     // CR-01 (39-REVIEW.md): open/frame callbacks arriving from a REAL
     // background queue (never the fake's own synchronous call, and never
     // the test's own main-actor thread) must still land exactly one pull
@@ -533,16 +554,35 @@ struct SyncSocketTests {
     // isolation the compiler does not check for a plain `@escaping`
     // closure. Polls with a bounded timeout because delivery is now
     // asynchronous (`Task { @MainActor in ... }`), never synchronous.
+    //
+    // WR-05 (39-REVIEW.md, iteration 2): before this fix, this test observed
+    // only `pullCount` -- which increments identically whether `pull()` runs
+    // ISOLATED on the main actor (with the hop) or DIRECTLY on the
+    // background delegate queue (without it), because `BackgroundDispatching
+    // SyncSocketTask.simulateOpenFromBackgroundQueue()`'s own `pollUntil`
+    // wait observes the incremented value either way within its 2s budget.
+    // What actually enforced the hop was the `@Sendable` annotation on the
+    // protocol's closure parameters, making the un-hopped form a compile
+    // error -- not this test. `MainThreadObservationBox` above records the
+    // EXECUTING THREAD at the moment `pull()` runs, so this test now fails
+    // if the `Task { @MainActor in ... }` hop is ever removed from
+    // `connect()`/`receiveLoop(task:)`, because the callback would then run
+    // directly on `BackgroundDispatchingSyncSocketTask`'s own background
+    // queue.
     @MainActor
     @Test func aCallbackDeliveredFromARealBackgroundQueueStillHopsOntoTheMainActorExactlyOnce() async throws {
         let transport = BackgroundDispatchingSyncSocketTransport()
         let scheduler = FakeSyncSocketScheduler()
         var pullCount = 0
+        let sawNonMainThread = MainThreadObservationBox()
         let socket = SyncSocket(
             urlProvider: { URL(string: "wss://example.invalid/api/sync/ws?token=t")! },
             transport: transport,
             scheduler: scheduler,
-            pull: { pullCount += 1 }
+            pull: {
+                sawNonMainThread.recordCurrentThread()
+                pullCount += 1
+            }
         )
         socket.start()
         let task = try #require(transport.madeTasks.first)
@@ -554,6 +594,11 @@ struct SyncSocketTests {
         task.simulateMessageFromBackgroundQueue()
         try await Self.pollUntil(timeoutSeconds: 2) { pullCount == 2 }
         #expect(pullCount == 2, "a background-queue frame must still trigger exactly one additional pull")
+
+        #expect(
+            !sawNonMainThread.read(),
+            "every pull triggered by a background-queue callback must be delivered on the main thread -- this is the assertion the hop itself is checked against, not merely arithmetic"
+        )
     }
 
     /// Bounded polling helper: `Task { @MainActor in ... }` delivery has no
