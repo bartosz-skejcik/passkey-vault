@@ -107,7 +107,7 @@ enum LiveSyncProbe {
             store = liveStore
             let coordinator = SyncCoordinator(store: liveStore)
             coordinator.repeatingPullDisabled = true // see this file's header -- the D-06 requirement
-            coordinator.start(baseURL: baseURL, tokenProvider: { session.token })
+            coordinator.start(baseURL: baseURL, tokenProvider: { session.token }, userKey: session.userKey)
             logger.log("PVSYNC|event=signedin")
 
             // Polls the ALREADY-DECRYPTED in-memory store (never a second

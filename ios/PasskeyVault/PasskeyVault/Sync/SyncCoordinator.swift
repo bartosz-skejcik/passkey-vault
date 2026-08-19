@@ -32,6 +32,15 @@
 //  quoted here only so the reader does not have to guess whether this
 //  record also covers that question.
 //
+//  [Rule 2 deviation, plan 40-10] `ResealTrigger`'s wiring lives HERE, not
+//  as a new file of its own -- this is the exact "unlock/sync transition"
+//  DR-40-B's `must_haves.key_links` names as the trigger's one production
+//  call site, and `pull()` (this type's own doc comment: "the call site
+//  ... obvious (D-22) rather than left for a later plan to invent") is
+//  already that transition's obvious home. `40-09-SUMMARY.md`'s own "Next
+//  Phase Readiness" note recorded that iOS had NO production caller for
+//  the lazy-reseal trigger yet -- this file is what closes that gap.
+//
 
 import Foundation
 import os
@@ -50,9 +59,18 @@ final class SyncCoordinator {
     private var socket: SyncSocket?
     private var foregroundPullTimer: Timer?
 
+    /// Plan 40-10: the propagator half of DR-40-B, held for this session's
+    /// lifetime (constructed in `start`, torn down in `stop`) -- see
+    /// `fireResealTriggerIfPossible()`'s own doc comment for the whole
+    /// wiring story.
+    private var resealTrigger: ResealTrigger?
+    private var resealBaseURL: URL?
+    private var resealTokenProvider: (() -> String?)?
+    private var resealUserKey: FfiUserKey?
+
     /// Task 2's live two-push proof cannot fail while this optimisation
     /// runs -- a working poll disguises a one-shot receive as a working
-    /// socket (D-06). Set BEFORE calling `start(baseURL:tokenProvider:)`;
+    /// socket (D-06). Set BEFORE calling `start(baseURL:tokenProvider:userKey:)`;
     /// exposed so that proof, and only that proof, can disable it.
     var repeatingPullDisabled = false
 
@@ -65,9 +83,17 @@ final class SyncCoordinator {
     /// (this plan does not duplicate that logic). This is the call site the
     /// identity-store hook below runs from, so that call site exists and is
     /// obvious (D-22) rather than left for a later plan to invent.
+    ///
+    /// Plan 40-10: `fireResealTriggerIfPossible()` runs LAST, after the
+    /// vault refresh -- fire-and-forget, never awaited by this function's
+    /// own return, so a slow or failing reseal fan-out can never delay or
+    /// fail the vault refresh this function exists for (`must_haves.truths`:
+    /// "The trigger is not awaited on the unlock critical path and its
+    /// failures are not surfaced to the user").
     func pull() async throws {
         try await store.refresh()
         notifyIdentityStore()
+        fireResealTriggerIfPossible()
     }
 
     /// Named separately from `pull()` so a `UIApplication
@@ -84,8 +110,29 @@ final class SyncCoordinator {
     /// in-foreground repeating pull unless `repeatingPullDisabled` is set.
     /// Idempotent: calling this while already started stops the previous
     /// transport first (`SyncSocket.start()`'s own idempotent re-entry).
-    func start(baseURL: URL, tokenProvider: @escaping () -> String?) {
+    ///
+    /// Plan 40-10: `userKey` is the propagator's own User Key, needed only
+    /// to build the `ResealTrigger` this method constructs fresh for the
+    /// session -- never stored anywhere `VaultStore`/`FolderStore` don't
+    /// already hold an equivalent handle.
+    func start(baseURL: URL, tokenProvider: @escaping () -> String?, userKey: FfiUserKey) {
         stop()
+        resealBaseURL = baseURL
+        resealTokenProvider = tokenProvider
+        resealUserKey = userKey
+        let trigger = ResealTrigger(resealService: ResealService(baseURL: baseURL, tokenProvider: tokenProvider))
+        resealTrigger = trigger
+        // Unlock transition -- a fresh session gets a fresh attempted-pair
+        // set (this file's own header, `ResealTrigger.resetAttempts()`'s
+        // own doc comment). A brand-new `ResealTrigger` already starts
+        // empty, so this call is a no-op in practice for THIS instance --
+        // kept anyway so the "clear on every lock AND unlock transition"
+        // contract is an explicit call at BOTH transitions, not an
+        // accident of object lifetime a future refactor could silently
+        // break (e.g. if this type is ever changed to reuse one
+        // `ResealTrigger` across sessions).
+        Task { await trigger.resetAttempts() }
+
         let socket = SyncSocket(
             urlProvider: { SyncSocket.wsURL(base: baseURL, token: tokenProvider()) },
             pull: { [weak self] in
@@ -121,6 +168,49 @@ final class SyncCoordinator {
         socket?.teardown()
         socket = nil
         stopRepeatingPull()
+        // Lock transition -- clears the attempted-pair set (same contract
+        // `start(...)`'s own comment documents for the unlock side) BEFORE
+        // dropping the reference, so a pair that failed transiently this
+        // session is retried from a clean slate whenever the NEXT
+        // `start(...)` builds a fresh `ResealTrigger`.
+        if let resealTrigger {
+            Task { await resealTrigger.resetAttempts() }
+        }
+        resealTrigger = nil
+        resealBaseURL = nil
+        resealTokenProvider = nil
+        resealUserKey = nil
+    }
+
+    /// Plan 40-10: fires the reseal fan-out for the current pull cycle,
+    /// fire-and-forget -- `Task { ... }` here is never `await`ed by this
+    /// function's own caller (`pull()`), so this can neither delay nor fail
+    /// the vault refresh that already completed by the time this runs.
+    ///
+    /// Fetches `family_wide_pending` itself (`SharedItemsStore
+    /// .fetchFamilyWidePending`, the SAME production call plan 40-05 already
+    /// built) rather than duplicating that request -- `ResealTrigger`'s own
+    /// header explains why fetching is deliberately NOT that type's job.
+    /// This is the "one query, two consumers" split `resealTrigger.ts`'s own
+    /// header describes: `PendingKeyState`'s `missing` axis is the OTHER
+    /// consumer, wired by a future call site, not duplicated here.
+    ///
+    /// A no-op when the coordinator has not been `start`ed (or has since
+    /// been `stop`ped) -- the four `guard let` bindings below all come from
+    /// `start(...)`'s own parameters, so a `nil` here just means "no active
+    /// session to reseal on behalf of", never a crash.
+    private func fireResealTriggerIfPossible() {
+        guard let resealTrigger, let resealBaseURL, let resealTokenProvider, let resealUserKey else { return }
+        Task {
+            do {
+                let pending = try await SharedItemsStore.fetchFamilyWidePending(
+                    baseURL: resealBaseURL, tokenProvider: resealTokenProvider
+                )
+                _ = await resealTrigger.run(resealable: pending.resealable, userKey: resealUserKey)
+            } catch {
+                Self.log.error("reseal-trigger pending fetch failed: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     /// The honest fallback (39-RESEARCH.md's Freshness section; `sync.ts`'s

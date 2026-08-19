@@ -526,7 +526,8 @@ struct ContentView: View {
         #endif
         coordinator.start(
             baseURL: ServerSettings.resolved,
-            tokenProvider: { [token = session.token] in token }
+            tokenProvider: { [token = session.token] in token },
+            userKey: session.userKey
         )
         syncCoordinator = coordinator
         return coordinator
