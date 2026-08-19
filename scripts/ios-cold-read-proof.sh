@@ -52,6 +52,12 @@ EVIDENCE_FILE="ios/evidence/39/07-cold-read.md"
 HOST_BUNDLE_ID="cloud.blonie.PasskeyVault"
 APP_GROUP_ID="group.cloud.blonie.PasskeyVault"
 CACHE_FILE_NAME="vault-cache-v1.json"
+# WR-06 (39-REVIEW.md, iteration 2): mirrors
+# `AppGroupCiphertextCacheStore.currentAccountMarkerFileName` -- the
+# production freshness read (`CredentialProviderViewController
+# .renderFreshnessSurface()`/`.logFreshness()`, both WR-05/WR-06) discovers
+# WHICH account's cache to read through this file, never the blob alone.
+CACHE_MARKER_FILE_NAME="vault-cache-v1-current-account.json"
 SIM_UDID_FILE="/private/tmp/pv16.udid"
 DD_PATH="/tmp/pv-dd-coldread"
 PORT="${PV_IOS_PORT:-8624}"
@@ -303,6 +309,7 @@ fi
 
 # --- the host's own write digest, computed independently of any read -------
 HOST_CACHE_FILE="${CONTAINER_PATH}/${CACHE_FILE_NAME}"
+HOST_MARKER_FILE="${CONTAINER_PATH}/${CACHE_MARKER_FILE_NAME}"
 if [ ! -f "$HOST_CACHE_FILE" ]; then
   echo "ERROR: ${HOST_CACHE_FILE} not found -- the host's first pull did not persist a cache." >&2
   exit 1
@@ -440,15 +447,17 @@ echo "    coldread-2 (deleted-cache control): status=${CR2_STATUS} negative=${CR
 
 echo "==> writing a snapshot with a DIFFERENT syncedAtMs DURING the extension's HOLD 2 (Task 2's control)"
 DIFFERENT_SYNCED_AT_MS=$((REFERENCE_MS - 7200000))
-python3 - "$HOST_CACHE_FILE" "$DIFFERENT_SYNCED_AT_MS" <<'PY'
+DIFFERENT_ACCOUNT_ID="39-07-different-snapshot-control@example.invalid"
+DIFFERENT_SERVER_BASE_URL="http://127.0.0.1:0"
+python3 - "$HOST_CACHE_FILE" "$DIFFERENT_SYNCED_AT_MS" "$DIFFERENT_ACCOUNT_ID" "$DIFFERENT_SERVER_BASE_URL" <<'PY'
 import json, sys
-path, synced_at_ms = sys.argv[1], int(sys.argv[2])
+path, synced_at_ms, account_id, server_base_url = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
 snapshot = {
     "schemaVersion": 1,
     "revision": 1,
     "syncedAtMs": synced_at_ms,
-    "accountId": "39-07-different-snapshot-control@example.invalid",
-    "serverBaseURL": "http://127.0.0.1:0",
+    "accountId": account_id,
+    "serverBaseURL": server_base_url,
     "items": [],
     "folders": [],
 }
@@ -456,6 +465,26 @@ with open(path, "w") as f:
     json.dump(snapshot, f)
 PY
 echo "    wrote syncedAtMs=${DIFFERENT_SYNCED_AT_MS} (reference ${REFERENCE_MS} minus 2h) to ${HOST_CACHE_FILE}"
+
+# WR-06 (39-REVIEW.md, iteration 2): the marker must be rewritten ALONGSIDE
+# the blob, to the SAME account/server pair -- production
+# (`CredentialProviderViewController.renderFreshnessSurface()`/
+# `.logFreshness()`) discovers which account to read through this marker
+# file, not the blob's own `accountId` field. Before this fix, the marker
+# still named the ORIGINAL `COLDREAD_EMAIL`/`PV_IOS_BASE` pair while the
+# blob above carried this control's different identity --
+# `readCurrentSnapshot(accountId:serverBaseURL:)`'s cross-account rejection
+# (D-19) then refused the blob outright, and FRESHNESS-EXT-CONTROL measured
+# "a rejected snapshot renders as absent" (`Not synced yet`) rather than
+# this control's actual claim, "a different snapshot renders differently".
+python3 - "$HOST_MARKER_FILE" "$DIFFERENT_ACCOUNT_ID" "$DIFFERENT_SERVER_BASE_URL" <<'PY'
+import json, sys
+path, account_id, server_base_url = sys.argv[1], sys.argv[2], sys.argv[3]
+marker = {"accountId": account_id, "serverBaseURL": server_base_url}
+with open(path, "w") as f:
+    json.dump(marker, f)
+PY
+echo "    wrote current-account marker accountId=${DIFFERENT_ACCOUNT_ID} serverBaseURL=${DIFFERENT_SERVER_BASE_URL} to ${HOST_MARKER_FILE}"
 
 echo "==> waiting for freshness-evidence-2.txt (the DIFFERENT control)"
 if ! wait_for_file "$FRESHNESS_2_TXT" 60; then

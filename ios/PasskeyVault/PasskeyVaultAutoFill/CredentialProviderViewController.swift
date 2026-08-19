@@ -268,8 +268,27 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         Thread.sleep(forTimeInterval: 3.0)
     }
 
+    /// WR-06 (39-REVIEW.md, iteration 2): reads through the SAME production
+    /// accessor `renderFreshnessSurface()` uses -- marker -> account-scoped
+    /// `readCurrentSnapshot(accountId:serverBaseURL:)` -- rather than
+    /// `CacheColdReadProbe.currentSyncedAtMs()`'s deliberately unscoped raw
+    /// read. Before this fix, the 39-07 evidence sequence (this file's own
+    /// `runColdReadEvidenceSequence()`) certified a freshness label the
+    /// extension no longer actually renders: WR-05's fix moved production
+    /// onto the account-scoped path, but this probe kept reading the OLD
+    /// path, so a regression that made `renderFreshnessSurface()` always
+    /// render "Not synced yet" (a marker write that silently failed,
+    /// `purge()` racing a read, a `serverBaseURL` mismatch) would leave
+    /// every gate in this phase green -- the evidence measured a code path
+    /// production had already stopped using. `CacheColdReadProbe`'s raw read
+    /// remains this file's Task 1 byte-reachability claim
+    /// (`runPositiveAndNegativeControl()` above) -- it is intentionally NOT
+    /// used here anymore.
     private static func logFreshness(logger: Logger, reference: Date, markerName: String) {
-        let syncedAtMs = CacheColdReadProbe.currentSyncedAtMs()
+        let store = AppGroupCiphertextCacheStore()
+        let syncedAtMs = store.currentAccountMarker().flatMap {
+            store.readCurrentSnapshot(accountId: $0.accountId, serverBaseURL: $0.serverBaseURL)?.syncedAtMs
+        }
         let rendered = SyncFreshness.describe(syncedAtMs: syncedAtMs, reference: reference)
         logger.log("PVPROBE|stage=\(markerName, privacy: .public) rendered=\(rendered, privacy: .public)")
         CacheColdReadProbe.writeMarker(text: rendered, name: markerName)
