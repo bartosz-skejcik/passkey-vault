@@ -45,6 +45,23 @@ struct ContentView: View {
     /// discipline (`storeFor(_:)`'s own note on why rebuilding on every body
     /// evaluation would be wrong).
     @State private var folderStore: FolderStore?
+    /// CR-04 (40-REVIEW.md): the caller's own `user_id`, fetched once per
+    /// session (`PvApiClient.me(token:)`, the SAME call
+    /// `RemoveMemberService.leaveFamily`/`InviteTests` already use for
+    /// this exact purpose) -- `UnlockedSession` itself carries no user id,
+    /// only `token`/`userKey`/`email`. `nil` until that fetch resolves,
+    /// which is also what keeps the avatar-menu "Family" entry and the
+    /// item detail "Share" entry ABSENT (never merely disabled) for the
+    /// brief window before it does.
+    @State private var ownUserId: String?
+    /// CR-04 (40-REVIEW.md): `InviteRedeemView`'s deep-link entry point --
+    /// captured whenever the OS hands this app a URL (`onOpenURL`, below),
+    /// regardless of the CURRENT route (a link could arrive while still on
+    /// `.auth`/`.lock`); `vault(_:)` presents the redemption sheet once the
+    /// session is actually `.unlocked` and `ownUserId` has resolved.
+    /// Cleared once the redemption sheet is dismissed, never carried
+    /// across a lock/sign-out into a different account's session.
+    @State private var pendingInviteURL: URL?
     /// Plan 39-06 (Rule 2 deviation -- see this file's own note at
     /// `syncCoordinatorFor(_:store:)`). `SyncCoordinator` existed since
     /// 39-04 but was never actually started from this, the real app's
@@ -87,6 +104,17 @@ struct ContentView: View {
         }
         .task {
             await determineRoute()
+        }
+        // CR-04: the app's own URL/deep-link handling for invite links --
+        // `InviteService.generateInviteLink` builds `{serverOrigin}/invite/
+        // {id}#{secret}` universal links (`InviteService.swift`'s own
+        // header), so this is where the OS hands one back to the app.
+        // Only captured, never parsed here -- `InviteRedeemView`/
+        // `InviteRedemptionService` already own fragment parsing and the
+        // self-consistency check; this handler's only job is routing the
+        // raw URL to that existing, tested surface.
+        .onOpenURL { url in
+            pendingInviteURL = url
         }
     }
 
@@ -201,7 +229,18 @@ struct ContentView: View {
             store: store,
             folderStore: folderStoreFor(session),
             onLockRequested: { performLock() },
-            onSignOutRequested: { performSignOut() }
+            onSignOutRequested: { performSignOut() },
+            // CR-04 (40-REVIEW.md): `nil` until `ownUserId` resolves below
+            // -- see that property's own header for why that is the
+            // correct "absent, not disabled" transient state, not a bug.
+            familySharingContext: ownUserId.map { uid in
+                FamilySharingContext(
+                    baseURL: ServerSettings.resolved,
+                    tokenProvider: { [token = session.token] in token },
+                    userKey: session.userKey,
+                    ownUserId: uid
+                )
+            }
         )
         .task {
             // WR-14 (39-REVIEW.md): construction AND start moved here, out
@@ -220,6 +259,12 @@ struct ContentView: View {
             _ = syncCoordinatorFor(session, store: store)
             await Self.seedTooShortTotpSecretIfRequested(store: store)
             await Self.seedDockFixtureIfRequested(store: store)
+            // CR-04: best-effort -- a failure here just means the Family/
+            // Share entry points stay absent for this session (never a
+            // crash, never a disabled-but-visible affordance).
+            if ownUserId == nil {
+                ownUserId = try? await apiClient.me(token: session.token).userId
+            }
         }
         // Plan 39-06: the real foreground-transition trigger. `newPhase ==
         // .active` fires on EVERY transition into the foreground, cold
@@ -232,6 +277,26 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 syncCoordinator?.handleScenePhaseBecameActive()
+            }
+        }
+        // CR-04: the deep-link entry point actually presenting
+        // `InviteRedeemView`, pre-filled with the received link -- gated
+        // on `ownUserId` having resolved (same "absent until ready"
+        // discipline `familySharingContext` above already follows), since
+        // `InviteRedeemView` needs a real `ownUserId`-bearing session
+        // context via the SAME `FamilySharingContext`-shaped values.
+        .sheet(isPresented: Binding(
+            get: { pendingInviteURL != nil && ownUserId != nil },
+            set: { if !$0 { pendingInviteURL = nil } }
+        )) {
+            NavigationStack {
+                InviteRedeemView(
+                    baseURL: ServerSettings.resolved,
+                    tokenProvider: { [token = session.token] in token },
+                    userKey: session.userKey,
+                    onFinished: { pendingInviteURL = nil },
+                    initialURLText: pendingInviteURL?.absoluteString ?? ""
+                )
             }
         }
     }
@@ -262,6 +327,11 @@ struct ContentView: View {
         syncCoordinator = nil
         vaultStore = nil
         folderStore = nil
+        // CR-04: the next unlock's session may be a different account (a
+        // fresh sign-in after a lock is possible via `.auth`, not just a
+        // re-`LockView` unlock) -- re-derived fresh every session, never
+        // carried over.
+        ownUserId = nil
         route = .loading
         Task { await reroute() }
     }
@@ -281,6 +351,12 @@ struct ContentView: View {
         syncCoordinator = nil
         vaultStore = nil
         folderStore = nil
+        ownUserId = nil
+        // CR-04: a sign-out (unlike a lock) can land on a DIFFERENT
+        // account entirely -- a pending invite link captured under the
+        // old account must not resurface once a new one's `ownUserId`
+        // resolves.
+        pendingInviteURL = nil
         route = .loading
         Task {
             let service = AccountService(apiClient: apiClient)

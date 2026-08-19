@@ -61,10 +61,24 @@ struct InviteRedeemView: View {
     /// "we're taking you to the vault" promise).
     let onFinished: () -> Void
 
-    @State private var urlText: String = ""
+    @State private var urlText: String
     @State private var isJoining = false
     @State private var result: InviteRedemptionService.RedemptionResult?
     @State private var errorMessage: String?
+
+    /// CR-04 (40-REVIEW.md): the deep-link entry point --
+    /// `ContentView.onOpenURL` pre-fills this with the received invite
+    /// link's absolute string, so the user lands on this screen with the
+    /// link already pasted rather than having to copy/paste it manually.
+    /// `""` (the manual-paste path, this view's own original behavior)
+    /// when opened any other way.
+    init(baseURL: URL, tokenProvider: @escaping () -> String?, userKey: FfiUserKey, onFinished: @escaping () -> Void, initialURLText: String = "") {
+        self.baseURL = baseURL
+        self.tokenProvider = tokenProvider
+        self.userKey = userKey
+        self.onFinished = onFinished
+        self._urlText = State(initialValue: initialURLText)
+    }
 
     private var redemptionService: InviteRedemptionService {
         InviteRedemptionService(baseURL: baseURL, tokenProvider: tokenProvider)
