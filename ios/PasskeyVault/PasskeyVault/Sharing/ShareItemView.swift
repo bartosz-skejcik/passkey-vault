@@ -17,18 +17,16 @@
 //  VERBATIM from `HiddenPasswordDisclosure.swift` -- SC3's copy check),
 //  a muted revocation note, and a primary CTA.
 //
-//  §0.3's own resolution marks this screen SPECIFIED-BUT-NOT-SCHEDULED for
-//  the 10 plans written before the drawing existed; this plan's
-//  orchestrator-level scope addition schedules it explicitly, but does NOT
-//  additionally schedule the navigation wiring 40-07's own Family roster
-//  screen would need to present it from (`VaultRootView.swift:59`'s avatar-
-//  menu "Family" entry is still `disabled(true)` as of this plan -- 40-07
-//  has not shipped). This view is built complete, real, and independently
-//  testable/instantiable -- the SAME "built, functional, not yet threaded
-//  into the live nav stack" shape `InviteCreateView.swift` (plan 40-06)
-//  already shipped in this exact codebase -- rather than reaching into
-//  `VaultStore`'s private `userKey`/`VaultRootController`'s sheet router to
-//  force a wiring this plan's own task list never asked for.
+//  §0.3's own resolution marked this screen SPECIFIED-BUT-NOT-SCHEDULED for
+//  the 10 plans written before the drawing existed. CR-04 (40-REVIEW.md,
+//  REVIEW-FIX) is what actually wired the navigation: `ItemDetailView`'s
+//  toolbar and `ItemListView`'s context menu both present this view via
+//  `Sharing/ShareItemPresenter.swift` (which resolves the two prerequisites
+//  this view needs but cannot synchronously have -- the roster and the
+//  item's raw `encKeyJson`), reached from a real `VaultActiveSheet
+//  .sharingItem` case, gated by `ItemCapabilities.canShowShareAffordance(_:)`.
+//  This view's own crypto and UI are unchanged by that fix -- production
+//  wiring only.
 //
 //  WHOLE-FAMILY SCOPE, documented judgment call: this view shares to every
 //  CURRENTLY active family member individually via the SAME
