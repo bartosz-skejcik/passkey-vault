@@ -582,7 +582,10 @@ extension RemoveMemberTests {
             _ = try await removeService.removeMember(userId: meTarget.userId, userKey: sessionOwner.userKey)
             RemoveMemberService.testOnlyDropLastRecipient = false
             throw LiveRemovalRekeyRunError.expectedThrowDidNotOccur("the falsified (recipient-dropped) removal")
-        } catch PvApiError.httpError(let status, _) {
+        } catch RemoveMemberError.rekeySetMismatch(let status, _) {
+            // WR-03: the service now maps a 409 from the submit call site
+            // to this specific, actionable error rather than the raw
+            // `PvApiError.httpError` -- same status, more specific type.
             falsificationStatus = status
         }
         RemoveMemberService.testOnlyDropLastRecipient = false

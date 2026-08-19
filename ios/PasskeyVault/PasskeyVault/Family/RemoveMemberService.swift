@@ -49,6 +49,19 @@ enum RemoveMemberError: Error, CustomStringConvertible {
     case noSessionToken(String)
     case collectionMissingOwnSealedKey(collectionId: String)
     case requestFailed(String, status: Int, body: String)
+    /// WR-03: `apply_member_removal_rekey`'s exact-set guard
+    /// (`families.rs:678-691`) rejected this batch's remaining-recipient
+    /// or collection set. Two of the three client-side reads this file
+    /// composes a batch from are scoped DIFFERENTLY than the server's own
+    /// guard (`GET /api/vault/collections/{id}/access` has no
+    /// `family_members` join the guard has; `GET /api/vault/collections`
+    /// carries no `family_id` filter the guard has) -- currently masked
+    /// only by the singleton-family invariant. A specific case rather than
+    /// a raw `PvApiError.httpError` so a caller can render actionable
+    /// copy instead of a generic network-failure message, and so this is
+    /// distinguishable from every other 409 this file's endpoints could
+    /// return.
+    case rekeySetMismatch(status: Int, body: String)
 
     var description: String {
         switch self {
@@ -58,6 +71,10 @@ enum RemoveMemberError: Error, CustomStringConvertible {
             return "cannot re-key collection \(collectionId) -- caller has no sealed_key for it"
         case let .requestFailed(what, status, body):
             return "\(what) failed (\(status)): \(body)"
+        case let .rekeySetMismatch(status, body):
+            return "the server rejected this re-key batch's recipient/collection set (\(status)): \(body) -- "
+                + "this can happen when a collection's recipient or the caller's collection list is scoped "
+                + "differently than the server's own removal guard (WR-03)"
         }
     }
 }
@@ -94,7 +111,11 @@ struct RemoveMemberService {
     @discardableResult
     func removeMember(userId: String, userKey: FfiUserKey) async throws -> [FamilyAPI.CollectionRekeyBatch] {
         let batch = try await buildRemovalBatch(targetUserId: userId, userKey: userKey, isSelf: false)
-        try await familyAPI.removeMember(userId: userId, collections: batch)
+        do {
+            try await familyAPI.removeMember(userId: userId, collections: batch)
+        } catch {
+            throw Self.mapRekeySubmitError(error)
+        }
         return batch
     }
 
@@ -108,8 +129,22 @@ struct RemoveMemberService {
         }
         let me = try await PvApiClient(baseURL: baseURL).me(token: token)
         let batch = try await buildRemovalBatch(targetUserId: me.userId, userKey: userKey, isSelf: true)
-        try await deleteAccount(token: token, collections: batch)
+        do {
+            try await deleteAccount(token: token, collections: batch)
+        } catch {
+            throw Self.mapRekeySubmitError(error)
+        }
         return batch
+    }
+
+    /// WR-03: turns a 409 from either submit call site into the specific,
+    /// actionable `.rekeySetMismatch` -- every other error passes through
+    /// unchanged.
+    private static func mapRekeySubmitError(_ error: Error) -> Error {
+        if case let PvApiError.httpError(status, message) = error, status == 409 {
+            return RemoveMemberError.rekeySetMismatch(status: status, body: message)
+        }
+        return error
     }
 
     // MARK: - The isSelf source-of-truth split (40-RESEARCH.md Pitfall 7)
