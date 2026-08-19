@@ -66,6 +66,16 @@
 //! | `decrypt_item_wire`            | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
 //! | `encrypt_item_combined_json`   | `Result<String,_>`    | serde_json — złapane jako `Err` |
 //! | `decrypt_item_combined_json`   | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
+//! | `FfiIdentityKey::generate`     | `Result<Arc<Self>,_>` | TAK — ten sam `OsRng::fill_bytes` tor co `FfiUserKey::generate` (`sharing.rs`) |
+//! | `FfiIdentityKey::public_key_bytes` | `Vec<u8>` (BEZ `Result`) | NIE — klucz PUBLICZNY, publikowalny z założenia |
+//! | `FfiIdentityPublicKey::from_bytes` | `Result<Arc<Self>,_>` | długość/small-order — złapane jako `Err` |
+//! | `wrap_identity_secret_key`     | `Result<String,_>`    | serde_json — złapane jako `Err` |
+//! | `unwrap_identity_secret_key`   | `Result<Arc<FfiIdentityKey>,_>` | serde_json — złapane jako `Err` |
+//! | `FfiCollectionKey::generate`   | `Result<Arc<Self>,_>` | TAK — ten sam `OsRng::fill_bytes` tor |
+//! | `seal_collection_key`          | `Result<String,_>`    | serde_json — złapane jako `Err` |
+//! | `unseal_collection_key`        | `Result<Arc<FfiCollectionKey>,_>` | serde_json/small-order — złapane jako `Err` |
+//! | `encrypt_item_for_collection`  | `Result<String,_>`    | serde_json — złapane jako `Err` |
+//! | `decrypt_item_for_collection`  | `Result<String,_>`    | serde_json/utf8 — złapane jako `Err` |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -127,6 +137,19 @@ pub use generator::{
 // cast this file absorbs.
 pub mod totp;
 pub use totp::{totp_now, FfiTotpCode};
+
+// Phase 40 (rodzina-i-współdzielenie-na-telefonie), plans 40-02/40-03: X25519
+// identity keypairs and Collection Keys -- see that module's own header for
+// DR-40-A (the `String`-via-`serde_json` wire contract every export here
+// follows) and for the Rule-2 rationale behind
+// `encrypt_item_for_collection`/`decrypt_item_for_collection` living there
+// already, ahead of plan 40-03's own scope.
+pub mod sharing;
+pub use sharing::{
+    decrypt_item_for_collection, encrypt_item_for_collection, seal_collection_key,
+    unseal_collection_key, unwrap_identity_secret_key, wrap_identity_secret_key, FfiCollectionKey,
+    FfiIdentityKey, FfiIdentityPublicKey,
+};
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real
