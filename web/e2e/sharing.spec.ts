@@ -1737,3 +1737,114 @@ test("Q2: an in-place level EDIT and a brand-new GRANT in ONE submission both la
   expect(memberB.dialogFired(), "zero OS-level dialogs across memberB's session").toBe(false);
   await owner.context.close();
 });
+
+// 32-01-PLAN.md Task 1 -- the phase's own tracer: opens an item row in edit
+// mode, selects an existing shared destination from the new grouped
+// item-folder-select (`collection:${destinationCollectionId}`), and saves --
+// mirrors `moveItemToFolder`'s shape above (which drives the UNRELATED
+// context-menu-move personal-folder mechanism; never reused/modified here,
+// it is out of this phase's scope).
+async function moveItemToDestinationViaEditor(
+  page: Page,
+  itemId: string,
+  destinationCollectionId: string,
+): Promise<void> {
+  await page.getByTestId(`item-row-${itemId}`).click();
+  await page.getByTestId("detail-panel").waitFor({ state: "visible" });
+  await page.getByTestId("detail-panel-edit").click();
+  await page.getByTestId("item-folder-select").waitFor({ state: "visible" });
+  await page
+    .getByTestId("item-folder-select")
+    .selectOption(`collection:${destinationCollectionId}`);
+  await page.getByTestId("item-form-submit").click();
+  // Edit mode closes (ItemForm's own onCreated -> DetailPanel setMode("view"))
+  // only once the save has actually landed -- mirrors createLoginItemViaUI's
+  // identical "wait for the form to detach" convention.
+  await page.getByTestId("item-form-login").waitFor({ state: "detached" });
+}
+
+// 32-01-PLAN.md Task 1's own live proof: SC1 (edit-mode round trip: the
+// destination survives save AND a real reload) and SC2 (a real second
+// account, live, reads the moved item's actual decrypted content) together,
+// in ONE real two-session run -- not two separate weaker tests.
+test("SC1/SC2: an item moved via the item editor into an existing shared folder lands on the server, survives the owner's reload, and a real second account reads its decrypted content live", async ({
+  twoSessions,
+  browser,
+}) => {
+  const [, member] = twoSessions;
+  const memberToken = await tokenFor(member.page);
+  const memberUserId = await userIdFor(member.context, memberToken);
+
+  await ensureFamilyMembership(browser, [memberUserId]);
+  await waitForIdentityKeyPublished(member.context, memberToken);
+
+  const owner = await newBareContext(browser);
+  await ensureFamilyOwnerSession(owner.page);
+  const ownerToken = await tokenFor(owner.page);
+
+  const suffix = uniqueSuffix();
+  const itemName = `PV E2E Move Via Editor Item ${suffix}`;
+  const itemPassword = `pw-MoveViaEditor-${suffix}`;
+  const personalFolderName = `PV E2E Move Via Editor Seed Folder ${suffix}`;
+  const destinationName = `PV E2E Move Via Editor Destination ${suffix}`;
+
+  // 1. Owner creates a login item -- personal scope, no folder.
+  const itemsBefore = await listItemIds(owner.context, ownerToken);
+  await createLoginItemViaUI(owner.page, itemName, itemPassword);
+  const itemId = await newIdAfter(itemsBefore, () => listItemIds(owner.context, ownerToken));
+
+  // 2. Owner creates a personal folder and shares it with the member at
+  //    "edit" -- a real destination collection id, exactly what
+  //    require_collection_edit (Gate 2) will check against on the move.
+  const foldersBefore = await listFolderIds(owner.context, ownerToken);
+  await owner.page.getByTestId("sidebar-nav-folders").click();
+  await createFolderViaUI(owner.page, personalFolderName);
+  const folderId = await newIdAfter(foldersBefore, () => listFolderIds(owner.context, ownerToken));
+
+  const collectionsBefore = await listCollectionIds(owner.context, ownerToken);
+  await shareExistingFolderWithMember(owner.page, folderId, memberUserId, "edit", destinationName);
+  const destinationId = await newIdAfter(collectionsBefore, () =>
+    listCollectionIds(owner.context, ownerToken),
+  );
+
+  // 3. Owner opens the item in edit mode (never the context-menu move) and
+  //    moves it directly into the shared destination.
+  await moveItemToDestinationViaEditor(owner.page, itemId, destinationId);
+
+  // SC1: "survives save, reload, and a sync round trip" -- assert via the
+  // API after a REAL reload, never merely the in-memory store the save call
+  // itself already trusts.
+  await reloadAndUnlock(owner.page, SESSION_PASSWORD);
+  const itemsAfterRes = await apiGet(owner.context.request, "/api/vault/items", ownerToken);
+  expect(itemsAfterRes.status()).toBe(200);
+  const itemsAfter = (await itemsAfterRes.json()) as {
+    id: string;
+    collection_id: string | null;
+  }[];
+  const movedItem = itemsAfter.find((i) => i.id === itemId);
+  expect(
+    movedItem,
+    "the moved item must still exist server-side after the owner's reload",
+  ).toBeDefined();
+  expect(
+    movedItem?.collection_id,
+    "SC1: the destination survives save AND a real reload",
+  ).toBe(destinationId);
+
+  // SC2: a real second account, live, reads the moved item's actual
+  // decrypted content. collections.ts has no live-update subscription for a
+  // brand-new membership (this file's own established header note) --
+  // reloadAndUnlock first.
+  await reloadAndUnlock(member.page, SESSION_PASSWORD);
+  await assertRecipientDecrypts(
+    member.page,
+    itemId,
+    itemName,
+    itemPassword,
+    "SC2: the member, freshly granted edit on the destination folder, must read the moved item's REAL decrypted content",
+  );
+
+  expect(owner.dialogFired(), "zero OS-level dialogs across the owner session").toBe(false);
+  expect(member.dialogFired(), "zero OS-level dialogs across the member session").toBe(false);
+  await owner.context.close();
+});

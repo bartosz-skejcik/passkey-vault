@@ -7,6 +7,8 @@ const {
   mockCreateVaultItem,
   mockCreateVaultFolder,
   mockUpdateVaultItem,
+  mockMoveVaultItem,
+  mockGetItems,
   mockDeleteVaultItem,
   mockTotpNow,
   mockTouchVaultItem,
@@ -15,12 +17,18 @@ const {
   mockListItemShares,
   MockRevisionConflictError,
   MockDirectShareNotEditableError,
+  MockCollectionKeyUnavailableError,
 } = vi.hoisted(() => ({
   mockUseFolders: vi.fn(),
   mockUseAllTags: vi.fn(),
   mockCreateVaultItem: vi.fn(),
   mockCreateVaultFolder: vi.fn(),
   mockUpdateVaultItem: vi.fn(),
+  // 32-01-PLAN.md: ItemForm (rendered for real here, not mocked) now also
+  // imports moveVaultItem/getItems from this module — the mock must export
+  // both or ItemForm crashes at import/call time.
+  mockMoveVaultItem: vi.fn(),
+  mockGetItems: vi.fn(() => []),
   mockDeleteVaultItem: vi.fn(),
   mockTotpNow: vi.fn(),
   mockTouchVaultItem: vi.fn(),
@@ -48,6 +56,15 @@ const {
       this.name = "DirectShareNotEditableError";
     }
   },
+  // 32-01-PLAN.md: DetailPanel's onError now also `instanceof`-branches on
+  // this class (moveVaultItem's TOCTOU refusal) — same "must export or
+  // instanceof-undefined throws" reasoning as the two error classes above.
+  MockCollectionKeyUnavailableError: class MockCollectionKeyUnavailableError extends Error {
+    constructor(collectionId: string) {
+      super(`cannot save -- collection ${collectionId} key unavailable`);
+      this.name = "CollectionKeyUnavailableError";
+    }
+  },
 }));
 
 vi.mock("@/lib/vault/store", () => ({
@@ -56,10 +73,13 @@ vi.mock("@/lib/vault/store", () => ({
   createVaultItem: mockCreateVaultItem,
   createVaultFolder: mockCreateVaultFolder,
   updateVaultItem: mockUpdateVaultItem,
+  moveVaultItem: mockMoveVaultItem,
+  getItems: mockGetItems,
   deleteVaultItem: mockDeleteVaultItem,
   touchVaultItem: mockTouchVaultItem,
   RevisionConflictError: MockRevisionConflictError,
   DirectShareNotEditableError: MockDirectShareNotEditableError,
+  CollectionKeyUnavailableError: MockCollectionKeyUnavailableError,
 }));
 
 vi.mock("@/lib/vault/collections", () => ({

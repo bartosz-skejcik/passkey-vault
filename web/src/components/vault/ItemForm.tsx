@@ -4,13 +4,19 @@ import { useState, type FormEvent, type KeyboardEvent, type ReactNode } from "re
 import { Eye, EyeOff, Plus, X } from "lucide-react";
 import type { Folder, ItemFields, ItemType } from "@/lib/vault/types";
 import {
+  CollectionKeyUnavailableError,
+  RevisionConflictError,
   createVaultFolder,
   createVaultItem,
+  getItems,
+  moveVaultItem,
   updateVaultItem,
   useAllTags,
   useFolders,
 } from "@/lib/vault/store";
+import { useCollections } from "@/lib/vault/collections";
 import { useLocale } from "@/lib/i18n/LocaleContext";
+import { interpolate } from "@/lib/i18n/dictionary";
 import { addressLines, composeLegacyAddress } from "@/lib/vault/identityAddress";
 import PasskeyPlaceholderSection from "./PasskeyPlaceholderSection";
 import GeneratorPopover from "@/components/generator/GeneratorPopover";
@@ -238,6 +244,7 @@ export default function ItemForm({
   mode = "create",
   itemId,
   currentRevision,
+  currentCollectionId = null,
   initialFields,
   onCreated,
   onError,
@@ -246,12 +253,18 @@ export default function ItemForm({
   mode?: "create" | "edit";
   itemId?: string;
   currentRevision?: number;
+  // 32-01-PLAN.md: the item's CURRENT scope, so edit mode knows what a
+  // "destination unchanged" save looks like (dispatches to updateVaultItem)
+  // vs. a genuine move (dispatches to moveVaultItem). `null`/absent for
+  // create mode and for a personal item.
+  currentCollectionId?: string | null;
   initialFields?: ItemFields;
   onCreated: () => void;
   onError?: (err: Error) => void;
 }) {
   const { t } = useLocale();
   const folders = useFolders();
+  const collections = useCollections();
   const allTags = useAllTags();
   const [fields, setFields] = useState<ItemFields>(() =>
     withLegacyAddressPrefill(initialFields ?? emptyFieldsFor(type)),
@@ -268,6 +281,23 @@ export default function ItemForm({
   const [tagInput, setTagInput] = useState("");
   const [addingFolder, setAddingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  // 32-01-PLAN.md: the destination the user has picked in the (now
+  // grouped) item-folder-select -- null means "personal scope" (either
+  // "Bez folderu" or a picked personal folder id, tracked separately via
+  // fields.folderId). Initialized from currentCollectionId so an
+  // untouched edit-mode select compares equal to the item's real current
+  // scope (dispatches to the unchanged updateVaultItem path).
+  const [destinationCollectionId, setDestinationCollectionId] = useState<string | null>(
+    currentCollectionId ?? null,
+  );
+  // 32-01-PLAN.md (retry-safe create-then-move): tracks the item once
+  // create mode's own createVaultItem call has landed, so a retry after a
+  // partial failure never calls createVaultItem a second time for the
+  // same submission attempt.
+  const [createdItemState, setCreatedItemState] = useState<{
+    id: string;
+    revision: number;
+  } | null>(null);
   // "Immediately selecting the newly-created folder" (UI-SPEC) must not
   // wait on useFolders()'s own subscription re-render — track it locally
   // as a fallback option so the <select> always has a matching <option>.
@@ -329,6 +359,10 @@ export default function ItemForm({
       const folder = await createVaultFolder(name);
       setPendingFolder(folder);
       setFields((prev) => ({ ...prev, folderId: folder.id }));
+      // 32-01-PLAN.md: a brand-new personal folder always clears any prior
+      // shared-destination selection -- it is a genuine scope change back
+      // to personal, not merely a fields.folderId update.
+      setDestinationCollectionId(null);
       setNewFolderName("");
       setAddingFolder(false);
     } catch {
@@ -393,11 +427,81 @@ export default function ItemForm({
     const cleaned = cleanFields(fields);
     try {
       if (mode === "edit" && itemId !== undefined && currentRevision !== undefined) {
-        await updateVaultItem(itemId, cleaned, currentRevision);
+        // 32-01-PLAN.md: dispatch to moveVaultItem ONLY when the selected
+        // destination actually differs from the item's current scope --
+        // RESEARCH.md's Anti-Pattern: never route an unchanged destination
+        // through the move helper.
+        if (destinationCollectionId !== (currentCollectionId ?? null)) {
+          await moveVaultItem(itemId, cleaned, currentRevision, destinationCollectionId);
+        } else {
+          await updateVaultItem(itemId, cleaned, currentRevision);
+        }
+        onCreated();
       } else {
-        await createVaultItem(cleaned);
+        // 32-01-PLAN.md: retry-safe two-call sequence. Never call
+        // createVaultItem twice for the same submission attempt -- once
+        // createdItemState is set, a retry reuses it.
+        let created = createdItemState;
+        if (created === null) {
+          const item = await createVaultItem(cleaned);
+          created = { id: item.id, revision: item.revision };
+          setCreatedItemState(created);
+        }
+        if (destinationCollectionId !== null) {
+          try {
+            await moveVaultItem(created.id, cleaned, created.revision, destinationCollectionId);
+          } catch (moveErr) {
+            // B-3 (32-PLAN-CHECK.md): the ItemForm-side backstop, for the
+            // case where moveVaultItem's OWN internal recovery could not
+            // observe the move having actually landed (a GENUINE,
+            // unrecovered failure, or a recovery moveVaultItem itself
+            // could not observe). Same revision conjunct as
+            // moveVaultItem's own recovery, for the same reason: a
+            // destination-only test recovers a PREVIOUS attempt's commit
+            // and eats the user's latest edit.
+            const fresh = getItems().find((i) => i.id === created!.id);
+            if (
+              fresh?.collectionId === destinationCollectionId &&
+              fresh.revision === created.revision + 1
+            ) {
+              setCreatedItemState(null);
+              onCreated();
+              return;
+            }
+            // Never leave createdItemState pinned to the ORIGINAL, now-
+            // possibly-stale revision -- this is what makes a genuine
+            // retry send the CURRENT expected_revision instead of
+            // 409-ing forever.
+            setCreatedItemState({
+              id: created.id,
+              revision: fresh?.revision ?? created.revision,
+            });
+            // Route by error type, not one string: a conflict gets
+            // conflict copy naming that someone else changed the item,
+            // never the retry-inviting itemCreatedButMoveFailed copy --
+            // inviting a retry into a conflict is the same retry-lie
+            // shape B-3 exists to close (WINDOWS #11).
+            if (moveErr instanceof RevisionConflictError) {
+              setSubmitError(
+                moveErr.lastEditorEmail
+                  ? interpolate(t("error.revisionConflictAttributed"), {
+                      email: moveErr.lastEditorEmail,
+                    })
+                  : t("error.revisionConflict"),
+              );
+            } else {
+              setSubmitError(t("error.itemCreatedButMoveFailed"));
+            }
+            // Do NOT call onCreated() -- the item exists but is not yet
+            // where the user asked. The form stays open so a second Save
+            // click retries ONLY the move (createdItemState !== null
+            // above), never a duplicate create.
+            return;
+          }
+        }
+        setCreatedItemState(null);
+        onCreated();
       }
-      onCreated();
     } catch (err) {
       if (mode === "edit") {
         onError?.(err as Error);
@@ -418,6 +522,56 @@ export default function ItemForm({
   // labeled "Inne"/"Other" FormSection (card/identity — Bartek live-review
   // round 4, TASKS 4/6).
   function renderFolderBlock() {
+    // B-2 (32-PLAN-CHECK.md): an item CURRENTLY living in a family-wide
+    // item_bucket renders a DISABLED select naming its actual scope --
+    // never the bare, enabled "Bez folderu" the shipped select below would
+    // otherwise show, which would let a user pick a personal folder while
+    // the item silently stayed in the bucket. This branch replaces the
+    // control outright (never falls back to the shipped
+    // value={fields.folderId ?? ""} path below) -- family-wide item_bucket
+    // editing has its own surface (Phase 30/31's dialogs) and stays
+    // explicitly out of this phase's scope, but this control must be
+    // honest about it rather than silent. Omits the "+ new folder" button
+    // entirely -- creating a new personal folder cannot help while the
+    // item is locked in the bucket, and offering it invites the exact
+    // mis-file this fix closes.
+    const currentCollection =
+      currentCollectionId !== null && currentCollectionId !== undefined
+        ? collections.find((c) => c.id === currentCollectionId)
+        : undefined;
+    const currentIsItemBucket = currentCollection?.familyWideKind === "item_bucket";
+
+    if (currentIsItemBucket) {
+      return (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="item-folder-select" className="text-sm">
+            {t("item.folderLabel")}
+          </label>
+          <select
+            id="item-folder-select"
+            data-testid="item-folder-select"
+            className="select select-bordered w-full"
+            value="item-bucket-locked"
+            disabled
+          >
+            <option value="item-bucket-locked">{t("item.folderLockedByFamilyShare")}</option>
+          </select>
+        </div>
+      );
+    }
+
+    // 32-01-PLAN.md (CONTEXT.md Area 1): item_bucket collections are
+    // excluded entirely from the destination list (mirrors
+    // CollectionPicker.tsx:70-77's inline filter -- not extracted, matching
+    // that file's own un-extracted precedent). A folder the caller cannot
+    // write to (read/hidden_password/null) is shown but disabled, with the
+    // reason. W-3 (32-PLAN-CHECK.md): when there are zero shared
+    // collections, the "Udostępnione foldery" optgroup does not render at
+    // all (never an empty optgroup).
+    const sharedCollections = collections.filter((c) => c.familyWideKind !== "item_bucket");
+    const writableShared = sharedCollections.filter((c) => c.accessLevel === "edit");
+    const readOnlyShared = sharedCollections.filter((c) => c.accessLevel !== "edit");
+
     return (
       <div className="flex flex-col gap-1">
         <label htmlFor="item-folder-select" className="text-sm">
@@ -428,20 +582,47 @@ export default function ItemForm({
             id="item-folder-select"
             data-testid="item-folder-select"
             className="select select-bordered w-full"
-            value={fields.folderId ?? ""}
-            onChange={(e) =>
-              setFields((prev) => ({
-                ...prev,
-                folderId: e.target.value === "" ? null : e.target.value,
-              }))
+            value={
+              destinationCollectionId !== null
+                ? `collection:${destinationCollectionId}`
+                : (fields.folderId ?? "")
             }
+            onChange={(e) => {
+              const value = e.target.value;
+              if (value.startsWith("collection:")) {
+                setDestinationCollectionId(value.slice("collection:".length));
+                setFields((prev) => ({ ...prev, folderId: null }));
+              } else {
+                setDestinationCollectionId(null);
+                setFields((prev) => ({
+                  ...prev,
+                  folderId: value === "" ? null : value,
+                }));
+              }
+            }}
           >
             <option value="">{t("item.noFolder")}</option>
-            {folderOptions.map((folder) => (
-              <option key={folder.id} value={folder.id}>
-                {folder.name}
-              </option>
-            ))}
+            <optgroup label={t("item.myFoldersGroup")}>
+              {folderOptions.map((folder) => (
+                <option key={folder.id} value={folder.id}>
+                  {folder.name}
+                </option>
+              ))}
+            </optgroup>
+            {sharedCollections.length > 0 ? (
+              <optgroup label={t("item.sharedFoldersGroup")}>
+                {writableShared.map((c) => (
+                  <option key={c.id} value={`collection:${c.id}`}>
+                    {c.name}
+                  </option>
+                ))}
+                {readOnlyShared.map((c) => (
+                  <option key={c.id} value={`collection:${c.id}`} disabled>
+                    {interpolate(t("item.folderReadOnlyOption"), { name: c.name })}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
           </select>
           <button
             type="button"

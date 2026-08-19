@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ItemFields, VaultItem } from "@/lib/vault/types";
 import {
+  CollectionKeyUnavailableError,
   DirectShareNotEditableError,
   RevisionConflictError,
   touchVaultItem,
@@ -144,7 +145,16 @@ export default function DetailPanel({
   // anywhere -- can no longer be flattened into the generic retry-inviting
   // copy. "generic" preserves the pre-existing behaviour byte-for-byte for
   // every other error.
-  const [saveError, setSaveError] = useState<null | "generic" | "notEditable">(null);
+  // 32-01-PLAN.md: "moveRefused" is the TOCTOU refusal path ORG-02
+  // requires -- CollectionKeyUnavailableError thrown by moveVaultItem on a
+  // 403 (destination access revoked between the client's stale
+  // useCollections() view and submit). This string must NOT invite a
+  // retry (SC3/Phase 31's established rule -- retrying cannot succeed
+  // until access is restored), unlike error.itemCreatedButMoveFailed's
+  // genuinely different create-mode case.
+  const [saveError, setSaveError] = useState<null | "generic" | "notEditable" | "moveRefused">(
+    null,
+  );
   // Proactive live-edit-conflict banner (SYNC-03) — a SECOND, independently
   // controlled trigger path alongside the reactive save-time `conflict`
   // state above; never merged into one boolean. Captured only at edit-entry
@@ -589,7 +599,9 @@ export default function DetailPanel({
             <div data-testid="item-save-error-banner" className="alert alert-error text-sm">
               {saveError === "notEditable"
                 ? t("share.sharedWithYouNotEditable")
-                : t("error.itemSaveFailed")}
+                : saveError === "moveRefused"
+                  ? t("error.itemMoveAccessLost")
+                  : t("error.itemSaveFailed")}
             </div>
           ) : null}
           <ItemForm
@@ -598,6 +610,7 @@ export default function DetailPanel({
             mode="edit"
             itemId={item.id}
             currentRevision={editBaselineRevision ?? item.revision}
+            currentCollectionId={item.collectionId ?? null}
             initialFields={item.fields}
             onCreated={() => {
               setConflict(false);
@@ -611,6 +624,10 @@ export default function DetailPanel({
                 setConflictEditorEmail(err.lastEditorEmail);
               } else if (err instanceof DirectShareNotEditableError) {
                 setSaveError("notEditable");
+              } else if (err instanceof CollectionKeyUnavailableError) {
+                // 32-01-PLAN.md: the TOCTOU refusal path ORG-02 requires --
+                // never invites a retry (SC3/Phase 31's established rule).
+                setSaveError("moveRefused");
               } else {
                 // Never swallow: a network failure or UndecryptableItemError
                 // (CR-03) must surface something, not just stop the spinner.

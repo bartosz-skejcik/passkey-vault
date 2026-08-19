@@ -250,6 +250,27 @@ export const DICTIONARY = {
   "item.noFolder": { pl: "Bez folderu", en: "No folder" },
   "item.folderLabel": { pl: "Folder", en: "Folder" },
   "item.tagsLabel": { pl: "Tagi", en: "Tags" },
+  // 32-01-PLAN.md (Area 1): the item-folder-select's new optgroup labels --
+  // "Bez folderu" stays a bare, un-grouped option (Claude's discretion per
+  // 32-CONTEXT.md), these two group the personal-folder options and the
+  // shared-collection options beneath them.
+  "item.myFoldersGroup": { pl: "Moje foldery", en: "My folders" },
+  "item.sharedFoldersGroup": { pl: "Udostępnione foldery", en: "Shared folders" },
+  // A shared folder the caller holds read/hidden_password on (not edit) --
+  // shown but disabled, with the reason inline in the option label
+  // (32-CONTEXT.md's locked "shown but disabled, with the reason").
+  "item.folderReadOnlyOption": {
+    pl: "{name} (tylko do odczytu)",
+    en: "{name} (read-only)",
+  },
+  // B-2 (32-PLAN-CHECK.md): the disabled select's single option when the
+  // item's CURRENT scope is a family-wide item_bucket -- names where a real
+  // change actually happens (Phase 30/31's sharing dialogs), not merely
+  // "disabled".
+  "item.folderLockedByFamilyShare": {
+    pl: "Udostępnione z rodziną — zmień w oknie udostępniania",
+    en: "Shared with the family — change from the sharing window",
+  },
 
   // Item-type labels (badges, type picker) — Claude's-discretion copy, not
   // explicitly enumerated in UI-SPEC's Copywriting Contract table.
@@ -539,6 +560,22 @@ export const DICTIONARY = {
   "error.itemMoveFailed": {
     pl: "Nie udało się przenieść itemu. Spróbuj ponownie.",
     en: "Failed to move item. Please try again.",
+  },
+  // 32-01-PLAN.md: the create-then-move sequence's own two error cases --
+  // distinct because retrying means genuinely different things for each.
+  // itemCreatedButMoveFailed's retry invitation IS safe (B-3's recovery
+  // mechanism makes the promise true: a lost response is recovered
+  // transparently, and a genuine retry always sends the item's CURRENT
+  // revision, never a stale one that would 409 forever). itemMoveAccessLost
+  // must NEVER invite a retry -- access loss cannot be fixed by trying
+  // again (SC3/Phase 31's established rule).
+  "error.itemCreatedButMoveFailed": {
+    pl: "Item został zapisany, ale nie udało się przenieść go do wybranego folderu. Spróbuj ponownie.",
+    en: "The item was saved, but moving it to the selected folder failed. Try again.",
+  },
+  "error.itemMoveAccessLost": {
+    pl: "Nie masz już dostępu do zapisu w tym folderze. Zmiana nie została zapisana.",
+    en: "You no longer have write access to this folder. The change was not saved.",
   },
 
   "validation.required": { pl: "To pole jest wymagane", en: "This field is required" },

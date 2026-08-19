@@ -73,6 +73,22 @@ function isNotFoundError(err: unknown): boolean {
     (err as { status: unknown }).status === 404
   );
 }
+
+// 32-01-PLAN.md (B-3/C-2, 32-PLAN-CHECK.md): same duck-typed rationale as
+// isConflictError/isNotFoundError above -- used by `moveVaultItem` to
+// distinguish a genuine TOCTOU refusal (`require_collection_edit`'s Gate 2,
+// vault.rs, re-validating destination access server-side against a client
+// view that went stale between destination-select and submit) from any
+// other failure. Reachable only when `newCollectionId !== null` (Gate 2
+// only runs on a non-null destination).
+function isForbiddenError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "status" in err &&
+    (err as { status: unknown }).status === 403
+  );
+}
 import {
   createFolder,
   createItem,
@@ -82,6 +98,8 @@ import {
   getSharedDirectSync,
   getSharedRevisions,
   getSyncSnapshot,
+  listItems,
+  moveItemToCollection,
   touchItem,
   updateItem,
   type DirectSharedItemRow,
@@ -1105,6 +1123,177 @@ export async function updateVaultItem(
     replaceItemInSources(id, updated);
   } catch (err) {
     console.error("pv: post-commit store bookkeeping failed after updateItem", err);
+  }
+  return updated;
+}
+
+/** 32-01-PLAN.md: moves an item to a new destination scope -- a shared
+ * collection (`newCollectionId` non-null) or back to personal scope
+ * (`null`) -- re-encrypting ONLY under the DESTINATION's key/AAD.
+ * `vault.rs::move_item` (unchanged by this plan) is the server side: it
+ * requires `edit` on the destination (Gate 2, `require_collection_edit`)
+ * and writes collection_id/ciphertext/revision in one statement, exactly
+ * as `updateVaultItem`'s PUT does for a same-scope edit.
+ *
+ * DEPARTURE from 32-RESEARCH.md's literal "decrypt source, encrypt dest"
+ * Pattern 1: this function never decrypts the item's CURRENT ciphertext at
+ * all -- `rawFields` is written to the destination verbatim (after
+ * `normalizeItemFields`). This is strictly safer than a decrypt-old/
+ * re-encrypt-old sequence for its one real caller (`ItemForm`, in edit or
+ * create-then-move mode): it correctly captures a content edit made in the
+ * SAME save as a destination change, instead of silently discarding it.
+ *
+ * PRECONDITION any caller MUST uphold (32-PLAN-CHECK.md W-6) -- this is
+ * safe ONLY because `ItemForm` already holds genuine, complete, LIVE
+ * plaintext for the item being moved (that is literally what the form
+ * edits); `DetailPanel` gates edit mode behind `canEditItem`, so a
+ * `read`/`hidden_password` holder never mounts the form with content to
+ * move. A FUTURE caller that has not decrypted/loaded the item into an
+ * edit form (e.g. a hypothetical context-menu "move to shared folder"
+ * action operating on a row it never opened) must NOT call this function
+ * with a partially-populated or stale `ItemFields` object -- doing so
+ * would silently encrypt and persist WRONG content under the destination's
+ * real key: an unrecoverable corruption, not a caught error. The existing,
+ * UNRELATED `moveItemToFolder`/context-menu-move mechanism (personal
+ * folders only, drives `updateVaultItem`) must never be widened to accept
+ * a collection id without first switching to a genuine decrypt-source
+ * shape -- it holds no live plaintext to pass here. */
+export async function moveVaultItem(
+  id: string,
+  rawFields: ItemFields,
+  currentRevision: number,
+  newCollectionId: string | null,
+): Promise<VaultItem> {
+  const uk = getUnlockedUserKey();
+  if (uk === null) {
+    throw new Error("cannot move an item while the vault is locked");
+  }
+  const fields = normalizeItemFields(rawFields);
+  // Same guards updateVaultItem applies, for the same reasons -- see
+  // UndecryptableItemError's/DirectShareNotEditableError's own doc
+  // comments.
+  const existingBeforeSave = items.find((item) => item.id === id);
+  if (existingBeforeSave?.undecryptable === true) {
+    throw new UndecryptableItemError();
+  }
+  if (directSharedItems.some((item) => item.id === id)) {
+    throw new DirectShareNotEditableError(id);
+  }
+  const newRevision = currentRevision + 1;
+  const plaintext = JSON.stringify(fields);
+  let combined: string;
+  if (newCollectionId === null) {
+    combined = encryptItem(uk, plaintext, id, newRevision);
+  } else {
+    // Borrowed reference into collections.ts's own long-lived cache, same
+    // discipline as updateVaultItem's identical lookup.
+    const ck = getCollectionKey(newCollectionId);
+    if (ck === undefined) {
+      // FAIL LOUD -- never fall back to the personal-key path above. See
+      // CollectionKeyUnavailableError's own doc comment for why.
+      throw new CollectionKeyUnavailableError(newCollectionId);
+    }
+    combined = encryptItemForCollection(ck, plaintext, newCollectionId, id, newRevision);
+  }
+  const { encKey, encData } = splitCombinedEncryptedItem(combined);
+
+  function buildUpdated(revision: number, updatedAt: string): VaultItem {
+    const existingIndex = items.findIndex((item) => item.id === id);
+    const existing = existingIndex === -1 ? undefined : items[existingIndex];
+    // Same carry-forward discipline updateVaultItem's own tail comment
+    // documents for lastUsedAt/isShared/lastEditorEmail -- this response
+    // body has none of those fields either. `isShared`/`accessLevel` are a
+    // best-effort OPTIMISTIC value here (mirrors decryptItemRow's dispatch
+    // for accessLevel), corrected on the next background snapshot, same as
+    // updateVaultItem's own carried-forward fields.
+    return {
+      id,
+      revision,
+      fields,
+      updatedAt,
+      lastUsedAt: existing?.lastUsedAt,
+      collectionId: newCollectionId,
+      accessLevel:
+        newCollectionId === null ? undefined : getCollectionAccessLevel(newCollectionId),
+      isShared: newCollectionId !== null ? true : (existing?.isShared ?? false),
+    };
+  }
+
+  let response: { revision: number; collection_id: string | null; updated_at: string };
+  try {
+    response = await moveItemToCollection(id, newCollectionId, encKey, encData, currentRevision);
+  } catch (err) {
+    // B-3 / C-2 (32-PLAN-CHECK.md): recover from a lost/aborted response
+    // instead of reporting a false failure or looping a doomed retry.
+    // Re-fetch the item's current server-side row and check whether THIS
+    // attempt's own commit is what's actually there.
+    //
+    // The revision conjunct is load-bearing -- do not drop it. A
+    // destination-only check is correct for a first-attempt lost response
+    // and WRONG on a retry: save #1 commits content A and its response is
+    // lost; the user edits to B; save #2 fails; a destination-only
+    // recovery sees collection_id === newCollectionId -- left there by
+    // save #1 -- and reports success over content A, silently eating the
+    // user's last edit. Requiring revision === currentRevision + 1
+    // distinguishes "THIS attempt's own commit landed" from "some earlier
+    // attempt's commit is still sitting there": on the retry, the fresh
+    // row's revision is the one save #1 wrote, not currentRevision + 1, so
+    // recovery correctly declines and the request falls through to the
+    // existing conflict/forbidden classification below.
+    let freshRows: ItemRow[];
+    try {
+      freshRows = await listItems();
+    } catch {
+      // Wrap the recovery re-fetch itself: if IT throws, rethrow the
+      // ORIGINAL error rather than the fetch error, and never treat this
+      // as recovered -- otherwise a network blip during recovery masks a
+      // genuine TOCTOU 403, quietly weakening SC3's refusal surfacing.
+      throw err;
+    }
+    const freshRow = freshRows.find((row) => row.id === id);
+    if (
+      freshRow !== undefined &&
+      freshRow.collection_id === newCollectionId &&
+      freshRow.revision === newRevision
+    ) {
+      const recovered = buildUpdated(newRevision, freshRow.updated_at);
+      try {
+        replaceItemInSources(id, recovered);
+      } catch (bookkeepingErr) {
+        console.error(
+          "pv: post-commit store bookkeeping failed after moveItemToCollection recovery",
+          bookkeepingErr,
+        );
+      }
+      return recovered;
+    }
+    // Only when the fresh row does NOT show the destination already
+    // reached (by this attempt) do the existing failure branches apply.
+    if (isConflictError(err)) {
+      await loadAndDecryptAll();
+      const details = (err as { details?: { last_editor_email?: string | null } }).details;
+      const lastEditorEmail = details?.last_editor_email ?? undefined;
+      throw new RevisionConflictError(lastEditorEmail);
+    }
+    // A 403 can only occur when newCollectionId !== null (Gate 2 only runs
+    // on a non-null destination) -- this is the client-visible half of
+    // ORG-02's TOCTOU refusal (destination access revoked between the
+    // client's stale useCollections() view and submit; vault.rs::move_item
+    // Gate 2 refuses server-side before any write -- no server change
+    // needed).
+    if (isForbiddenError(err)) {
+      throw new CollectionKeyUnavailableError(newCollectionId ?? "personal");
+    }
+    throw err;
+  }
+  const updated = buildUpdated(response.revision, response.updated_at);
+  // WR-08 / WINDOWS #11 discipline: the PUT already returned successfully,
+  // so a throw from this bookkeeping must never be reported to the caller
+  // as a failed save.
+  try {
+    replaceItemInSources(id, updated);
+  } catch (err) {
+    console.error("pv: post-commit store bookkeeping failed after moveItemToCollection", err);
   }
   return updated;
 }
