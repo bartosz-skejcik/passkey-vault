@@ -118,7 +118,15 @@ async function registerWeb(baseURL, email, password) {
   if (loginRes.status !== 200) {
     throw new Error(`login: expected 200, got ${loginRes.status}: ${JSON.stringify(loginRes.body)}`);
   }
-  return { wasm, uk, token: loginRes.body.token };
+  // GAP2 fix (40-VERIFICATION.md): the field is `session_token`
+  // (`crates/pv-server/src/routes/auth.rs`'s `LoginResponse`, no serde
+  // rename), never bare `token` -- this script had zero callers before
+  // this fix pass (verifier-confirmed by grep), so this mismatch was never
+  // exercised: every subsequent authenticated call silently sent no
+  // `Authorization` header at all (`jsonRequest`'s `if (token)` guard
+  // skips the header entirely for `undefined`), surfacing as a 401 on the
+  // identity-keypair PUT rather than here.
+  return { wasm, uk, token: loginRes.body.session_token };
 }
 
 async function ensureOwnIdentityKeypair(wasm, baseURL, token, uk) {
