@@ -153,6 +153,15 @@ struct ShareItemView: View {
     @State private var errorMessage: String?
     @State private var didShare = false
 
+    /// WR-06: the ONE filtered set both the person picker AND
+    /// `ShareItemComposer.recipients` read, so a share can never target the
+    /// caller's own row or a suspended member -- either of which the
+    /// whole-family branch already excludes, but the person picker
+    /// previously iterated the raw `members` array unfiltered.
+    private var shareableMembers: [FamilyAPI.FamilyMemberRecord] {
+        members.filter { $0.userId != ownUserId && $0.status == "active" }
+    }
+
     var body: some View {
         PVScreenScaffold(
             content: {
@@ -175,9 +184,9 @@ struct ShareItemView: View {
 
                 if scope == .person {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(members, id: \.userId) { member in
+                        ForEach(shareableMembers, id: \.userId) { member in
                             personRow(member)
-                            if member.userId != members.last?.userId {
+                            if member.userId != shareableMembers.last?.userId {
                                 Divider()
                             }
                         }
@@ -294,7 +303,7 @@ struct ShareItemView: View {
     private func share() async {
         errorMessage = nil
         let recipients = ShareItemComposer.recipients(
-            for: scope, selectedIds: selectedMemberIds, members: members, excluding: ownUserId
+            for: scope, selectedIds: selectedMemberIds, members: shareableMembers, excluding: ownUserId
         )
         guard !recipients.isEmpty else {
             errorMessage = "Wybierz co najmniej jedną osobę."
