@@ -14,3 +14,10 @@ files:
 ## Solution
 
 Either change the default to `http://localhost:8620` (matching PV_ADDR's default port) or make `Config::validate()` fail-loud when PV_ORIGIN is unset (mirroring the Phase-7 fail-loud posture for malformed values). Also consider logging the effective rp_id/rp_origin at boot INFO so a mismatch is visible in the first screenful. Natural home: Phase 19 (server hardening).
+
+---
+
+**RESOLVED 2026-08-19 (backlog sweep, commit `9aa5404`):** default changed to `http://localhost:8620`
+and the effective rp_id/rp_origin is logged at boot INFO before pool/webauthn construction. Unit test
+`from_env_default_rp_origin_matches_pv_addrs_default_port` added, falsification-proven (reverting the
+default turns it red with left: :3000 / right: :8620).

@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: |
   Live e2e failure in web/e2e/family-wide-sharing.spec.ts:1208
   "revocation: a member REMOVED by the owner loses family-wide access on the
@@ -270,3 +270,64 @@ verification: |
 files_changed:
   - crates/pv-server/src/routes/membership.rs
   - crates/pv-server/src/routes/invitations.rs
+
+## Human Verification (2026-08-19)
+
+evidence: |
+  Fresh HEAD build first (commit 963470c, `main`): `cargo build --release -p
+  pv-server` (already up to date, "Finished" with no recompile) and
+  `cd web && npm run build` (clean, exit 0). Port 8620 confirmed free before
+  and after every run.
+
+  Run 1 -- full spec, exactly the deliverable's own command:
+  `CI=1 PV_E2E_DB_DIR=<scratch>/e2e-db-item1-full npx playwright test
+  e2e/family-wide-sharing.spec.ts --retries=0`
+  Result: 10 passed (2.4m), exit code 0. Test 6 (the "REMOVED by the owner"
+  scenario, same one as the original trigger) passed in 33.2s as part of the
+  in-order sequence -- matching the fix's own verification note ("32.1s"
+  previously) almost exactly.
+
+  Run 2 -- isolated repro the file itself flagged as a false artifact:
+  `CI=1 PV_E2E_DB_DIR=<scratch>/e2e-db-item1-isolated2 npx playwright test
+  e2e/family-wide-sharing.spec.ts -g "REMOVED by the owner" --retries=0`
+  Result: 1 failed, exit code 1. Failure is byte-for-byte the predicted
+  mechanism: `assertRecipientDecrypts` for member C times out at
+  `getByTestId('item-row-...')` with the custom message "C must already
+  hold the family-wide grant before the removal below, so the later notice
+  reflects an actual re-key" -- i.e. C's setup anchor (the same assertion
+  the original trigger named) never resolves because, run alone, the only
+  test that ever calls `joinViaInviteUI(memberC...)` (SC3 fresh invite)
+  never executes, so C holds zero collection_keys for anything. This is
+  exactly the "isolated-run failure is a test-ordering artifact, not the
+  same bug as the full suite" hypothesis the file's Current Focus section
+  already confirmed via direct sqlite3 inspection on 2026-08-11 --
+  independently reproduced today at the black-box (test-output) level
+  without needing a fresh DB inspection, since the error message and
+  failure site are self-describing and match.
+
+  Both runs used a throwaway `PV_E2E_DB_DIR` under the scratchpad;
+  Playwright's own `global-teardown.ts` removed each directory after its
+  run. `data/pv.db` (the real dev DB, untouched by these throwaway-DB runs)
+  checksum unchanged before/after
+  (sha256 8e043c9dcbf4...ab997c8). Port 8620 free after both runs (no
+  leftover pv-server/chromium processes).
+
+resolution_paragraph: |
+  This is resolved. The fix from the 2026-08-11 session (
+  membership::require_collection_access_for_propagation replacing
+  require_collection_edit in invitations::create's family-wide fold-in
+  loop, in crates/pv-server/src/routes/membership.rs and
+  crates/pv-server/src/routes/invitations.rs, both already committed to
+  main as part of the phase-30/31/32 history) holds: the full
+  family-wide-sharing.spec.ts suite is 10/10 green on a fresh build of
+  current HEAD (963470c), including the exact "REMOVED by the owner"
+  scenario that originally failed. The isolated `-g "REMOVED by the owner"`
+  run does still fail today, but it fails for the SAME reason the file's
+  own investigation already proved on 2026-08-11 -- Playwright's `-g`
+  filter skips the SC3-fresh-invite test that is the only place member C
+  ever joins the family, so C has no family-wide grant to lose when run in
+  isolation. That is a test-fixture/ordering artifact of using `-g` on a
+  suite with cross-test setup dependencies, not a product bug, and is not
+  something this task's scope authorizes fixing (touching the spec file
+  was explicitly out of scope for the original debug session too). No code
+  changes were made in this verification pass.

@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: |
   Firefox provider-path binary-corruption hazard (proactive investigation,
   not yet user-observed). We just fixed a LIVE-PROVEN bug where a raw
@@ -431,3 +431,101 @@ next_action_HISTORICAL: |
 ---
 
 **BLAST-RADIUS CORRECTION (2026-07-20, orchestrator, git-evidenced — see a528bf follow-up report):** the Resolution's "every real RP integration would fail on BOTH browsers since Phase 12" overreached. Git timeline: bug born b89e6aa (12-03, 2026-07-16), relay's decodeCredentialResponseJson never normalized the array shape — BUT GitHub's own `webauthn-json` coerces fields via `new Uint8Array(arrayLike)` before use, silently masking the malformed shape; Bartek's phase-12 live create() on real github.com/Chrome genuinely succeeded inside the broken window (12-VERIFICATION). Corrected scope: the fix (47b6f09) is spec-correct and necessary; it is CURATIVE for RPs/paths that consume fields strictly (TextDecoder.decode, instanceof ArrayBuffer, native toJSON) and prophylactic for coercing consumers like GitHub. Root-cause mechanism unchanged.
+
+## Human Verification (2026-08-19)
+
+environment: |
+  Real Firefox 152.0.6, real geckodriver 0.37.1 (extension/node_modules/.bin,
+  fetched on demand). Fresh build of HEAD (963470c) first: `cargo build
+  --release -p pv-server` (up to date), `NEXT_PUBLIC_API_BASE_URL="" npm run
+  build` in web/, `npm run build:firefox` in extension/ (prior .output was
+  stale, dated 2026-07-22). pv-server started fresh against a throwaway
+  scratchpad DB with every lane's PV_EXTENSION_ORIGINS.
+
+harness_drift_finding: |
+  extension/e2e-firefox/probe-provider-corruption.cjs -- the PERMANENT
+  regression probe this file's own Resolution section explicitly says was
+  "kept here PERMANENTLY... as the one row in this project's e2e suites
+  that verifies BYTE-LEVEL correctness of a provider ceremony's WebAuthn
+  response" -- FAILS AS COMMITTED against current HEAD, for a reason
+  completely unrelated to the byte-corruption bug it guards: its own
+  sign-in step still drives the OLD popup UI (`input[type="email"]` /
+  `input[type="password"]` directly in the popup), which AUTH-01
+  (Plan 15-01/15-03) replaced with SignInView.tsx's single
+  server-ceremony-signin-button that opens a ceremony window instead --
+  the SAME UI drift extension/e2e-firefox/run-server-unlock.cjs's own
+  Step 1 already documents having fixed via its "Rule 3 (blocking-issue
+  auto-fix, Plan 15-07 phase-close checkpoint)" comment.
+  `probe-provider-corruption.cjs` was never given the equivalent fix and
+  errors out at `Unable to locate element: input[type="email"]` before it
+  ever reaches the actual probe. This is a genuine, source-visible defect
+  in a committed "permanent" regression gate (it cannot currently gate
+  anything -- it fails every run, on an unrelated precondition, before the
+  gate's own assertion runs) -- flagged here, and separately as a spawned
+  background-task suggestion, rather than fixed in place (this task's
+  brief is read-only on source; only this file and the two other named
+  debug files may be edited).
+
+evidence: |
+  Since the committed script cannot complete as-is, verification used a
+  scratchpad-only copy (<scratchpad>/probe-provider-corruption-adapted.cjs,
+  never written back to the repo) that is BYTE-IDENTICAL to the committed
+  probe except for its sign-in step, which was swapped for the SAME
+  ceremony-window-based password sign-in technique
+  run-server-unlock.cjs's own Step 1 already uses (verbatim call sequence:
+  click server-ceremony-signin-button -> switch to the new ceremony window
+  -> fill #pv-ext-unlock-email / #pv-ext-unlock-password -> click
+  ext-unlock-password-submit). Nothing about the actual create()
+  ceremony/probe logic (the part this debug session is about) was
+  touched.
+
+  Ran against a fresh password-only account (registered live via the real
+  RegisterForm UI, no crypto/API replication) and a fresh Firefox profile:
+  STEP0-origin PASS, SIGNIN PASS (via the corrected ceremony-window flow),
+  D-08-sanity PASS (navigator.credentials.create is MAIN-world-patched, not
+  native, as expected on the RP fixture page), and the actual deliverable
+  row:
+
+  PROBE-challenge-roundtrip: PASS -- a known, non-trivial 32-byte challenge
+  (bytes [1..32]) computed independently in Node survived a REAL
+  navigator.credentials.create() round trip (page -> content-relay ->
+  background/WASM -> content-relay -> page) byte-for-byte
+  (expected == observed == "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"),
+  AND credential.response.clientDataJSON arrived as a genuine
+  `ctorName=ArrayBuffer` (not the pre-fix array-like/numeric-keys shape) --
+  TextDecoder.decode()/JSON.parse succeeded on the page's own real script,
+  matching the file's own documented fixed behavior exactly. Full raw
+  create() result captured in
+  <scratchpad>/item3-probe-run4.log.
+
+  This run did not separately probe user.id/userHandle round-trip (the
+  committed script itself never did either -- only clientDataJSON's
+  challenge is checked); confidence for the other Bytes-typed fields
+  (raw_id, attestation_object, authenticator_data, signature, user_handle,
+  PRF results) rests on the already-recorded root-cause mechanism being
+  uniform and field-independent (the Cargo.toml `passkey-types` feature
+  toggle applies identically to every `Bytes`-typed field on the response
+  type, not per-field), not on an independent re-probe of each one -- this
+  matches the original Resolution's own verification bar, not a
+  reduced one.
+
+  data/pv.db (the real dev DB) checksum unchanged before/after (sha256
+  8e043c9dcbf4...ab997c8). Port 8620 confirmed free after the run; no
+  leftover pv-server/firefox/geckodriver processes.
+
+resolution_paragraph: |
+  This is resolved: the provider ceremony's WebAuthn binary-field
+  round-trip is proven clean on current HEAD (963470c) via a real
+  navigator.credentials.create() on real Firefox, byte-exact challenge
+  match, genuine ArrayBuffer clientDataJSON -- the Cargo.toml
+  passkey-types `serialize_bytes_as_base64_string` fix from the original
+  session holds. One separate, genuine finding surfaced along the way and
+  is NOT fixed here (source stayed read-only per this task's scope): the
+  committed extension/e2e-firefox/probe-provider-corruption.cjs -- meant
+  to be a PERMANENT regression gate for exactly this bug class -- cannot
+  currently run to completion on current HEAD; it fails at its own
+  now-stale sign-in step (AUTH-01's popup redesign), before ever reaching
+  its own probe assertion. A permanent gate that cannot run is not
+  actually gating anything. Flagged as a spawned background task for a
+  follow-up session to apply the same fix run-server-unlock.cjs's Step 1
+  already carries.

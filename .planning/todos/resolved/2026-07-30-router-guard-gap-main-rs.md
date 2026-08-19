@@ -30,3 +30,10 @@ Worth doing before Phase 23–27 add more routes over this data, since each late
 chance someone registers a route in the wrong place. Related: the accepted, documented limitation
 that hiding a route by ALSO editing an allowlist constant is a visible, reviewable act — that one is
 deliberate and should NOT be "fixed".
+
+---
+
+**RESOLVED 2026-08-19 (backlog sweep, commit `ce60246`):** the Phase 22 source-scan guard
+(`router_wrapper_and_whole_file_route_scan_has_no_blind_spot`) now also scans `main.rs`'s production
+region and refuses any chained `.route/.nest/.merge/...` there. Falsified by temporarily chaining a
+probe route onto `routes::router(...)` — guard went red naming the violation, clean after removal.

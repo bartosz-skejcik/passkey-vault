@@ -13,3 +13,12 @@ Three WARNING-class findings from the Phase 1 UI audit, to fold into Phase 2 (wh
 3. **"patrz błąd poniżej" copy misdirects** — failed-step error detail renders above the summary line; reword or relocate.
 
 Minor (optional): 14px status icons vs 16–20px spec, off-scale 12px spacing (`px-3`/`gap-3`), `aria-disabled` on non-interactive divs, coral wordmark accent missing.
+
+---
+
+**RESOLVED 2026-08-19 (backlog sweep): all three findings were stale — already fixed in earlier phases.**
+Finding 1 (light-theme base-300==base-200): distinct tokens since Phase 11's pv-ui extraction (`83f3165`),
+`tokens.css` vault-light block. Finding 2 (SelfTestCard retry): shipped in Phase 2 (`076fef8`) with the
+"Carried-forward Phase 1 UI-REVIEW fix" comment. Finding 3 (copy misdirection): same commit — the string
+already reads "przy kroku powyżej" and matches the real DOM order. The sweep added the missing regression
+test (`SelfTestCard.test.tsx`, retry-button render + click path, falsification-proven).

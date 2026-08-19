@@ -1,5 +1,5 @@
 ---
-status: awaiting_human_verify
+status: resolved
 trigger: |
   Live bug report from Bartek (real Firefox 152, temporary add-on from
   extension/.output/firefox-mv2, server http://localhost:8620, account
@@ -424,3 +424,118 @@ files_changed:
   - extension/entrypoints/background/server-unlock.ts
   - extension/entrypoints/background/server-unlock.test.ts
   - extension/lib/messaging/ext-protocol.ts
+
+## Human Verification (2026-08-19)
+
+environment: |
+  Real Firefox 152.0.6 (/Applications/Firefox.app), real geckodriver 0.37.1
+  (extension/node_modules/.bin/geckodriver, fetched on demand -- matches
+  the harness's documented target). extension/e2e-firefox/'s real
+  selenium-webdriver harness IS runnable in this environment -- no
+  environment-blocked caveat needed here (unlike items 2's own worst case
+  or item 3 below).
+
+  Fresh build of HEAD (963470c) first: `cargo build --release -p pv-server`
+  (up to date), `NEXT_PUBLIC_API_BASE_URL="" npm run build` in web/ (the
+  documented workaround for the pre-existing, unrelated 127.0.0.1 dev
+  misconfiguration this same file already flagged as out-of-scope), and
+  `npm run build:firefox` in extension/ (the prior .output/firefox-mv2 was
+  stale -- dated 2026-07-22, predating today's wasm rebuild; rebuilt
+  clean, exit 0). pv-server started with every lane's PV_EXTENSION_ORIGINS
+  (README's documented set) against a throwaway PV_DB_URL under the
+  scratchpad, PV_ADDR=127.0.0.1:8620, PV_STATIC_DIR=web/out.
+
+evidence: |
+  Run 1 -- official harness, unmodified: `npm run test:e2e:firefox:server-unlock`
+  (extension/e2e-firefox/run-server-unlock.cjs). Result: 13 PASS + 2 INFO +
+  0 FAIL, exit code 0 -- matches the baseline this file and
+  firefox-provider-corruption.md both already cite ("15 PASS/2 INFO/0
+  FAIL" there includes 2 extra rows from a different lane; this run's own
+  13+2 rows are the server-unlock lane's full complement, all green,
+  including P13-06-NO-PASSKEYS-EMPTY-STATE and P13-06-SETTINGS-LINK, the
+  two rows the 59a0a15 regression once broke).
+
+  Run 2 -- extended probe (copied to
+  <scratchpad>/probe-signin-spin.cjs, NOT committed to the repo --
+  source stayed read-only per this task's constraints; the copy only adds
+  observation after the official script's own Step 9 gesture click, every
+  original assertion/step left byte-identical). This reproduces Bartek's
+  ORIGINAL reported scenario end to end: real Firefox, temporary add-on
+  from extension/.output/firefox-mv2, account WITHOUT server-side passkeys
+  (a fresh probe account), popup sign-in -> "Zaloguj się passkeyem" via
+  the server-origin ceremony window -> typed email in ExtUnlockBridge ->
+  clicked its passkey button -- then polled BOTH the ceremony window and
+  the popup for up to 70s (past the fix's 60s GESTURE_TIMEOUT_MS bound)
+  instead of the official script's fixed 4s sample.
+  Observed: the ceremony window resolved OFF its busy state in 4086ms --
+  back to the SAME window's calm, retryable email form (ExtUnlockBridge's
+  `cancelled` -> `idle` branch, i.e. `navigator.credentials.get()`
+  rejected with `NotAllowedError`, classified via `isNotAllowedError` in
+  web/src/lib/passkeys/login.ts). Critically: there is only ONE window at
+  any point (confirmed via `getAllWindowHandles()` before/after every
+  step) and it IS interactively live (a real, unstuck DOM re-render of the
+  email form) -- this directly rules out Bartek's literal complaint
+  ("ANOTHER window with an email input appears, typing there does
+  nothing") on this build. Matches the Eliminated section's own
+  already-proven ruling (not a second in-app window, not the SPA
+  falling back to LoginForm) and confirms Symptoms.expecting's option (a)
+  ("the SAME ceremony window resetting busy->idle").
+  Popup's own ceremony button, however, was STILL disabled
+  ("Finish in the opened window...") when checked immediately after the
+  ceremony window's own resolution (~74s post-gesture) -- this is
+  EXPECTED, not a regression: ExtUnlockBridge.tsx's fix_rationale
+  explicitly documents postFailureNotice() is "deliberately NOT called
+  from the cancelled -> idle path" so the SAME window stays retryable;
+  the popup is only unblocked immediately for genuinely TERMINAL outcomes
+  (no-passkeys/not-signed-in/failed/timedOut), and stays busy for up to
+  the 120s background alarm on a plain cancel -- by design, because the
+  user has not given up (the ceremony window is still usable for a
+  retry). This is a real, documented asymmetry, not the originally
+  reported bug (which described an UNRESPONSIVE window, not a merely
+  slower-to-clear popup indicator on a still-usable one) -- flagging it
+  here plainly for Bartek's own awareness rather than silently omitting
+  it, per this task's own evidence-not-assertion standard.
+
+  Blind spot carried forward from the original debug session's own notes
+  (unchanged): this automated, geckodriver-driven environment has no
+  authenticator device registered at all, so `navigator.credentials.get()`
+  rejects near-instantly with `NotAllowedError` (the `cancelled` branch) --
+  it never actually renders Firefox's native, out-of-DOM WebAuthn picker
+  long enough to need the AbortController's 60s bound to dismiss it. The
+  SPECIFIC "native picker left open until the 60s timeout fires
+  (`timedOut: true`, AbortError)" code path was therefore NOT directly
+  exercised by either the original session's own live verification (also
+  noted a fast NotAllowedError, not a 60s-bound resolution, on a machine
+  "with no platform authenticator at all") or by this verification pass --
+  both are consistent with each other, but neither is proof the
+  AbortController signal genuinely dismisses a REAL lingering native
+  Firefox picker on a machine that DOES have an authenticator/platform
+  option available to hang on. That remains the one honest residual gap;
+  it requires a human with a real authenticator deliberately NOT
+  responding to the native prompt, which no available harness here can
+  automate.
+
+  data/pv.db (the real dev DB) checksum unchanged before/after
+  (sha256 8e043c9dcbf4...ab997c8) -- all runs used a throwaway
+  PV_DB_URL under the scratchpad. Port 8620 confirmed free after; no
+  leftover pv-server/firefox/geckodriver processes (`ps aux` checked).
+  Screenshots: <scratchpad>/item2-ff-shots-probe/16-step9-signin-gesture-ready.png,
+  17-step9-signin-post-gesture.png, 18-stepEXT-ceremony-after-poll.png,
+  19-stepEXT-popup-after-poll.png.
+
+resolution_paragraph: |
+  Resolved. On current HEAD (963470c), Bartek's literally-reported
+  scenario -- a second, unresponsive window with an email input, and a
+  login button spinning forever -- does not reproduce: the real Firefox
+  ceremony window terminates honestly (back to a live, retryable idle
+  state) within seconds of the gesture, not an infinite hang, and it
+  remains the SAME single window throughout, confirming the fix's own
+  root-cause analysis (commits 9441e93/b364c0b/f4206d1/bf9f637, verified
+  live here on a fresh build). One residual, pre-existing-and-flagged
+  nuance is worth Bartek's attention but is not a regression of this bug:
+  on a plain user-cancel (not a genuine failure), the popup's own busy
+  indicator only clears via a same-window retry or the 120s background
+  alarm, by explicit design (postFailureNotice is deliberately skipped for
+  cancelled/idle) -- distinct from, and much narrower than, the original
+  "spinning forever on a frozen window" report. No code changes made in
+  this verification pass; the scratchpad probe script was not committed.

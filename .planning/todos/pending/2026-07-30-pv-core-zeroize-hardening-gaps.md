@@ -51,3 +51,11 @@ acceptable**, and is documented precisely at the call site.
 
 Treat this as: "audit and zeroize-harden the whole provider ceremony plaintext path," sized as its
 own unit of work with the ceremony tests in scope.
+
+---
+
+**DELIBERATELY DEFERRED 2026-08-19 (backlog sweep):** both fixes live in `crates/pv-core/`, which is a
+declared coordination point with the parallel `ios/spike` worktree session (UniFFI checksum drift from
+concurrent pv-core builds has already broken that session once). Non-blocking hygiene debt per its own
+review verdict. Pick it up when the iOS worktree is merged or idle — coordinate first, don't fix behind
+its back.
