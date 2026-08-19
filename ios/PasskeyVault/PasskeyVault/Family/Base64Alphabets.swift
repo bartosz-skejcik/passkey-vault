@@ -45,14 +45,23 @@ enum PvBase64Error: Error, Equatable, CustomStringConvertible {
 /// URL-safe, no-padding base64 (RFC 4648 §5) -- for the invite URL
 /// fragment ONLY. Never used for a JSON body field.
 enum UrlSafeNoPadBase64 {
-    // RED stub (plan 40-06, Task 1 TDD) -- deliberately unimplemented so
-    // InviteTests.swift's own assertions fail before the real
-    // implementation lands. Restored to the real body in the immediately
-    // following GREEN commit.
-    static func encode(_ bytes: Data) -> String { "" }
+    static func encode(_ bytes: Data) -> String {
+        Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
 
     static func decode(_ string: String) throws -> Data {
-        throw PvBase64Error.invalidBase64(string)
+        let standard = string
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let paddingNeeded = (4 - (standard.count % 4)) % 4
+        let padded = standard + String(repeating: "=", count: paddingNeeded)
+        guard let data = Data(base64Encoded: padded) else {
+            throw PvBase64Error.invalidBase64(string)
+        }
+        return data
     }
 }
 
@@ -60,10 +69,14 @@ enum UrlSafeNoPadBase64 {
 /// values and every FFI-returned JSON string's binary fields ONLY. Never
 /// used for the URL fragment.
 enum StandardBase64 {
-    // RED stub -- see `UrlSafeNoPadBase64`'s identical note above.
-    static func encode(_ bytes: Data) -> String { "" }
+    static func encode(_ bytes: Data) -> String {
+        Data(bytes).base64EncodedString()
+    }
 
     static func decode(_ string: String) throws -> Data {
-        throw PvBase64Error.invalidBase64(string)
+        guard let data = Data(base64Encoded: string) else {
+            throw PvBase64Error.invalidBase64(string)
+        }
+        return data
     }
 }
