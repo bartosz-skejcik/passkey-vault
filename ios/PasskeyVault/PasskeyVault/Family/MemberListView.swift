@@ -225,24 +225,30 @@ struct MemberListView: View {
             }
             Spacer()
             rolePill(member)
-            if !isSelf {
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(Color("PVTextMuted"))
-            }
         }
         .frame(minHeight: PVMetrics.rowMinHeight)
         .contentShape(Rectangle())
         .accessibilityIdentifier("vault.family.row.\(member.userId)")
-        // CR-04: tap-to-remove, owner-only, never the caller's own row --
-        // `RemoveMemberService.leaveFamily` (self-removal via account
-        // deletion) is a deliberately DIFFERENT flow this row does not
-        // trigger.
-        .onTapGesture {
-            guard !isSelf, callerIsOwner, !isRemoving else { return }
-            removalCandidate = member
+        // WR-22 (40-REVIEW.md, iteration 2): a bare `.onTapGesture` on the
+        // WHOLE row initiated a destructive removal with no visible
+        // affordance -- nothing in the row's rendering indicated it was
+        // tappable, or that a tap's confirmed effect re-keys every shared
+        // collection. The platform idiom for a destructive row action is a
+        // swipe action, not an invisible whole-row tap; owner-only, never
+        // the caller's own row -- `RemoveMemberService.leaveFamily`
+        // (self-removal via account deletion) is a deliberately DIFFERENT
+        // flow this row does not trigger.
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !isSelf, callerIsOwner {
+                Button(role: .destructive) {
+                    guard !isRemoving else { return }
+                    removalCandidate = member
+                } label: {
+                    Label("Usuń", systemImage: "trash")
+                }
+                .accessibilityIdentifier("vault.family.remove.\(member.userId)")
+            }
         }
-        .accessibilityAddTraits(!isSelf && callerIsOwner ? [.isButton] : [])
     }
 
     /// Submits the removal batch (`RemoveMemberService.removeMember`, this
