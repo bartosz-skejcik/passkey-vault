@@ -48,8 +48,21 @@ enum SyncFreshness {
     ///   deliberately NOT a relative phrase whose minute count would keep
     ///   growing the longer the reader looks at it.
     static func describe(syncedAtMs: Int64?, reference: Date) -> String {
-        guard let syncedAtMs else { return neverSyncedText }
+        // WR-13 (39-REVIEW.md): `syncedAtMs <= 0` is not a real epoch-ms
+        // instant this codebase ever writes -- reject it as absence rather
+        // than rendering an absurd date for a corrupt/hostile blob
+        // (`Int64.max`/negative values decode without error, `Date`
+        // construction never fails).
+        guard let syncedAtMs, syncedAtMs > 0 else { return neverSyncedText }
         let synced = Date(timeIntervalSince1970: Double(syncedAtMs) / 1000)
+        // WR-13: `syncedAtMs` is written by ONE process (the device clock at
+        // pull time) and read by ANOTHER, possibly after an NTP correction,
+        // a manual clock/timezone edit, or a restore from backup -- a stored
+        // instant ahead of `reference` is reachable, and
+        // `RelativeDateTimeFormatter` happily phrases it as "in 5 minutes",
+        // exactly the "confident lie" this file exists to prevent (this
+        // file's own header). Never phrase a future instant.
+        guard synced <= reference else { return "Last synced just now" }
 
         if Calendar.current.isDate(synced, inSameDayAs: reference) {
             let formatter = RelativeDateTimeFormatter()

@@ -43,6 +43,44 @@ struct SyncFreshnessTests {
         #expect(text.hasPrefix("Last synced"))
     }
 
+    // WR-10 (39-REVIEW.md): the test above is satisfied by simply deleting
+    // the same-day branch entirely and always taking the relative path --
+    // "3 days ago" contains neither "minute" nor "hour" either way, so it
+    // pins nothing about the SPLIT the two branches actually implement.
+    // This test asserts the property that genuinely distinguishes them: a
+    // same-day string is relative to `reference` (moves as `reference`
+    // does), a previous-day string is NOT (it is pinned to the calendar
+    // date), and the two render DIFFERENTLY for the same underlying instant
+    // and reference. Delete the `isDate(_:inSameDayAs:)` branch and this
+    // test fails, because `earlierDay` starts moving with `reference` too.
+    @Test func aSameDayStringMovesWithReferenceWhileAPreviousDayStringDoesNot() {
+        let fiveMinutesAgoMs = Int64((Self.reference.timeIntervalSince1970 - 5 * 60) * 1000)
+        let threeDaysAgoMs = Int64((Self.reference.timeIntervalSince1970 - 3 * 24 * 3600) * 1000)
+        let laterReference = Self.reference.addingTimeInterval(3600)
+
+        let sameDayNow = SyncFreshness.describe(syncedAtMs: fiveMinutesAgoMs, reference: Self.reference)
+        let sameDayLater = SyncFreshness.describe(syncedAtMs: fiveMinutesAgoMs, reference: laterReference)
+        #expect(sameDayNow != sameDayLater, "a same-day (relative) string must move as the reference clock advances")
+
+        let earlierDayNow = SyncFreshness.describe(syncedAtMs: threeDaysAgoMs, reference: Self.reference)
+        let earlierDayLater = SyncFreshness.describe(syncedAtMs: threeDaysAgoMs, reference: laterReference)
+        #expect(earlierDayNow == earlierDayLater, "a previous-day (absolute) string must NOT move as the reference clock advances")
+    }
+
+    // MARK: - WR-13 (39-REVIEW.md): clamp/validate syncedAtMs
+
+    @Test func aFutureSyncedAtMsNeverRendersAsAFutureSync() {
+        let fiveMinutesFromNowMs = Int64((Self.reference.timeIntervalSince1970 + 5 * 60) * 1000)
+        let text = SyncFreshness.describe(syncedAtMs: fiveMinutesFromNowMs, reference: Self.reference)
+        #expect(text == "Last synced just now", "a syncedAtMs AHEAD of the reference clock (an NTP correction, a clock edit, a backup restore) must never phrase a sync that has not happened yet, got \(text.debugDescription)")
+    }
+
+    @Test func aNonPositiveSyncedAtMsIsTreatedAsNeverSynced() {
+        #expect(SyncFreshness.describe(syncedAtMs: 0, reference: Self.reference) == SyncFreshness.neverSyncedText)
+        #expect(SyncFreshness.describe(syncedAtMs: -1, reference: Self.reference) == SyncFreshness.neverSyncedText)
+        #expect(SyncFreshness.describe(syncedAtMs: Int64.min, reference: Self.reference) == SyncFreshness.neverSyncedText, "a corrupt/hostile blob's out-of-range value must be rejected, not rendered as an absurd date")
+    }
+
     @Test func neverSyncedIsADistinctString() {
         let text = SyncFreshness.describe(syncedAtMs: nil, reference: Self.reference)
         #expect(text == SyncFreshness.neverSyncedText)
