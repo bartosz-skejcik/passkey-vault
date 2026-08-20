@@ -358,6 +358,7 @@ struct VaultMutationTests {
     /// are inert; this fake exists only to force the write path to fail.
     private final class ThrowingCiphertextCacheStore: CiphertextCacheStore {
         func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? { nil }
+        func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool { false }
         func write(_ snapshot: CachedSnapshot) throws { throw CiphertextCacheStoreError.containerUnavailable }
         func purge() {}
     }
@@ -518,6 +519,10 @@ struct VaultMutationTests {
         func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? {
             guard let stored, stored.accountId == accountId, stored.serverBaseURL == serverBaseURL else { return nil }
             return stored
+        }
+        func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool {
+            guard let stored else { return false }
+            return stored.accountId != accountId || stored.serverBaseURL != serverBaseURL
         }
         func write(_ snapshot: CachedSnapshot) throws { stored = snapshot }
         func purge() { stored = nil }

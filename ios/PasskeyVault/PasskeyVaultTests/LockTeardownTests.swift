@@ -121,6 +121,10 @@ struct LockTeardownTests {
             guard let stored, stored.accountId == accountId, stored.serverBaseURL == serverBaseURL else { return nil }
             return stored
         }
+        func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool {
+            guard let stored else { return false }
+            return stored.accountId != accountId || stored.serverBaseURL != serverBaseURL
+        }
         func write(_ snapshot: CachedSnapshot) throws { stored = snapshot }
         func purge() { stored = nil }
     }

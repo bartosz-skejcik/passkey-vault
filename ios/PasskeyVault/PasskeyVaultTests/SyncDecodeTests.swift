@@ -267,6 +267,72 @@ struct SyncDecodeTests {
         )
     }
 
+    // MARK: - 5e. CR-01 (41-REVIEW.md iteration 2): distinguishing a SCOPING
+    // rejection from a genuine decode failure -- the capability
+    // `CipherCacheReader.lookup` depends on to refuse a foreign-account/
+    // foreign-server/unrecognized-schema blob BY NAME instead of widening
+    // onto its own unscoped raw scan.
+
+    @Test func rawSnapshotIsScopedOutReportsTrueForACrossAccountBlob() throws {
+        let store = Self.freshStore()
+        try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
+        #expect(store.readCurrentSnapshot(accountId: "mallory@example.com", serverBaseURL: Self.fixtureServerBaseURL) == nil)
+        #expect(
+            store.rawSnapshotIsScopedOut(accountId: "mallory@example.com", serverBaseURL: Self.fixtureServerBaseURL),
+            "a blob that decoded fine but belongs to a DIFFERENT account must be reported as scoped-out (CR-01), never treated as a decode failure"
+        )
+    }
+
+    @Test func rawSnapshotIsScopedOutReportsTrueForACrossServerBlob() throws {
+        let store = Self.freshStore()
+        try store.write(Self.snapshot(revision: 1, accountId: "alice@example.com", items: [Self.item(id: "a")]))
+        #expect(
+            store.rawSnapshotIsScopedOut(accountId: "alice@example.com", serverBaseURL: "https://a-different-server.example.invalid"),
+            "a blob written against a DIFFERENT server must be reported as scoped-out (CR-01)"
+        )
+    }
+
+    @Test func rawSnapshotIsScopedOutReportsTrueForANewerSchemaBlob() throws {
+        let fm = FakeContainerFileManager()
+        let store = AppGroupCiphertextCacheStore(fileManager: fm)
+        let future: [String: Any] = [
+            "schemaVersion": CachedSnapshot.currentSchemaVersion + 1,
+            "revision": 1,
+            "syncedAtMs": 1_755_555_555_000,
+            "accountId": "alice@example.com",
+            "serverBaseURL": Self.fixtureServerBaseURL,
+            "items": [],
+            "folders": [],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: future)
+        try data.write(to: fm.containerDir.appendingPathComponent(AppGroupCiphertextCacheStore.fileName))
+
+        #expect(
+            store.rawSnapshotIsScopedOut(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL),
+            "a blob written under a NEWER schema version must be reported as scoped-out (CR-01), not as an unreadable blob"
+        )
+    }
+
+    @Test func rawSnapshotIsScopedOutReportsFalseWhenNothingWasEverWritten() throws {
+        let store = Self.freshStore()
+        #expect(store.readCurrentSnapshot(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL) == nil)
+        #expect(
+            !store.rawSnapshotIsScopedOut(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL),
+            "a container that has never been written to is a decode/read failure, not a scoping rejection -- a caller must still fall through to the raw scan"
+        )
+    }
+
+    @Test func rawSnapshotIsScopedOutReportsFalseForAGenuinelyMalformedBlob() throws {
+        let fm = FakeContainerFileManager()
+        let store = AppGroupCiphertextCacheStore(fileManager: fm)
+        try Data("{ not valid json at all".utf8).write(to: fm.containerDir.appendingPathComponent(AppGroupCiphertextCacheStore.fileName))
+
+        #expect(
+            !store.rawSnapshotIsScopedOut(accountId: "alice@example.com", serverBaseURL: Self.fixtureServerBaseURL),
+            "a blob that cannot even decode as SOME CachedSnapshot is a genuine decode failure -- it must never be reported as scoped-out"
+        )
+    }
+
     // MARK: - 5d. The current-account marker (WR-05, 39-REVIEW.md)
 
     @Test func writingASnapshotRecordsACurrentAccountMarkerThatPurgeClears() throws {

@@ -67,6 +67,17 @@ protocol CiphertextCacheStore {
     /// enforced guard, not merely a recorded fact nothing ever compares.
     func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot?
 
+    /// CR-01 (41-REVIEW.md iteration 2): distinguishes a SCOPING rejection (wrong account, wrong
+    /// server, or an unrecognized `schemaVersion`) from a genuinely unreadable/undecodable blob.
+    /// `readCurrentSnapshot` deliberately folds five different `nil` causes into one signal for
+    /// its own callers (see its doc comment); this method exists so a caller that is about to fall
+    /// back to an UNSCOPED raw read (`CipherCacheReader.lookupRaw`) can first ask "did the blob
+    /// decode fine but simply belong to someone/somewhere/some-schema else?" and refuse instead of
+    /// widening. Returns `false` for every "cannot even parse a `CachedSnapshot`" cause (absent
+    /// file, unreadable data, malformed JSON) -- ONLY a successfully-decoded-but-scoped-out blob
+    /// returns `true`.
+    func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool
+
     /// Replaces whatever was persisted, in full, in one atomic operation.
     /// Never a partial/merge write (D-15) -- the server sends no deletion
     /// markers, so a merge would keep offering a credential the user
@@ -198,6 +209,27 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
         return snapshot
     }
 
+    /// CR-01 (41-REVIEW.md iteration 2): re-decodes the same on-disk blob `readCurrentSnapshot`
+    /// just rejected, WITHOUT re-applying the scoping checks, so a caller can tell a scoping
+    /// rejection apart from a decode failure. Deliberately re-reads rather than caching the
+    /// intermediate `CachedSnapshot?` from `readCurrentSnapshot` -- this store has no per-call
+    /// state, and the two reads are cheap (a small on-disk JSON blob), so correctness (never
+    /// stale) wins over the marginal cost of a second parse.
+    func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool {
+        guard let url = fileURL(), fileManager.fileExists(atPath: url.path) else { return false }
+        guard let data = try? Data(contentsOf: url) else { return false }
+        guard let snapshot = try? JSONDecoder().decode(CachedSnapshot.self, from: data) else {
+            return false
+        }
+        // The blob decoded as SOME valid `CachedSnapshot` -- if it fails any of the three scoping
+        // checks `readCurrentSnapshot` itself applies, this is a scoping rejection, not a decode
+        // failure, and the caller must refuse the read rather than widen it.
+        if snapshot.schemaVersion != CachedSnapshot.currentSchemaVersion { return true }
+        if snapshot.accountId != accountId { return true }
+        if snapshot.serverBaseURL != serverBaseURL { return true }
+        return false
+    }
+
     /// One atomic write with the file-protection attribute set in the SAME
     /// call (`Data.WritingOptions.completeFileProtectionUntilFirstUserAuthentication`
     /// combined with `.atomic`) -- not a write followed by a separate
@@ -255,6 +287,7 @@ final class AppGroupCiphertextCacheStore: CiphertextCacheStore {
 /// about this phase's two new constructor parameters.
 final class NullCiphertextCacheStore: CiphertextCacheStore {
     func readCurrentSnapshot(accountId: String, serverBaseURL: String) -> CachedSnapshot? { nil }
+    func rawSnapshotIsScopedOut(accountId: String, serverBaseURL: String) -> Bool { false }
     func write(_ snapshot: CachedSnapshot) throws {}
     func purge() {}
 }

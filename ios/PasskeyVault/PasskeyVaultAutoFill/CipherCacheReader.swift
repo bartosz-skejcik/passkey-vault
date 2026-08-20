@@ -111,8 +111,18 @@ enum CipherCacheReader {
             return lookupRaw(recordIdentifier: recordIdentifier)
         }
         guard let snapshot = store.readCurrentSnapshot(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL) else {
-            // The strict whole-blob decode itself failed (malformed cache, or missing itemId/
-            // revision on SOME row) -- diagnose by name via the raw scan, exactly as documented.
+            // CR-01 (41-REVIEW.md iteration 2): the comment this replaced asserted the fallback
+            // below only ever runs on a genuine decode failure -- untrue, because
+            // `readCurrentSnapshot` also returns `nil` for the three SCOPING rejections (D-19
+            // account, WR-07 schema, WR-09 server). Ask `rawSnapshotIsScopedOut` cheaply and
+            // refuse BY NAME on a scoping rejection -- NEVER widen a foreign-account/foreign-
+            // server/unrecognized-schema blob onto the unscoped raw scan below, which applies no
+            // account/server/schema check of any kind.
+            if store.rawSnapshotIsScopedOut(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL) {
+                return .failure(.itemNotFound(recordIdentifier))
+            }
+            // Genuinely unreadable/undecodable (absent file, unreadable data, malformed JSON) --
+            // diagnose by name via the raw scan, exactly as documented.
             return lookupRaw(recordIdentifier: recordIdentifier)
         }
         guard let row = snapshot.items.first(where: { $0.id == recordIdentifier }) else {
