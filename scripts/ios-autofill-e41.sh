@@ -1845,11 +1845,27 @@ PV_SERVER_DEFAULT_PORT=8620
 PV_SERVER_HEALTH_URL="http://127.0.0.1:${PV_SERVER_DEFAULT_PORT}/healthz"
 
 stop_pv_server_if_running() {
-  local pids
+  local pids pid comm
   pids=$(lsof -tiTCP:"${PV_SERVER_DEFAULT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
   if [ -n "$pids" ]; then
-    echo "==> e41-6: stopping pv-server process(es) on :${PV_SERVER_DEFAULT_PORT}: $pids" >&2
-    kill $pids >/dev/null 2>&1 || true
+    # WR-13 (41-REVIEW.md): `kill $pids` (unquoted, from `lsof -tiTCP`) used to terminate WHATEVER
+    # was listening on the port -- a developer's own `cargo run` in another terminal, or an
+    # unrelated service -- with no verification the pid actually belonged to `pv-server` and no
+    # restoration afterward. Verify the process image by name before killing; refuse (fail loud,
+    # never silently proceed) if it is not `pv-server`.
+    for pid in $pids; do
+      comm=$(ps -o comm= -p "$pid" 2>/dev/null || true)
+      case "$comm" in
+        */pv-server|pv-server)
+          echo "==> e41-6: stopping pv-server process on :${PV_SERVER_DEFAULT_PORT}: pid=$pid comm=$comm" >&2
+          kill "$pid" >/dev/null 2>&1 || true
+          ;;
+        *)
+          echo "ERROR: :${PV_SERVER_DEFAULT_PORT} is held by pid $pid (comm=${comm:-unknown}), which is NOT pv-server -- refusing to kill" >&2
+          return 1
+          ;;
+      esac
+    done
     sleep 1
   fi
 }
