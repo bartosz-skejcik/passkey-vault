@@ -173,12 +173,27 @@ strip_comments_and_strings() {
 
 # WR-07: fail loud on a raw string literal (`#"`) rather than silently mis-scan one -- see this
 # file's own header above for why raw literals are refused rather than tokenized.
+#
+# WR-11 (41-REVIEW.md iteration 2): assertion (B) below checks a FIXED, SMALL, load-bearing set of
+# files (the six enumerated mutation call sites) for a REQUIRED call -- silently skipping one of
+# THOSE specific files would mean this gate stops verifying a chokepoint it exists to guarantee, so
+# `refuse_unsupported_string_literals` (hard `exit 1`) is kept for assertion (B)'s own call site.
+# Assertion (A) is a broad structural sweep over every Swift file under the three scan roots; a
+# raw literal in some UNRELATED file there must not block CI for the whole tree (the exact WR-11
+# blast-radius problem named for the sibling deprecated-APIs gate) -- `file_has_unsupported_string_
+# literal` skips just that ONE file, reported as a named warning, never silently.
 refuse_unsupported_string_literals() {
   local f="$1"
   if grep -qF '#"' "$f"; then
     echo "ERROR: $f contains a raw string literal (#\"...\"#) this gate's stripper cannot tokenize -- refusing to report PASS over an unscanned construct" >&2
     exit 1
   fi
+}
+
+UNSCANNED_FILES=""
+file_has_unsupported_string_literal() {
+  local f="$1"
+  grep -qF '#"' "$f"
 }
 
 SCRATCH=$(mktemp -d)
@@ -199,7 +214,10 @@ VIOLATIONS_A=""
 WRITE_PATTERN='ASPasswordCredentialIdentity\(|\.saveCredentialIdentities\(|\.removeCredentialIdentities\(|\.replaceCredentialIdentities\(|\.removeAllCredentialIdentities\('
 
 for f in "${SWIFT_FILES[@]}"; do
-  refuse_unsupported_string_literals "$f"
+  if file_has_unsupported_string_literal "$f"; then
+    UNSCANNED_FILES="${UNSCANNED_FILES}${f}"$'\n'
+    continue
+  fi
   STRIPPED="$SCRATCH/$(echo "$f" | tr '/' '_').stripped"
   strip_comments_and_strings "$f" > "$STRIPPED"
 
@@ -311,6 +329,11 @@ if [ -n "$VIOLATIONS_A" ] || [ -n "$VIOLATIONS_B" ]; then
     echo "$VIOLATIONS_B" >&2
   fi
   exit 1
+fi
+
+if [ -n "$UNSCANNED_FILES" ]; then
+  echo "WARNING: the following file(s) contain a raw string literal (#\"...\"#) assertion (A)'s stripper cannot tokenize -- SKIPPED, not scanned, never silently reported as clean (WR-11, 41-REVIEW.md iteration 2):" >&2
+  echo "$UNSCANNED_FILES" >&2
 fi
 
 echo "PASS: the identity store is written ONLY from the reviewed allow-list (${ALLOWLIST[*]}), and all ${#CALL_SITE_LABELS[@]} enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)"
