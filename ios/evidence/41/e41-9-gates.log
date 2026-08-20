@@ -156,3 +156,169 @@ EXIT=1
 
 Restored. Confirmed clean revert (`git diff --stat` empty) and re-ran `gates`: PASS, EXIT=0 (see
 baseline transcript above, re-confirmed identical after restoration).
+
+================================================================================================
+## Iteration 2 (41-REVIEW-FIX) -- 2026-08-20T10:52:39Z. WR-12: the transcripts above describe the
+SUPERSEDED gates (107-file baseline, proximity-only assertion B, single-quote-only stripper) --
+none of them were ever updated for CR-01/WR-05/WR-07/WR-08/WR-13, and this file's own last commit
+predated all five fixes. Re-run here, live, against the CURRENT gate scripts (post iteration-2
+fixes, this same commit series), each with a real RED mutation, a real GREEN restoration, and a
+`git status --short`-confirmed clean revert -- never fabricated output.
+================================================================================================
+
+### Baseline (current tree, both gates, current 108-file count)
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 108 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (0 skipped, see WARNING above) (FILL-03, L-9/L-33)
+EXIT=0
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)
+EXIT=0
+
+### RED/GREEN 1 -- CR-01: the self-heal call site's SITE-SPECIFIC contract shape (assertion B)
+Temporarily changed, in `CredentialProviderViewController.fillOrCancel`'s post-fill self-heal
+block (`ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift`), from
+`IdentityStoreSync.upsertOne(source: ...)` to `IdentityStoreSync.republish(sources: [...])` --
+the OLD, pre-CR-01 shape (a whole-vault call handed a one-item array), which computes removals
+against everything else previously published and would delete every other QuickType entry.
+
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+CredentialProviderViewController.fillOrCancel (post-fill self-heal write) (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift, declared at line 165) -- no IdentityStoreSync.upsertOne( call found within 140 lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)
+EXIT=1
+
+Restored (`cp` from a pre-mutation backup). `git status --short` on the file: empty. Re-ran: PASS,
+EXIT=0 -- confirms the gate genuinely distinguishes `upsertOne(` from `republish(sources: [one])`
+by NAME, not merely by proximity to the self-heal site (the old, pre-CR-01 proximity-only check
+would have reported PASS on this exact mutation).
+
+### RED/GREEN 2 -- WR-05/WR-08: the TRAILING-CLOSURE spelling of the completion-handler form
+Temporarily added, to `ios/PasskeyVault/Shared/IdentityStoreSync.swift` (a throwaway private
+method, never called):
+    private static func temp_wr05_red_transcript() {
+        ASCredentialIdentityStore.shared.saveCredentialIdentities([]) { success, error in
+            _ = success
+            _ = error
+        }
+    }
+
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+FAIL: deprecated AuthenticationServices spelling(s) found (FILL-03, L-9/L-33):
+ios/PasskeyVault/Shared/IdentityStoreSync.swift:(joined 393:        ASCredentialIdentityStore.shared.saveCredentialIdentities([]) { success, error in) [deprecated store write: saveCredentialIdentities(...) { ... } trailing-closure completion-handler form -- L-33, WR-05, WR-08]
+EXIT=1
+
+Restored (`cp` from a pre-mutation backup). `git status --short` on the file: empty. Re-ran: PASS,
+EXIT=0.
+
+### RED/GREEN 3 -- WR-08: multi-line construct (func signature split across lines) AND a call
+with a nested-parens argument, both against a throwaway scan root (never the real tree)
+$ mkdir -p /tmp/wr08-falsify
+$ cat > /tmp/wr08-falsify/test1.swift <<'SWIFT'
+import Foundation
+enum X {
+    static func f() async {
+        try? await store.saveCredentialIdentities(ids.map(Self.wrap))
+        {
+            print("trailing closure on next line, nested paren in args")
+        }
+    }
+}
+SWIFT
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=/tmp/wr08-falsify bash scripts/audit-ios-autofill-deprecated-apis.sh
+FAIL: deprecated AuthenticationServices spelling(s) found (FILL-03, L-9/L-33):
+/tmp/wr08-falsify/test1.swift:(joined 4:        try? await store.saveCredentialIdentities(ids.map(Self.wrap)) {) [deprecated store write: saveCredentialIdentities(...) { ... } trailing-closure completion-handler form -- L-33, WR-05, WR-08]
+EXIT=1
+
+$ rm /tmp/wr08-falsify/test1.swift
+$ cat > /tmp/wr08-falsify/test2.swift <<'SWIFT'
+import Foundation
+class VC {
+    override func prepareInterfaceToProvideCredential(
+        for credentialIdentity: ASPasswordCredentialIdentity
+    ) {
+    }
+}
+SWIFT
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=/tmp/wr08-falsify bash scripts/audit-ios-autofill-deprecated-apis.sh
+FAIL: deprecated AuthenticationServices spelling(s) found (FILL-03, L-9/L-33):
+/tmp/wr08-falsify/test2.swift:(joined 3:    override func prepareInterfaceToProvideCredential(         for credentialIdentity: ASPasswordCredentialIdentity     ) {) [deprecated VC override: prepareInterfaceToProvideCredential(for: ASPasswordCredentialIdentity)]
+EXIT=1
+
+$ rm -f /tmp/wr08-falsify/test2.swift
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=/tmp/wr08-falsify bash scripts/audit-ios-autofill-deprecated-apis.sh
+ERROR: no .swift files found under /tmp/wr08-falsify -- refusing to report PASS over an unscanned tree
+EXIT=1 (expected -- the missing-input precheck; confirms the scratch root itself was legitimately
+scanned, not silently skipped, for both RED runs above)
+
+Both shapes are exactly what WR-08 (41-REVIEW.md iteration 2) named as still-open weaknesses after
+WR-05's iteration-1 fix: a trailing closure whose `{` lands on the NEXT physical line, and a call
+whose argument list itself contains a nested `(...)` group. Both are now RED as expected.
+
+### Comment-stripping control, re-verified against the CURRENT (joined+nested-paren-aware) gate
+$ cat > /tmp/wr08-falsify/test3.swift <<'SWIFT'
+import Foundation
+enum X {
+    static func f() async {
+        // try? await store.saveCredentialIdentities(ids.map(Self.wrap))
+        // {
+        //     print("this is a comment, not real code")
+        // }
+        let x = 1
+    }
+}
+SWIFT
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=/tmp/wr08-falsify bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 1 Swift file(s) under /tmp/wr08-falsify (0 skipped, see WARNING above) (FILL-03, L-9/L-33)
+EXIT=0
+$ rm -rf /tmp/wr08-falsify
+
+### RED/GREEN 4 -- WR-07: the `"""`-aware stripper, re-verified against the CURRENT gate (proves
+the state machine does not get stuck in "string" mode for the rest of the file after a triple-
+quoted literal -- the exact false-PASS direction WR-07 fixed)
+$ mkdir -p /tmp/wr07-falsify
+$ cat > /tmp/wr07-falsify/triple.swift <<'SWIFT'
+import Foundation
+enum X {
+    static let doc = """
+    multi-line literal, nothing special here
+    """
+    static func realViolationAfter() {
+        store.replaceCredentialIdentities(with: identities, completion: { _ in })
+    }
+}
+SWIFT
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=/tmp/wr07-falsify bash scripts/audit-ios-autofill-deprecated-apis.sh
+FAIL: deprecated AuthenticationServices spelling(s) found (FILL-03, L-9/L-33):
+/tmp/wr07-falsify/triple.swift:7:        store.replaceCredentialIdentities(with: identities, completion: { _ in }) [deprecated store write: replaceCredentialIdentities(with:...) labelled form]
+EXIT=1
+$ rm -rf /tmp/wr07-falsify
+
+A real violation placed AFTER a `"""` block is still caught -- the stripper's `state == "triple"`
+handling closes correctly on the SAME line's third `"`, rather than treating each `"` singly (the
+pre-WR-07 bug, which left `state == "string"` for the remainder of the file and would have made
+this exact case a silent false PASS).
+
+### RED -- WR-13: `stop_pv_server_if_running` refuses to kill a non-`pv-server` process
+A real `python3 -m http.server 8620` (NOT `pv-server`) started and confirmed listening via
+`lsof -tiTCP:8620 -sTCP:LISTEN`, then `stop_pv_server_if_running`'s own logic (extracted verbatim
+into a throwaway wrapper script, since this function lives inside `ios-autofill-e41.sh`'s larger
+argument-dispatching script body) invoked against it:
+
+$ lsof -tiTCP:8620 -sTCP:LISTEN
+69360
+$ bash /tmp/wr13-test.sh
+ERROR: :8620 is held by pid 69360 (comm=/opt/homebrew/.../Python.framework/.../Python.app/Contents/MacOS/Python), which is NOT pv-server -- refusing to kill
+EXIT=1
+$ lsof -tiTCP:8620 -sTCP:LISTEN
+69360   <-- STILL ALIVE: the refusal did not kill it (proof the guard, not merely luck, prevented the kill)
+(manually stopped afterward -- not a `stop_pv_server_if_running` action)
+
+### Confirmed clean tree after all RED/GREEN pairs above
+$ git status --short ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift ios/PasskeyVault/Shared/IdentityStoreSync.swift
+(empty)
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 108 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (0 skipped, see WARNING above) (FILL-03, L-9/L-33)
+EXIT=0
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)
+EXIT=0
