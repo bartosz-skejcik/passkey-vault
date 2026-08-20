@@ -200,17 +200,40 @@ enum IdentityStoreSync {
     /// compute the old entries as removals, or never, if nobody signs in again). Deliberately does
     /// NOT run on a mere lock (`performLock()`) -- a locked vault should still be offered,
     /// prompting an unlock; that difference is intentional, not accidental (WR-01's own note).
+    /// WR-05 (41-REVIEW.md iteration 2): routed through the SAME busy-retry discipline every other
+    /// writer in this file already has (`saveWithRetry`/`removeWithRetry`/`replaceWithRetry`) --
+    /// this file's own header states why: "a dropped busy write is a PERMANENTLY missing QuickType
+    /// entry". Before this fix, a single `storeBusy` at sign-out (exactly the moment the device may
+    /// be changing hands -- the one flow whose whole point is a clean handoff) left the signed-out
+    /// account's usernames registered, `identityPublishedKeys` still describing them, and no
+    /// rebuild-pending flag set -- WR-01's "must remove every registered identity" guarantee
+    /// degraded to best-effort-once with no repair path.
     @discardableResult
     static func removeAllPublished() async -> Swift.Result<Void, IdentityStoreSyncError> {
-        do {
-            try await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
-            persistPublishedKeys([])
-            markRebuildPending(false)
-            logger.log("PVFILL|E41-2|stage=remove-all-published status=ok")
-            return .success(())
-        } catch {
-            logger.error("PVFILL|E41-2|stage=remove-all-published status=fail error=\(String(describing: error), privacy: .public)")
-            return .failure(.removeFailed(error))
+        var attempt = 0
+        while true {
+            do {
+                try await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
+                persistPublishedKeys([])
+                markRebuildPending(false)
+                // Nothing is left to self-heal for either -- an empty published-keys set has no
+                // obligation `upsertOne` could ever discharge.
+                clearSelfHealPending()
+                logger.log("PVFILL|E41-2|stage=remove-all-published status=ok")
+                return .success(())
+            } catch {
+                if isBusy(error), attempt < maxBusyRetries {
+                    logger.log("PVFILL|E41-2|stage=remove-all-published status=busy attempt=\(attempt, privacy: .public)")
+                    try? await Task.sleep(nanoseconds: busyRetryBaseDelayNanoseconds << attempt)
+                    attempt += 1
+                    continue
+                }
+                // An owed teardown, visible to the next opportunity (`runIdentityRebuildIfPending`)
+                // -- never a silent, unrecorded "the signed-out account is still registered".
+                markRebuildPending(true)
+                logger.error("PVFILL|E41-2|stage=remove-all-published status=fail error=\(String(describing: error), privacy: .public)")
+                return .failure(.removeFailed(error))
+            }
         }
     }
 
