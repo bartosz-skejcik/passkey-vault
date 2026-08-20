@@ -1624,6 +1624,20 @@ lack of an expiry attribute); `ios/evidence/41/dr-41-a-options.md` (the ceiling 
 provenance); `41-RESEARCH.md` §"ACC-06 inherited premise" and §"Decision records this phase owns" →
 DR-41-C.
 
+**DR-41-A/DR-41-C now IMPLEMENTED and PROVEN LIVE, not merely decided (Plan 41-07, 2026-08-20).**
+Both records above described the DESIGN; `SessionLifecycle.swift` is the composed implementation
+(the lazy check, the activity refresh, the explicit lock), wired into all three extension entry
+points and the host's own unlock/foreground paths, with `SessionKeyStore.store`/`SessionLifecycle
+.recordHostUnlock()` finally called from the REAL unlock flow (`ContentView.handleUnlocked`) —
+`SessionKeyStore.swift`'s own header (Plan 41-03) had explicitly deferred that wiring "to a later
+plan." E41-4 proves the silent, no-ceremony fill and the check's ability to refuse, live, in both
+directions; E41-7 proves ACC-07's cross-process keep-alive, ACC-06's real `SecItemDelete` (with a
+red-first transcript) and a fresh unlock recreating a readable entry, and the backward-clock model
+DR-41-C's own clock choice was designed to have no attack surface against. See
+`.planning/phases/41-.../41-07-SUMMARY.md` for the full account, including the honest reconciliation
+of the "delete query byte-identical to Phase 37's write query" acceptance criterion against this
+record's own artifact choice (Secret C, never Secret A).
+
 ### Restated success criteria for Phase 41
 
 Both restatements are forced by `41-RESEARCH.md` F1 (SC3) and Pitfall 4 (SC2). Quoted verbatim first,
@@ -3779,6 +3793,19 @@ value. 41-06-SUMMARY.md records this honestly rather than letting E41-6's PASS b
 DR-41-C's cross-reboot design; Plan 41-07's own clock legs (already flagged `[ASSUMED]`/UNVERIFIED
 in `ios/IOS-SPIKE-LOG.md` §1i) are the section that must carry this caveat forward, not this one.
 
+### L-36 -- `TEST_RUNNER_<VAR>` does not reach the XCTest UI-runner process on this toolchain; `xcodebuild test`'s per-run env-var passthrough for XCUITest scenario switching does not work the way its name implies
+
+**Found 2026-08-20, Phase 41, Plan 41-07, Task 2 (E41-4).** `xcodebuild test ... TEST_RUNNER_PV_UITEST_E41_4_EXPECT=expired` is Apple's documented mechanism for injecting an env var into the XCTest RUNNER process (distinct from `XCUIApplication.launchEnvironment`, which only reaches the LAUNCHED APP under test, not the test bundle's own process) — the naming and Apple's own docs both say this SHOULD let one test method branch its own assertion per invocation. Measured directly: a test method that read
+`ProcessInfo.processInfo.environment["PV_UITEST_E41_4_EXPECT"]` and branched its own `XCTAssertEqual` unconditionally took the SAME branch (the default/unset one) regardless of the `TEST_RUNNER_` override, confirmed by an isolated single-scenario run whose failure message named the WRONG expected value for the override that was supposedly in force.
+
+**Fix: two separate, compile-time-distinct test methods instead of one method switched by an environment variable.** Costs nothing structurally (this file's own E41-7 methods were never driven by a runtime switch in the first place) and sidesteps the whole class of problem — no reliance on an env-var passthrough mechanism this toolchain does not honour for XCUITest bundles. Filed here rather than silently worked around so a future plan does not rediscover the same false assumption; `AutoFillLockUITests.swift`'s own header records the same finding at the call site.
+
+### L-37 -- a single large `Thread.sleep` between two extension-only fills can overshoot the REFRESHED idle window, not just the original one, on its own UI-driving overhead
+
+**Found 2026-08-20, Phase 41, Plan 41-07, Task 3 (E41-7's ACC-07 leg).** With a 60s (1-minute) idle window, a design of "fill once, sleep 65s (past the original window), fill again" is fragile: the SECOND fill's own Safari-driving overhead (navigation, the "Fill Password" confirmation-sheet negotiation, settle margins — empirically ~15-20s on this toolchain) is incurred AFTER the sleep, so the actual lazy-check moment lands at `sleep + overhead` past the FIRST fill's own refresh, not merely `sleep` past it. Measured directly: a 65s sleep plus ~18s of overhead put the second check 83s after the refresh — past even the REFRESHED 60s window — producing a live, reproducible FALSE refusal (`stage=lazy-check status=expired`) that said nothing about ACC-07's real behaviour; the extension's own log showed the correct mechanism working (the marker genuinely had expired by then), the TEST's OWN timing was simply wrong.
+
+**Fix: several smaller hops instead of one big jump.** Three fills with ~25s sleeps between them (each individual gap comfortably under the 60s window on its own) reach the same "past the original window" destination — cumulatively, over the whole sequence — with much wider margin per hop, and are correspondingly more robust to run-to-run timing variance (VM scheduling jitter, simulator load). Any future live proof of an idle-window boundary should default to this shape, not a single sleep sized to "idle window + a safety margin."
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens
@@ -4292,6 +4319,12 @@ this residue is recorded rather than blocking:
 - **`AutoLockPolicy` ROUTED TO PHASE 41 (ACC-06/07).** Still zero production consumers after 39
   (only its own tests reference it). Phase 41's lazy-lock/idle work is its real home — the 41
   executor MUST wire it or explicitly record why not. Do not let a tested-but-unenforced policy ship.
+  **CLAIMED — Plan 41-07, Task 1 (2026-08-20):** moved to `Shared/` (App-Group-backed, was
+  `UserDefaults.standard` — genuinely NOT shared between the host app and the extension even under
+  the App Group entitlement) and wired as `SessionLifecycle.configuredIdleWindowSeconds()`'s source
+  for ACC-06's own idle window, in both processes. Still no settings UI to CHOOSE the value
+  (`AutoLockPolicy.write` remains callable/tested with no call site) — that half stays open, out of
+  this plan's own scope; see `41-07-SUMMARY.md` "Known Gaps".
 
 ## 9. Plan 40-10 closing note — DR-40-B is now IMPLEMENTED, not merely decided (2026-08-19)
 
