@@ -303,4 +303,25 @@ struct CredentialMatcherTests {
         )
         #expect(!matched)
     }
+
+    // An IP-literal `host:port` (`192.168.1.10:8080`) was never affected by the pre-fix bug --
+    // Foundation's scheme grammar requires an ALPHA first character, so a numeric label can never
+    // parse as `scheme`, and `URL(string:).scheme == nil` already fired for it. These two cases are
+    // a regression guard: the WR-04 heuristic change must not disturb the already-working IP path.
+
+    @Test func loginMatchesIPLiteralColonPortStoredUrlAgainstDomainTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["192.168.1.10:8080"], issuer: "", name: "",
+            target: .domain(host: "192.168.1.10")
+        )
+        #expect(matched, "an IP-literal host:port must keep matching by host after the WR-04 heuristic change")
+    }
+
+    @Test func loginMatchesIPLiteralColonPortStoredUrlAgainstHttpsUrlTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["192.168.1.10:8080"], issuer: "", name: "",
+            target: .url("https://192.168.1.10:8080/")
+        )
+        #expect(matched, "the explicit port on an IP-literal host:port must still carry through after the WR-04 heuristic change")
+    }
 }
