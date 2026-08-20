@@ -1,0 +1,911 @@
+## Registration
+2026-08-20 05:42:54.743762+0200 0x722bfb   Default     0x0                  91693  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=register status=ok count=3
+
+## Five-location drive
+
+### Extension os_log stream during testE41_3AllLocations
+PVUITEST|E41-3|ts=1787197409054 debug=address-bar-value= intended-url=http://e413.localhost:8091/
+PVUITEST|E41-3|ts=1787197409156 debug=no-sign-in-sentence
+PVUITEST|E41-3|debug=no-passwords-accessory url=http://e413.localhost:8091/
+PVUITEST|E41-3|debug=hierarchy-dump-follows url=http://e413.localhost:8091/
+PVUITEST|E41-3|HIER|Attributes: Application, 0x1170ef0c0, pid: 91843, label: 'Safari'
+PVUITEST|E41-3|HIER|Element subtree:
+PVUITEST|E41-3|HIER| →Application, 0x1170ef0c0, pid: 91843, label: 'Safari'
+PVUITEST|E41-3|HIER|    Window (Main), 0x1170ef200, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1170ef340, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1170ef480, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1170ef5c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1170ef700, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1170ef840, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1170ef980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1170efac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1170efc00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1170efd40, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=4CF79C7E-75C2-4434-91C1-C667B4382423&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false'
+PVUITEST|E41-3|HIER|                        Other, 0x1170efe80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1171a8000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1171a8140, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171a8280, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171a83c0, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1171a8500, {{0.0, 0.0}, {393.0, 59.0}}
+PVUITEST|E41-3|HIER|                            ScrollView, 0x1171a8640, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171a8780, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=E4D10F9C-390E-407D-B4C8-A7DA1EDEBD11&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=91848'
+PVUITEST|E41-3|HIER|                                WebView, 0x1171a88c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'WebView'
+PVUITEST|E41-3|HIER|                                  WebView, 0x1171a8a00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a8b40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    WebView, 0x1171a8c80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1171a8dc0, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                        Other, 0x1171a8f00, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                          Other, 0x1171a9040, {{0.0, 59.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                            Other, 0x1171a9180, {{0.0, 59.0}, {572.0, 1012.0}}
+PVUITEST|E41-3|HIER|                                              Other, 0x1171a92c0, {{11.0, 70.0}, {550.0, 32.0}}, label: 'form'
+PVUITEST|E41-3|HIER|                                                TextField, 0x1171a9400, {{11.0, 72.0}, {225.0, 30.0}}, Keyboard Focused, Focused
+PVUITEST|E41-3|HIER|                                                SecureTextField, 0x1171a9540, {{240.0, 72.0}, {226.0, 30.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a9680, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a97c0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1171a9900, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a9a40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1171a9b80, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a9cc0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1171a9e00, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171a9f40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1171aa080, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171aa1c0, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1171aa300, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171aa440, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1171aa580, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1171aa6c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'CapsuleViewController'
+PVUITEST|E41-3|HIER|                          Other, 0x1171aa800, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1171aa940, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171aaa80, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1171aabc0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1171aad00, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171aae40, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1171aaf80, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1171ab0c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1171ab200, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1171ab340, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171ab480, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1171ab5c0, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1171ab700, {{136.3, 417.0}, {120.7, 32.0}}, identifier: 'CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false', Selected
+PVUITEST|E41-3|HIER|                                    Other, 0x1171ab840, {{154.3, 426.0}, {84.7, 14.3}}, identifier: 'TabBarItemTitle', label: 'Address', value: ‎e413.localhost
+PVUITEST|E41-3|HIER|                  Other, 0x1171ab980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1171abac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1171abc00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1171abd40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|    Window, 0x1171abe80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1171ac000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1171ac140, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1171ac280, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1171ac3c0, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1171ac500, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1171ac640, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|                Toolbar, 0x1171ac780, {{0.0, 459.0}, {393.0, 48.0}}, identifier: 'Toolbar', label: 'Toolbar'
+PVUITEST|E41-3|HIER|                  Other, 0x1171ac8c0, {{0.0, 459.0}, {393.0, 48.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1171aca00, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1171acb40, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1171acc80, {{16.0, 459.0}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1171acdc0, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1171acf00, {{16.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171ad040, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1171ad180, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1171ad2c0, {{21.0, 464.0}, {40.0, 38.0}}, label: 'Previous', Disabled
+PVUITEST|E41-3|HIER|                            Other, 0x1171ad400, {{70.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171ad540, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1171ad680, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1171ad7c0, {{75.0, 464.0}, {40.0, 38.0}}, label: 'Next'
+PVUITEST|E41-3|HIER|                            Other, 0x1171ad900, {{327.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1171ada40, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1171adb80, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1171adcc0, {{332.0, 464.0}, {40.0, 38.0}}, label: 'Done'
+PVUITEST|E41-3|HIER|          Other, 0x1171ade00, {{0.0, 517.0}, {393.0, 335.0}}, identifier: 'inputView'
+PVUITEST|E41-3|HIER|    Window, 0x1171adf40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1171ae080, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1171ae1c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1171ae300, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1171ae440, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'SystemInputAssistantView'
+PVUITEST|E41-3|HIER|            Other, 0x1171ae580, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1171ae6c0, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'CenterPageView'
+PVUITEST|E41-3|HIER|                Other, 0x1171ae800, {{0.0, -83.0}, {393.0, 1244.0}}
+PVUITEST|E41-3|HIER|                  ScrollView, 0x1171ae940, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1171aea80, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1171aebc0, {{0.0, 517.0}, {393.0, 44.0}}, label: 'Typing Predictions'
+PVUITEST|E41-3|HIER|                    Other, 0x1171aed00, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1171aee40, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1171aef80, {{0.0, 517.0}, {131.0, 44.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                        Other, 0x1171af0c0, {{131.0, 517.0}, {131.0, 44.0}}, label: 'The'
+PVUITEST|E41-3|HIER|                        Other, 0x1171af200, {{262.0, 517.0}, {131.0, 44.0}}, label: 'I’m'
+PVUITEST|E41-3|HIER|          Other, 0x1171af340, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1171af480, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1171af5c0, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1171af700, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|            Keyboard, 0x1171af840, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1171af980, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1171afac0, {{0.0, 561.0}, {393.0, 233.0}}, identifier: 'UIKeyboardLayoutStar Preview'
+PVUITEST|E41-3|HIER|                  Key, 0x1171afc00, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1171afd40, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1171afe80, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8000, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8140, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8280, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b83c0, {{4.7, 568.0}, {38.3, 54.0}}, label: 'Q'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8500, {{43.0, 568.0}, {38.7, 54.0}}, label: 'W'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8640, {{81.7, 568.0}, {38.7, 54.0}}, label: 'E'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8780, {{120.3, 568.0}, {38.7, 54.0}}, label: 'R'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b88c0, {{159.0, 568.0}, {38.7, 54.0}}, label: 'T'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8a00, {{197.7, 568.0}, {38.3, 54.0}}, label: 'Y'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8b40, {{236.0, 568.0}, {38.7, 54.0}}, label: 'U'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8c80, {{274.7, 568.0}, {38.7, 54.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8dc0, {{313.3, 568.0}, {38.7, 54.0}}, label: 'O'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b8f00, {{352.0, 568.0}, {38.7, 54.0}}, label: 'P'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9040, {{23.7, 622.0}, {38.7, 54.0}}, label: 'A'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9180, {{62.3, 622.0}, {38.7, 54.0}}, label: 'S'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b92c0, {{101.0, 622.0}, {38.7, 54.0}}, label: 'D'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9400, {{139.7, 622.0}, {38.7, 54.0}}, label: 'F'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9540, {{178.3, 622.0}, {38.3, 54.0}}, label: 'G'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9680, {{216.7, 622.0}, {38.7, 54.0}}, label: 'H'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b97c0, {{255.3, 622.0}, {38.7, 54.0}}, label: 'J'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9900, {{294.0, 622.0}, {38.7, 54.0}}, label: 'K'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9a40, {{332.7, 622.0}, {38.7, 54.0}}, label: 'L'
+PVUITEST|E41-3|HIER|                  Button, 0x1171b9b80, {{4.7, 676.0}, {50.0, 54.0}}, identifier: 'shift', label: 'shift', Selected
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9cc0, {{62.3, 676.0}, {38.7, 54.0}}, label: 'Z'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9e00, {{101.0, 676.0}, {38.7, 54.0}}, label: 'X'
+PVUITEST|E41-3|HIER|                  Key, 0x1171b9f40, {{139.7, 676.0}, {38.7, 54.0}}, label: 'C'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba080, {{178.3, 676.0}, {38.3, 54.0}}, label: 'V'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba1c0, {{216.7, 676.0}, {38.7, 54.0}}, label: 'B'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba300, {{255.3, 676.0}, {38.7, 54.0}}, label: 'N'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba440, {{294.0, 676.0}, {38.7, 54.0}}, label: 'M'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba580, {{340.3, 676.0}, {50.3, 54.0}}, identifier: 'delete', label: 'delete'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba6c0, {{4.7, 730.0}, {48.0, 54.0}}, identifier: 'more', label: 'numbers'
+PVUITEST|E41-3|HIER|                  Button, 0x1171ba800, {{52.7, 730.0}, {48.3, 54.0}}, identifier: 'emoji', label: 'Emoji'
+PVUITEST|E41-3|HIER|                  Key, 0x1171ba940, {{101.0, 730.0}, {193.0, 54.0}}, identifier: 'space', label: ' '
+PVUITEST|E41-3|HIER|                  Button, 0x1171baa80, {{294.0, 730.0}, {96.7, 54.0}}, identifier: 'Return', label: 'return'
+PVUITEST|E41-3|HIER|          Other, 0x1171babc0, {{0.0, 561.0}, {393.0, 291.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1171bad00, {{8.5, 783.7}, {68.1, 68.7}}, label: 'Next keyboard', value: English & Polski
+PVUITEST|E41-3|HIER|              StaticText, 0x1171bae40, {{8.5, 783.7}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1171baf80, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1171bb0c0, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1171bb200, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1171bb340, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|Path to element:
+PVUITEST|E41-3|HIER| →Application, 0x1170ef0c0, pid: 91843, label: 'Safari'
+PVUITEST|E41-3|HIER|Query chain:
+PVUITEST|E41-3|HIER| →Find: Application 'com.apple.mobilesafari'
+PVUITEST|E41-3|HIER|  Output: {
+PVUITEST|E41-3|HIER|    Application, 0x1171bb480, pid: 91843, label: 'Safari'
+PVUITEST|E41-3|HIER|  }
+PVUITEST|E41-3|HIER|
+PVUITEST|E41-3|ts=1787197414009 location=loc1 url=http://e413.localhost:8091/ suggested=NONE
+PVUITEST|E41-3|ts=1787197431213 reason=no-username-field url=https://e413.localhost:8093/
+PVUITEST|E41-3|ts=1787197431213 location=loc2 url=https://e413.localhost:8093/ suggested=NONE
+PVUITEST|E41-3|ts=1787197440031 debug=address-bar-value=http://sub.e413.localhost:8091/ intended-url=http://sub.e413.localhost:8091/
+PVUITEST|E41-3|ts=1787197440092 debug=sign-in-sentence=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=sheet-button[0]=Close
+PVUITEST|E41-3|debug=sheet-button[1]=Fill Password
+PVUITEST|E41-3|debug=matched-element kind=staticText label=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=direct-sheet-matched url=http://sub.e413.localhost:8091/
+PVUITEST|E41-3|ts=1787197442153 location=loc3 url=http://sub.e413.localhost:8091/ suggested=e413-a-domain-9f2c@pv.test
+PVUITEST|E41-3|ts=1787197450853 debug=address-bar-value=http://e413.localhost:8092/ intended-url=http://e413.localhost:8092/
+PVUITEST|E41-3|ts=1787197450910 debug=sign-in-sentence=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=sheet-button[0]=Close
+PVUITEST|E41-3|debug=sheet-button[1]=Fill Password
+PVUITEST|E41-3|debug=matched-element kind=staticText label=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=direct-sheet-matched url=http://e413.localhost:8092/
+PVUITEST|E41-3|ts=1787197452981 location=loc4 url=http://e413.localhost:8092/ suggested=e413-a-domain-9f2c@pv.test
+PVUITEST|E41-3|ts=1787197461791 debug=address-bar-value=http://e413-unreg.localhost:8091/ intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197461848 debug=sign-in-sentence=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=sheet-button[0]=Close
+PVUITEST|E41-3|debug=sheet-button[1]=Fill Password
+PVUITEST|E41-3|debug=matched-element kind=staticText label=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=direct-sheet-matched url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197463908 location=loc5 url=http://e413-unreg.localhost:8091/ suggested=e413-a-domain-9f2c@pv.test
+
+## Control-probe falsification (register at loc5, observe, remove, revert)
+2026-08-20 05:44:27.824795+0200 0x723ad1   Default     0x0                  91990  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=control-probe-register status=ok host=e413-unreg.localhost
+PVUITEST|E41-3|ts=1787197495351 debug=address-bar-value=http://e413-unreg.localhost:8091/ intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197495410 debug=sign-in-sentence=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=sheet-button[0]=Close
+PVUITEST|E41-3|debug=sheet-button[1]=Fill Password
+PVUITEST|E41-3|debug=matched-element kind=staticText label=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=direct-sheet-matched url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|location=loc5-control-probe url=http://e413-unreg.localhost:8091/ suggested=e413-a-domain-9f2c@pv.test
+2026-08-20 05:44:59.312682+0200 0x724157   Default     0x0                  92144  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=control-probe-remove status=ok host=e413-unreg.localhost
+PVUITEST|E41-3|ts=1787197527389 debug=address-bar-value=http://e413-unreg.localhost:8091/ intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197527448 debug=sign-in-sentence=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=sheet-button[0]=Close
+PVUITEST|E41-3|debug=sheet-button[1]=Fill Password
+PVUITEST|E41-3|debug=matched-element kind=staticText label=Sign in to “⁦e413.localhost⁩” with your password for “e413-a-domain-9f2c@pv.test” saved in “PasskeyVault”?
+PVUITEST|E41-3|debug=direct-sheet-matched url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|location=loc5-control-reverted url=http://e413-unreg.localhost:8091/ suggested=e413-a-domain-9f2c@pv.test
+
+## URL-only falsification (identity A removed; only B/C .URL-typed registered)
+2026-08-20 05:45:31.255442+0200 0x724781   Default     0x0                  92297  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=register-url-only status=ok count=2
+
+### Extension os_log stream during testE41_3UrlOnlyLoc1AndLoc5
+PVUITEST|E41-3|ts=1787197561601 debug=address-bar-value= intended-url=http://e413.localhost:8091/
+PVUITEST|E41-3|ts=1787197561708 debug=no-sign-in-sentence
+PVUITEST|E41-3|debug=no-passwords-accessory url=http://e413.localhost:8091/
+PVUITEST|E41-3|debug=hierarchy-dump-follows url=http://e413.localhost:8091/
+PVUITEST|E41-3|HIER|Attributes: Application, 0x1168f70c0, pid: 92431, label: 'Safari'
+PVUITEST|E41-3|HIER|Element subtree:
+PVUITEST|E41-3|HIER| →Application, 0x1168f70c0, pid: 92431, label: 'Safari'
+PVUITEST|E41-3|HIER|    Window (Main), 0x1168f7200, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1168f7340, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1168f7480, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1168f75c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1168f7700, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1168f7840, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1168f7980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1168f7ac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1168f7c00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1168f7d40, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=4CF79C7E-75C2-4434-91C1-C667B4382423&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false'
+PVUITEST|E41-3|HIER|                        Other, 0x1168f7e80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1169a4000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1169a4140, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a4280, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a43c0, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1169a4500, {{0.0, 0.0}, {393.0, 59.0}}
+PVUITEST|E41-3|HIER|                            ScrollView, 0x1169a4640, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a4780, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=E4D10F9C-390E-407D-B4C8-A7DA1EDEBD11&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=92432'
+PVUITEST|E41-3|HIER|                                WebView, 0x1169a48c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'WebView'
+PVUITEST|E41-3|HIER|                                  WebView, 0x1169a4a00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a4b40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    WebView, 0x1169a4c80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a4dc0, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                        Other, 0x1169a4f00, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                          Other, 0x1169a5040, {{0.0, 59.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                            Other, 0x1169a5180, {{0.0, 59.0}, {572.0, 1012.0}}
+PVUITEST|E41-3|HIER|                                              Other, 0x1169a52c0, {{11.0, 70.0}, {550.0, 32.0}}, label: 'form'
+PVUITEST|E41-3|HIER|                                                TextField, 0x1169a5400, {{11.0, 72.0}, {225.0, 30.0}}, Keyboard Focused, Focused
+PVUITEST|E41-3|HIER|                                                SecureTextField, 0x1169a5540, {{240.0, 72.0}, {226.0, 30.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a5680, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a57c0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a5900, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a5a40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a5b80, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a5cc0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a5e00, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a5f40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a6080, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a61c0, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1169a6300, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a6440, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1169a6580, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1169a66c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'CapsuleViewController'
+PVUITEST|E41-3|HIER|                          Other, 0x1169a6800, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1169a6940, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a6a80, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1169a6bc0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1169a6d00, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a6e40, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1169a6f80, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1169a70c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a7200, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1169a7340, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a7480, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1169a75c0, {{136.3, 417.0}, {120.7, 32.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1169a7700, {{136.3, 417.0}, {120.7, 32.0}}, identifier: 'CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false', Selected
+PVUITEST|E41-3|HIER|                                    Other, 0x1169a7840, {{154.3, 426.0}, {84.7, 14.3}}, identifier: 'TabBarItemTitle', label: 'Address', value: ‎e413.localhost
+PVUITEST|E41-3|HIER|                  Other, 0x1169a7980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1169a7ac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1169a7c00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1169a7d40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|    Window, 0x1169a7e80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1169a8000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1169a8140, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1169a8280, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1169a83c0, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1169a8500, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1169a8640, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|                Toolbar, 0x1169a8780, {{0.0, 459.0}, {393.0, 48.0}}, identifier: 'Toolbar', label: 'Toolbar'
+PVUITEST|E41-3|HIER|                  Other, 0x1169a88c0, {{0.0, 459.0}, {393.0, 48.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1169a8a00, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1169a8b40, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1169a8c80, {{16.0, 459.0}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1169a8dc0, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1169a8f00, {{16.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a9040, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1169a9180, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1169a92c0, {{21.0, 464.0}, {40.0, 38.0}}, label: 'Previous', Disabled
+PVUITEST|E41-3|HIER|                            Other, 0x1169a9400, {{70.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a9540, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1169a9680, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1169a97c0, {{75.0, 464.0}, {40.0, 38.0}}, label: 'Next'
+PVUITEST|E41-3|HIER|                            Other, 0x1169a9900, {{327.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1169a9a40, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1169a9b80, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1169a9cc0, {{332.0, 464.0}, {40.0, 38.0}}, label: 'Done'
+PVUITEST|E41-3|HIER|          Other, 0x1169a9e00, {{0.0, 517.0}, {393.0, 335.0}}, identifier: 'inputView'
+PVUITEST|E41-3|HIER|    Window, 0x1169a9f40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1169aa080, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1169aa1c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1169aa300, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1169aa440, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'SystemInputAssistantView'
+PVUITEST|E41-3|HIER|            Other, 0x1169aa580, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1169aa6c0, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'CenterPageView'
+PVUITEST|E41-3|HIER|                Other, 0x1169aa800, {{0.0, -83.0}, {393.0, 1244.0}}
+PVUITEST|E41-3|HIER|                  ScrollView, 0x1169aa940, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1169aaa80, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1169aabc0, {{0.0, 517.0}, {393.0, 44.0}}, label: 'Typing Predictions'
+PVUITEST|E41-3|HIER|                    Other, 0x1169aad00, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1169aae40, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1169aaf80, {{0.0, 517.0}, {131.0, 44.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                        Other, 0x1169ab0c0, {{131.0, 517.0}, {131.0, 44.0}}, label: 'The'
+PVUITEST|E41-3|HIER|                        Other, 0x1169ab200, {{262.0, 517.0}, {131.0, 44.0}}, label: 'I’m'
+PVUITEST|E41-3|HIER|          Other, 0x1169ab340, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1169ab480, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1169ab5c0, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1169ab700, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|            Keyboard, 0x1169ab840, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1169ab980, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1169abac0, {{0.0, 561.0}, {393.0, 233.0}}, identifier: 'UIKeyboardLayoutStar Preview'
+PVUITEST|E41-3|HIER|                  Key, 0x1169abc00, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1169abd40, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1169abe80, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0000, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0140, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0280, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b03c0, {{4.7, 568.0}, {38.3, 54.0}}, label: 'Q'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0500, {{43.0, 568.0}, {38.7, 54.0}}, label: 'W'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0640, {{81.7, 568.0}, {38.7, 54.0}}, label: 'E'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0780, {{120.3, 568.0}, {38.7, 54.0}}, label: 'R'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b08c0, {{159.0, 568.0}, {38.7, 54.0}}, label: 'T'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0a00, {{197.7, 568.0}, {38.3, 54.0}}, label: 'Y'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0b40, {{236.0, 568.0}, {38.7, 54.0}}, label: 'U'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0c80, {{274.7, 568.0}, {38.7, 54.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0dc0, {{313.3, 568.0}, {38.7, 54.0}}, label: 'O'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b0f00, {{352.0, 568.0}, {38.7, 54.0}}, label: 'P'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1040, {{23.7, 622.0}, {38.7, 54.0}}, label: 'A'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1180, {{62.3, 622.0}, {38.7, 54.0}}, label: 'S'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b12c0, {{101.0, 622.0}, {38.7, 54.0}}, label: 'D'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1400, {{139.7, 622.0}, {38.7, 54.0}}, label: 'F'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1540, {{178.3, 622.0}, {38.3, 54.0}}, label: 'G'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1680, {{216.7, 622.0}, {38.7, 54.0}}, label: 'H'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b17c0, {{255.3, 622.0}, {38.7, 54.0}}, label: 'J'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1900, {{294.0, 622.0}, {38.7, 54.0}}, label: 'K'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1a40, {{332.7, 622.0}, {38.7, 54.0}}, label: 'L'
+PVUITEST|E41-3|HIER|                  Button, 0x1169b1b80, {{4.7, 676.0}, {50.0, 54.0}}, identifier: 'shift', label: 'shift', Selected
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1cc0, {{62.3, 676.0}, {38.7, 54.0}}, label: 'Z'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1e00, {{101.0, 676.0}, {38.7, 54.0}}, label: 'X'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b1f40, {{139.7, 676.0}, {38.7, 54.0}}, label: 'C'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b2080, {{178.3, 676.0}, {38.3, 54.0}}, label: 'V'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b21c0, {{216.7, 676.0}, {38.7, 54.0}}, label: 'B'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b2300, {{255.3, 676.0}, {38.7, 54.0}}, label: 'N'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b2440, {{294.0, 676.0}, {38.7, 54.0}}, label: 'M'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b2580, {{340.3, 676.0}, {50.3, 54.0}}, identifier: 'delete', label: 'delete'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b26c0, {{4.7, 730.0}, {48.0, 54.0}}, identifier: 'more', label: 'numbers'
+PVUITEST|E41-3|HIER|                  Button, 0x1169b2800, {{52.7, 730.0}, {48.3, 54.0}}, identifier: 'emoji', label: 'Emoji'
+PVUITEST|E41-3|HIER|                  Key, 0x1169b2940, {{101.0, 730.0}, {193.0, 54.0}}, identifier: 'space', label: ' '
+PVUITEST|E41-3|HIER|                  Button, 0x1169b2a80, {{294.0, 730.0}, {96.7, 54.0}}, identifier: 'Return', label: 'return'
+PVUITEST|E41-3|HIER|          Other, 0x1169b2bc0, {{0.0, 561.0}, {393.0, 291.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1169b2d00, {{8.5, 783.7}, {68.1, 68.7}}, label: 'Next keyboard', value: English & Polski
+PVUITEST|E41-3|HIER|              StaticText, 0x1169b2e40, {{8.5, 783.7}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1169b2f80, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1169b30c0, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1169b3200, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1169b3340, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|Path to element:
+PVUITEST|E41-3|HIER| →Application, 0x1168f70c0, pid: 92431, label: 'Safari'
+PVUITEST|E41-3|HIER|Query chain:
+PVUITEST|E41-3|HIER| →Find: Application 'com.apple.mobilesafari'
+PVUITEST|E41-3|HIER|  Output: {
+PVUITEST|E41-3|HIER|    Application, 0x1169b3480, pid: 92431, label: 'Safari'
+PVUITEST|E41-3|HIER|  }
+PVUITEST|E41-3|HIER|
+PVUITEST|E41-3|location=loc1-url-only url=http://e413.localhost:8091/ suggested=NONE
+PVUITEST|E41-3|ts=1787197576740 debug=address-bar-value= intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197576845 debug=no-sign-in-sentence
+PVUITEST|E41-3|debug=no-passwords-accessory url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|debug=hierarchy-dump-follows url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|HIER|Attributes: Application, 0x1174e7980, pid: 92451, label: 'Safari'
+PVUITEST|E41-3|HIER|Element subtree:
+PVUITEST|E41-3|HIER| →Application, 0x1174e7980, pid: 92451, label: 'Safari'
+PVUITEST|E41-3|HIER|    Window (Main), 0x1174e7ac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1174e7c00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1174e7d40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1174e7e80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1174f4000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1174f4140, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1174f4280, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1174f43c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1174f4500, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1174f4640, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=4CF79C7E-75C2-4434-91C1-C667B4382423&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false'
+PVUITEST|E41-3|HIER|                        Other, 0x1174f4780, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1174f48c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1174f4a00, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f4b40, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f4c80, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1174f4dc0, {{0.0, 0.0}, {393.0, 59.0}}
+PVUITEST|E41-3|HIER|                            ScrollView, 0x1174f4f00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f5040, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=E4D10F9C-390E-407D-B4C8-A7DA1EDEBD11&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=92459'
+PVUITEST|E41-3|HIER|                                WebView, 0x1174f5180, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'WebView'
+PVUITEST|E41-3|HIER|                                  WebView, 0x1174f52c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f5400, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    WebView, 0x1174f5540, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f5680, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                        Other, 0x1174f57c0, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                          Other, 0x1174f5900, {{0.0, 59.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                            Other, 0x1174f5a40, {{0.0, 59.0}, {572.0, 1012.0}}
+PVUITEST|E41-3|HIER|                                              Other, 0x1174f5b80, {{11.0, 70.0}, {550.0, 32.0}}, label: 'form'
+PVUITEST|E41-3|HIER|                                                TextField, 0x1174f5cc0, {{11.0, 72.0}, {225.0, 30.0}}, Keyboard Focused, Focused
+PVUITEST|E41-3|HIER|                                                SecureTextField, 0x1174f5e00, {{240.0, 72.0}, {226.0, 30.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f5f40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f6080, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f61c0, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f6300, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f6440, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f6580, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f66c0, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f6800, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f6940, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f6a80, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1174f6bc0, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f6d00, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1174f6e40, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1174f6f80, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'CapsuleViewController'
+PVUITEST|E41-3|HIER|                          Other, 0x1174f70c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1174f7200, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f7340, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1174f7480, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1174f75c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f7700, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1174f7840, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1174f7980, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1174f7ac0, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1174f7c00, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174f7d40, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1174f7e80, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1174fc000, {{116.7, 417.0}, {160.0, 32.0}}, identifier: 'CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false', Selected
+PVUITEST|E41-3|HIER|                                    Other, 0x1174fc140, {{134.7, 426.0}, {124.0, 14.3}}, identifier: 'TabBarItemTitle', label: 'Address', value: ‎e413-unreg.localh...
+PVUITEST|E41-3|HIER|                  Other, 0x1174fc280, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1174fc3c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1174fc500, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1174fc640, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|    Window, 0x1174fc780, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1174fc8c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1174fca00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1174fcb40, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1174fcc80, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1174fcdc0, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1174fcf00, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|                Toolbar, 0x1174fd040, {{0.0, 459.0}, {393.0, 48.0}}, identifier: 'Toolbar', label: 'Toolbar'
+PVUITEST|E41-3|HIER|                  Other, 0x1174fd180, {{0.0, 459.0}, {393.0, 48.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1174fd2c0, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1174fd400, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1174fd540, {{16.0, 459.0}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1174fd680, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1174fd7c0, {{16.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174fd900, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1174fda40, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1174fdb80, {{21.0, 464.0}, {40.0, 38.0}}, label: 'Previous', Disabled
+PVUITEST|E41-3|HIER|                            Other, 0x1174fdcc0, {{70.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174fde00, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1174fdf40, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1174fe080, {{75.0, 464.0}, {40.0, 38.0}}, label: 'Next'
+PVUITEST|E41-3|HIER|                            Other, 0x1174fe1c0, {{327.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1174fe300, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1174fe440, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1174fe580, {{332.0, 464.0}, {40.0, 38.0}}, label: 'Done'
+PVUITEST|E41-3|HIER|          Other, 0x1174fe6c0, {{0.0, 517.0}, {393.0, 335.0}}, identifier: 'inputView'
+PVUITEST|E41-3|HIER|    Window, 0x1174fe800, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1174fe940, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1174fea80, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1174febc0, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1174fed00, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'SystemInputAssistantView'
+PVUITEST|E41-3|HIER|            Other, 0x1174fee40, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1174fef80, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'CenterPageView'
+PVUITEST|E41-3|HIER|                Other, 0x1174ff0c0, {{0.0, -83.0}, {393.0, 1244.0}}
+PVUITEST|E41-3|HIER|                  ScrollView, 0x1174ff200, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1174ff340, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1174ff480, {{0.0, 517.0}, {393.0, 44.0}}, label: 'Typing Predictions'
+PVUITEST|E41-3|HIER|                    Other, 0x1174ff5c0, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1174ff700, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1174ff840, {{0.0, 517.0}, {131.0, 44.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                        Other, 0x1174ff980, {{131.0, 517.0}, {131.0, 44.0}}, label: 'The'
+PVUITEST|E41-3|HIER|                        Other, 0x1174ffac0, {{262.0, 517.0}, {131.0, 44.0}}, label: 'I’m'
+PVUITEST|E41-3|HIER|          Other, 0x1174ffc00, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1174ffd40, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1174ffe80, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|          Other, 0x117500000, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|            Keyboard, 0x117500140, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|              Other, 0x117500280, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1175003c0, {{0.0, 561.0}, {393.0, 233.0}}, identifier: 'UIKeyboardLayoutStar Preview'
+PVUITEST|E41-3|HIER|                  Key, 0x117500500, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x117500640, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x117500780, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1175008c0, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x117500a00, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x117500b40, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x117500c80, {{4.7, 568.0}, {38.3, 54.0}}, label: 'Q'
+PVUITEST|E41-3|HIER|                  Key, 0x117500dc0, {{43.0, 568.0}, {38.7, 54.0}}, label: 'W'
+PVUITEST|E41-3|HIER|                  Key, 0x117500f00, {{81.7, 568.0}, {38.7, 54.0}}, label: 'E'
+PVUITEST|E41-3|HIER|                  Key, 0x117501040, {{120.3, 568.0}, {38.7, 54.0}}, label: 'R'
+PVUITEST|E41-3|HIER|                  Key, 0x117501180, {{159.0, 568.0}, {38.7, 54.0}}, label: 'T'
+PVUITEST|E41-3|HIER|                  Key, 0x1175012c0, {{197.7, 568.0}, {38.3, 54.0}}, label: 'Y'
+PVUITEST|E41-3|HIER|                  Key, 0x117501400, {{236.0, 568.0}, {38.7, 54.0}}, label: 'U'
+PVUITEST|E41-3|HIER|                  Key, 0x117501540, {{274.7, 568.0}, {38.7, 54.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                  Key, 0x117501680, {{313.3, 568.0}, {38.7, 54.0}}, label: 'O'
+PVUITEST|E41-3|HIER|                  Key, 0x1175017c0, {{352.0, 568.0}, {38.7, 54.0}}, label: 'P'
+PVUITEST|E41-3|HIER|                  Key, 0x117501900, {{23.7, 622.0}, {38.7, 54.0}}, label: 'A'
+PVUITEST|E41-3|HIER|                  Key, 0x117501a40, {{62.3, 622.0}, {38.7, 54.0}}, label: 'S'
+PVUITEST|E41-3|HIER|                  Key, 0x117501b80, {{101.0, 622.0}, {38.7, 54.0}}, label: 'D'
+PVUITEST|E41-3|HIER|                  Key, 0x117501cc0, {{139.7, 622.0}, {38.7, 54.0}}, label: 'F'
+PVUITEST|E41-3|HIER|                  Key, 0x117501e00, {{178.3, 622.0}, {38.3, 54.0}}, label: 'G'
+PVUITEST|E41-3|HIER|                  Key, 0x117501f40, {{216.7, 622.0}, {38.7, 54.0}}, label: 'H'
+PVUITEST|E41-3|HIER|                  Key, 0x117502080, {{255.3, 622.0}, {38.7, 54.0}}, label: 'J'
+PVUITEST|E41-3|HIER|                  Key, 0x1175021c0, {{294.0, 622.0}, {38.7, 54.0}}, label: 'K'
+PVUITEST|E41-3|HIER|                  Key, 0x117502300, {{332.7, 622.0}, {38.7, 54.0}}, label: 'L'
+PVUITEST|E41-3|HIER|                  Button, 0x117502440, {{4.7, 676.0}, {50.0, 54.0}}, identifier: 'shift', label: 'shift', Selected
+PVUITEST|E41-3|HIER|                  Key, 0x117502580, {{62.3, 676.0}, {38.7, 54.0}}, label: 'Z'
+PVUITEST|E41-3|HIER|                  Key, 0x1175026c0, {{101.0, 676.0}, {38.7, 54.0}}, label: 'X'
+PVUITEST|E41-3|HIER|                  Key, 0x117502800, {{139.7, 676.0}, {38.7, 54.0}}, label: 'C'
+PVUITEST|E41-3|HIER|                  Key, 0x117502940, {{178.3, 676.0}, {38.3, 54.0}}, label: 'V'
+PVUITEST|E41-3|HIER|                  Key, 0x117502a80, {{216.7, 676.0}, {38.7, 54.0}}, label: 'B'
+PVUITEST|E41-3|HIER|                  Key, 0x117502bc0, {{255.3, 676.0}, {38.7, 54.0}}, label: 'N'
+PVUITEST|E41-3|HIER|                  Key, 0x117502d00, {{294.0, 676.0}, {38.7, 54.0}}, label: 'M'
+PVUITEST|E41-3|HIER|                  Key, 0x117502e40, {{340.3, 676.0}, {50.3, 54.0}}, identifier: 'delete', label: 'delete'
+PVUITEST|E41-3|HIER|                  Key, 0x117502f80, {{4.7, 730.0}, {48.0, 54.0}}, identifier: 'more', label: 'numbers'
+PVUITEST|E41-3|HIER|                  Button, 0x1175030c0, {{52.7, 730.0}, {48.3, 54.0}}, identifier: 'emoji', label: 'Emoji'
+PVUITEST|E41-3|HIER|                  Key, 0x117503200, {{101.0, 730.0}, {193.0, 54.0}}, identifier: 'space', label: ' '
+PVUITEST|E41-3|HIER|                  Button, 0x117503340, {{294.0, 730.0}, {96.7, 54.0}}, identifier: 'Return', label: 'return'
+PVUITEST|E41-3|HIER|          Other, 0x117503480, {{0.0, 561.0}, {393.0, 291.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1175035c0, {{8.5, 783.7}, {68.1, 68.7}}, label: 'Next keyboard', value: English & Polski
+PVUITEST|E41-3|HIER|              StaticText, 0x117503700, {{8.5, 783.7}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x117503840, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x117503980, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x117503ac0, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x117503c00, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|Path to element:
+PVUITEST|E41-3|HIER| →Application, 0x1174e7980, pid: 92451, label: 'Safari'
+PVUITEST|E41-3|HIER|Query chain:
+PVUITEST|E41-3|HIER| →Find: Application 'com.apple.mobilesafari'
+PVUITEST|E41-3|HIER|  Output: {
+PVUITEST|E41-3|HIER|    Application, 0x117503d40, pid: 92451, label: 'Safari'
+PVUITEST|E41-3|HIER|  }
+PVUITEST|E41-3|HIER|
+PVUITEST|E41-3|location=loc5-url-only url=http://e413-unreg.localhost:8091/ suggested=NONE
+
+## Corrected control-probe falsification (against the CLEAN url-only baseline, loc5 confirmed NONE above)
+2026-08-20 05:46:25.359408+0200 0x72500d   Default     0x0                  92491  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=control-probe-register status=ok host=e413-unreg.localhost
+PVUITEST|E41-3|ts=1787197615189 debug=address-bar-value= intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197615297 debug=no-sign-in-sentence
+PVUITEST|E41-3|debug=no-passwords-accessory url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|debug=hierarchy-dump-follows url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|HIER|Attributes: Application, 0x1148e70c0, pid: 92624, label: 'Safari'
+PVUITEST|E41-3|HIER|Element subtree:
+PVUITEST|E41-3|HIER| →Application, 0x1148e70c0, pid: 92624, label: 'Safari'
+PVUITEST|E41-3|HIER|    Window (Main), 0x1148e7200, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1148e7340, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1148e7480, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1148e75c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1148e7700, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1148e7840, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1148e7980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1148e7ac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1148e7c00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1148e7d40, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=4CF79C7E-75C2-4434-91C1-C667B4382423&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false'
+PVUITEST|E41-3|HIER|                        Other, 0x1148e7e80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x11499c000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x11499c140, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499c280, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499c3c0, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x11499c500, {{0.0, 0.0}, {393.0, 59.0}}
+PVUITEST|E41-3|HIER|                            ScrollView, 0x11499c640, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499c780, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=E4D10F9C-390E-407D-B4C8-A7DA1EDEBD11&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=92625'
+PVUITEST|E41-3|HIER|                                WebView, 0x11499c8c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'WebView'
+PVUITEST|E41-3|HIER|                                  WebView, 0x11499ca00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499cb40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    WebView, 0x11499cc80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x11499cdc0, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                        Other, 0x11499cf00, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                          Other, 0x11499d040, {{0.0, 59.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                            Other, 0x11499d180, {{0.0, 59.0}, {572.0, 1012.0}}
+PVUITEST|E41-3|HIER|                                              Other, 0x11499d2c0, {{11.0, 70.0}, {550.0, 32.0}}, label: 'form'
+PVUITEST|E41-3|HIER|                                                TextField, 0x11499d400, {{11.0, 72.0}, {225.0, 30.0}}, Keyboard Focused, Focused
+PVUITEST|E41-3|HIER|                                                SecureTextField, 0x11499d540, {{240.0, 72.0}, {226.0, 30.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499d680, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499d7c0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x11499d900, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499da40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x11499db80, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499dcc0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x11499de00, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499df40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x11499e080, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499e1c0, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x11499e300, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499e440, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x11499e580, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x11499e6c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'CapsuleViewController'
+PVUITEST|E41-3|HIER|                          Other, 0x11499e800, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x11499e940, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499ea80, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x11499ebc0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x11499ed00, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499ee40, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x11499ef80, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x11499f0c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x11499f200, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x11499f340, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x11499f480, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x11499f5c0, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x11499f700, {{116.7, 417.0}, {160.0, 32.0}}, identifier: 'CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false', Selected
+PVUITEST|E41-3|HIER|                                    Other, 0x11499f840, {{134.7, 426.0}, {124.0, 14.3}}, identifier: 'TabBarItemTitle', label: 'Address', value: ‎e413-unreg.localh...
+PVUITEST|E41-3|HIER|                  Other, 0x11499f980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x11499fac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x11499fc00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x11499fd40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|    Window, 0x11499fe80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1149a0000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1149a0140, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1149a0280, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1149a03c0, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1149a0500, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1149a0640, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|                Toolbar, 0x1149a0780, {{0.0, 459.0}, {393.0, 48.0}}, identifier: 'Toolbar', label: 'Toolbar'
+PVUITEST|E41-3|HIER|                  Other, 0x1149a08c0, {{0.0, 459.0}, {393.0, 48.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1149a0a00, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1149a0b40, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1149a0c80, {{16.0, 459.0}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1149a0dc0, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1149a0f00, {{16.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1149a1040, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1149a1180, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1149a12c0, {{21.0, 464.0}, {40.0, 38.0}}, label: 'Previous', Disabled
+PVUITEST|E41-3|HIER|                            Other, 0x1149a1400, {{70.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1149a1540, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1149a1680, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1149a17c0, {{75.0, 464.0}, {40.0, 38.0}}, label: 'Next'
+PVUITEST|E41-3|HIER|                            Other, 0x1149a1900, {{327.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1149a1a40, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1149a1b80, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1149a1cc0, {{332.0, 464.0}, {40.0, 38.0}}, label: 'Done'
+PVUITEST|E41-3|HIER|          Other, 0x1149a1e00, {{0.0, 517.0}, {393.0, 335.0}}, identifier: 'inputView'
+PVUITEST|E41-3|HIER|    Window, 0x1149a1f40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1149a2080, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1149a21c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1149a2300, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1149a2440, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'SystemInputAssistantView'
+PVUITEST|E41-3|HIER|            Other, 0x1149a2580, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1149a26c0, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'CenterPageView'
+PVUITEST|E41-3|HIER|                Other, 0x1149a2800, {{0.0, -83.0}, {393.0, 1244.0}}
+PVUITEST|E41-3|HIER|                  ScrollView, 0x1149a2940, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1149a2a80, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1149a2bc0, {{0.0, 517.0}, {393.0, 44.0}}, label: 'Typing Predictions'
+PVUITEST|E41-3|HIER|                    Other, 0x1149a2d00, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1149a2e40, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1149a2f80, {{0.0, 517.0}, {131.0, 44.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                        Other, 0x1149a30c0, {{131.0, 517.0}, {131.0, 44.0}}, label: 'The'
+PVUITEST|E41-3|HIER|                        Other, 0x1149a3200, {{262.0, 517.0}, {131.0, 44.0}}, label: 'I’m'
+PVUITEST|E41-3|HIER|          Other, 0x1149a3340, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1149a3480, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1149a35c0, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1149a3700, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|            Keyboard, 0x1149a3840, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1149a3980, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1149a3ac0, {{0.0, 561.0}, {393.0, 233.0}}, identifier: 'UIKeyboardLayoutStar Preview'
+PVUITEST|E41-3|HIER|                  Key, 0x1149a3c00, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1149a3d40, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1149a3e80, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac000, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac140, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac280, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac3c0, {{4.7, 568.0}, {38.3, 54.0}}, label: 'Q'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac500, {{43.0, 568.0}, {38.7, 54.0}}, label: 'W'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac640, {{81.7, 568.0}, {38.7, 54.0}}, label: 'E'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac780, {{120.3, 568.0}, {38.7, 54.0}}, label: 'R'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ac8c0, {{159.0, 568.0}, {38.7, 54.0}}, label: 'T'
+PVUITEST|E41-3|HIER|                  Key, 0x1149aca00, {{197.7, 568.0}, {38.3, 54.0}}, label: 'Y'
+PVUITEST|E41-3|HIER|                  Key, 0x1149acb40, {{236.0, 568.0}, {38.7, 54.0}}, label: 'U'
+PVUITEST|E41-3|HIER|                  Key, 0x1149acc80, {{274.7, 568.0}, {38.7, 54.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                  Key, 0x1149acdc0, {{313.3, 568.0}, {38.7, 54.0}}, label: 'O'
+PVUITEST|E41-3|HIER|                  Key, 0x1149acf00, {{352.0, 568.0}, {38.7, 54.0}}, label: 'P'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad040, {{23.7, 622.0}, {38.7, 54.0}}, label: 'A'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad180, {{62.3, 622.0}, {38.7, 54.0}}, label: 'S'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad2c0, {{101.0, 622.0}, {38.7, 54.0}}, label: 'D'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad400, {{139.7, 622.0}, {38.7, 54.0}}, label: 'F'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad540, {{178.3, 622.0}, {38.3, 54.0}}, label: 'G'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad680, {{216.7, 622.0}, {38.7, 54.0}}, label: 'H'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad7c0, {{255.3, 622.0}, {38.7, 54.0}}, label: 'J'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ad900, {{294.0, 622.0}, {38.7, 54.0}}, label: 'K'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ada40, {{332.7, 622.0}, {38.7, 54.0}}, label: 'L'
+PVUITEST|E41-3|HIER|                  Button, 0x1149adb80, {{4.7, 676.0}, {50.0, 54.0}}, identifier: 'shift', label: 'shift', Selected
+PVUITEST|E41-3|HIER|                  Key, 0x1149adcc0, {{62.3, 676.0}, {38.7, 54.0}}, label: 'Z'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ade00, {{101.0, 676.0}, {38.7, 54.0}}, label: 'X'
+PVUITEST|E41-3|HIER|                  Key, 0x1149adf40, {{139.7, 676.0}, {38.7, 54.0}}, label: 'C'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae080, {{178.3, 676.0}, {38.3, 54.0}}, label: 'V'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae1c0, {{216.7, 676.0}, {38.7, 54.0}}, label: 'B'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae300, {{255.3, 676.0}, {38.7, 54.0}}, label: 'N'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae440, {{294.0, 676.0}, {38.7, 54.0}}, label: 'M'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae580, {{340.3, 676.0}, {50.3, 54.0}}, identifier: 'delete', label: 'delete'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae6c0, {{4.7, 730.0}, {48.0, 54.0}}, identifier: 'more', label: 'numbers'
+PVUITEST|E41-3|HIER|                  Button, 0x1149ae800, {{52.7, 730.0}, {48.3, 54.0}}, identifier: 'emoji', label: 'Emoji'
+PVUITEST|E41-3|HIER|                  Key, 0x1149ae940, {{101.0, 730.0}, {193.0, 54.0}}, identifier: 'space', label: ' '
+PVUITEST|E41-3|HIER|                  Button, 0x1149aea80, {{294.0, 730.0}, {96.7, 54.0}}, identifier: 'Return', label: 'return'
+PVUITEST|E41-3|HIER|          Other, 0x1149aebc0, {{0.0, 561.0}, {393.0, 291.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1149aed00, {{8.5, 783.7}, {68.1, 68.7}}, label: 'Next keyboard', value: English & Polski
+PVUITEST|E41-3|HIER|              StaticText, 0x1149aee40, {{8.5, 783.7}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1149aef80, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1149af0c0, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1149af200, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1149af340, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|Path to element:
+PVUITEST|E41-3|HIER| →Application, 0x1148e70c0, pid: 92624, label: 'Safari'
+PVUITEST|E41-3|HIER|Query chain:
+PVUITEST|E41-3|HIER| →Find: Application 'com.apple.mobilesafari'
+PVUITEST|E41-3|HIER|  Output: {
+PVUITEST|E41-3|HIER|    Application, 0x1149af480, pid: 92624, label: 'Safari'
+PVUITEST|E41-3|HIER|  }
+PVUITEST|E41-3|HIER|
+PVUITEST|E41-3|location=loc5-clean-control-probe url=http://e413-unreg.localhost:8091/ suggested=NONE
+2026-08-20 05:47:01.936095+0200 0x7256f5   Default     0x0                  92656  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-3|stage=control-probe-remove status=ok host=e413-unreg.localhost
+PVUITEST|E41-3|ts=1787197650393 debug=address-bar-value= intended-url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|ts=1787197650503 debug=no-sign-in-sentence
+PVUITEST|E41-3|debug=no-passwords-accessory url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|debug=hierarchy-dump-follows url=http://e413-unreg.localhost:8091/
+PVUITEST|E41-3|HIER|Attributes: Application, 0x1130fb0c0, pid: 92793, label: 'Safari'
+PVUITEST|E41-3|HIER|Element subtree:
+PVUITEST|E41-3|HIER| →Application, 0x1130fb0c0, pid: 92793, label: 'Safari'
+PVUITEST|E41-3|HIER|    Window (Main), 0x1130fb200, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1130fb340, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1130fb480, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1130fb5c0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1130fb700, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1130fb840, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1130fb980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1130fbac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1130fbc00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1130fbd40, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'SafariWindow?View=Narrow&BarsKeptMinimized=false&UUID=4CF79C7E-75C2-4434-91C1-C667B4382423&UsingLoweredBar=true&IsSecure=false&IsTabBarAvailable=false'
+PVUITEST|E41-3|HIER|                        Other, 0x1130fbe80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1131b4000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1131b4140, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b4280, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b43c0, {{0.0, 0.0}, {393.0, 46.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1131b4500, {{0.0, 0.0}, {393.0, 59.0}}
+PVUITEST|E41-3|HIER|                            ScrollView, 0x1131b4640, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b4780, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'TabDocument?IsLoadedUsingDesktopUserAgent=false&InReaderMode=false&UUID=E4D10F9C-390E-407D-B4C8-A7DA1EDEBD11&IsPrivate=false&IsPageLoaded=true&WebViewProcessID=92796'
+PVUITEST|E41-3|HIER|                                WebView, 0x1131b48c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'WebView'
+PVUITEST|E41-3|HIER|                                  WebView, 0x1131b4a00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b4b40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    WebView, 0x1131b4c80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b4dc0, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                        Other, 0x1131b4f00, {{0.0, 0.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                          Other, 0x1131b5040, {{0.0, 59.0}, {572.0, 1241.0}}
+PVUITEST|E41-3|HIER|                                            Other, 0x1131b5180, {{0.0, 59.0}, {572.0, 1012.0}}
+PVUITEST|E41-3|HIER|                                              Other, 0x1131b52c0, {{11.0, 70.0}, {550.0, 32.0}}, label: 'form'
+PVUITEST|E41-3|HIER|                                                TextField, 0x1131b5400, {{11.0, 72.0}, {225.0, 30.0}}, Keyboard Focused, Focused
+PVUITEST|E41-3|HIER|                                                SecureTextField, 0x1131b5540, {{240.0, 72.0}, {226.0, 30.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b5680, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b57c0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b5900, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b5a40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b5b80, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b5cc0, {{360.0, 59.0}, {30.0, 358.0}}, label: 'Vertical scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b5e00, {{387.0, 62.0}, {3.0, 187.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b5f40, {{55.0, 384.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 2 pages', value: 0%
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b6080, {{58.0, 411.0}, {190.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b61c0, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1131b6300, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b6440, {{55.0, 819.0}, {283.0, 30.0}}, label: 'Horizontal scroll bar, 1 page', value: 0%
+PVUITEST|E41-3|HIER|                                Other, 0x1131b6580, {{52.3, 846.0}, {288.3, 3.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1131b66c0, {{0.0, 0.0}, {393.0, 852.0}}, identifier: 'CapsuleViewController'
+PVUITEST|E41-3|HIER|                          Other, 0x1131b6800, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1131b6940, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b6a80, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1131b6bc0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1131b6d00, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b6e40, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                      Other, 0x1131b6f80, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1131b70c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b7200, {{0.0, 417.0}, {393.0, 98.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1131b7340, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b7480, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1131b75c0, {{116.7, 417.0}, {160.0, 32.0}}
+PVUITEST|E41-3|HIER|                                  Other, 0x1131b7700, {{116.7, 417.0}, {160.0, 32.0}}, identifier: 'CapsuleNavigationBar?isSelected=true&isDistractionControlOverlayUp=false', Selected
+PVUITEST|E41-3|HIER|                                    Other, 0x1131b7840, {{134.7, 426.0}, {124.0, 14.3}}, identifier: 'TabBarItemTitle', label: 'Address', value: ‎e413-unreg.localh...
+PVUITEST|E41-3|HIER|                  Other, 0x1131b7980, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1131b7ac0, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1131b7c00, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1131b7d40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|    Window, 0x1131b7e80, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1131b8000, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1131b8140, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1131b8280, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1131b83c0, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1131b8500, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1131b8640, {{0.0, 449.0}, {393.0, 68.0}}
+PVUITEST|E41-3|HIER|                Toolbar, 0x1131b8780, {{0.0, 459.0}, {393.0, 48.0}}, identifier: 'Toolbar', label: 'Toolbar'
+PVUITEST|E41-3|HIER|                  Other, 0x1131b88c0, {{0.0, 459.0}, {393.0, 48.0}}
+PVUITEST|E41-3|HIER|                    Other, 0x1131b8a00, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1131b8b40, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1131b8c80, {{16.0, 459.0}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|                          Other, 0x1131b8dc0, {{16.0, 459.0}, {361.0, 48.0}}
+PVUITEST|E41-3|HIER|                            Other, 0x1131b8f00, {{16.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b9040, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1131b9180, {{21.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1131b92c0, {{21.0, 464.0}, {40.0, 38.0}}, label: 'Previous', Disabled
+PVUITEST|E41-3|HIER|                            Other, 0x1131b9400, {{70.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b9540, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1131b9680, {{75.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1131b97c0, {{75.0, 464.0}, {40.0, 38.0}}, label: 'Next'
+PVUITEST|E41-3|HIER|                            Other, 0x1131b9900, {{327.0, 459.0}, {50.0, 48.0}}
+PVUITEST|E41-3|HIER|                              Other, 0x1131b9a40, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                Other, 0x1131b9b80, {{332.0, 464.0}, {40.0, 38.0}}
+PVUITEST|E41-3|HIER|                                  Button, 0x1131b9cc0, {{332.0, 464.0}, {40.0, 38.0}}, label: 'Done'
+PVUITEST|E41-3|HIER|          Other, 0x1131b9e00, {{0.0, 517.0}, {393.0, 335.0}}, identifier: 'inputView'
+PVUITEST|E41-3|HIER|    Window, 0x1131b9f40, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|      Other, 0x1131ba080, {{0.0, 0.0}, {393.0, 852.0}}
+PVUITEST|E41-3|HIER|        Other, 0x1131ba1c0, {{0.0, 417.0}, {393.0, 435.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1131ba300, {{0.0, 417.0}, {393.0, 100.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1131ba440, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'SystemInputAssistantView'
+PVUITEST|E41-3|HIER|            Other, 0x1131ba580, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1131ba6c0, {{0.0, 517.0}, {393.0, 44.0}}, identifier: 'CenterPageView'
+PVUITEST|E41-3|HIER|                Other, 0x1131ba800, {{0.0, -83.0}, {393.0, 1244.0}}
+PVUITEST|E41-3|HIER|                  ScrollView, 0x1131ba940, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1131baa80, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                  Other, 0x1131babc0, {{0.0, 517.0}, {393.0, 44.0}}, label: 'Typing Predictions'
+PVUITEST|E41-3|HIER|                    Other, 0x1131bad00, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                      Other, 0x1131bae40, {{0.0, 517.0}, {393.0, 44.0}}
+PVUITEST|E41-3|HIER|                        Other, 0x1131baf80, {{0.0, 517.0}, {131.0, 44.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                        Other, 0x1131bb0c0, {{131.0, 517.0}, {131.0, 44.0}}, label: 'The'
+PVUITEST|E41-3|HIER|                        Other, 0x1131bb200, {{262.0, 517.0}, {131.0, 44.0}}, label: 'I’m'
+PVUITEST|E41-3|HIER|          Other, 0x1131bb340, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|            Other, 0x1131bb480, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1131bb5c0, {{0.0, 517.0}, {393.0, 335.0}}
+PVUITEST|E41-3|HIER|          Other, 0x1131bb700, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|            Keyboard, 0x1131bb840, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|              Other, 0x1131bb980, {{0.0, 561.0}, {393.0, 233.0}}
+PVUITEST|E41-3|HIER|                Other, 0x1131bbac0, {{0.0, 561.0}, {393.0, 233.0}}, identifier: 'UIKeyboardLayoutStar Preview'
+PVUITEST|E41-3|HIER|                  Key, 0x1131bbc00, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1131bbd40, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1131bbe80, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4000, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4140, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Left'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4280, {{0.0, 561.0}, {0.0, 0.0}}, label: 'Padding-Right'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c43c0, {{4.7, 568.0}, {38.3, 54.0}}, label: 'Q'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4500, {{43.0, 568.0}, {38.7, 54.0}}, label: 'W'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4640, {{81.7, 568.0}, {38.7, 54.0}}, label: 'E'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4780, {{120.3, 568.0}, {38.7, 54.0}}, label: 'R'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c48c0, {{159.0, 568.0}, {38.7, 54.0}}, label: 'T'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4a00, {{197.7, 568.0}, {38.3, 54.0}}, label: 'Y'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4b40, {{236.0, 568.0}, {38.7, 54.0}}, label: 'U'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4c80, {{274.7, 568.0}, {38.7, 54.0}}, label: 'I'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4dc0, {{313.3, 568.0}, {38.7, 54.0}}, label: 'O'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c4f00, {{352.0, 568.0}, {38.7, 54.0}}, label: 'P'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5040, {{23.7, 622.0}, {38.7, 54.0}}, label: 'A'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5180, {{62.3, 622.0}, {38.7, 54.0}}, label: 'S'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c52c0, {{101.0, 622.0}, {38.7, 54.0}}, label: 'D'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5400, {{139.7, 622.0}, {38.7, 54.0}}, label: 'F'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5540, {{178.3, 622.0}, {38.3, 54.0}}, label: 'G'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5680, {{216.7, 622.0}, {38.7, 54.0}}, label: 'H'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c57c0, {{255.3, 622.0}, {38.7, 54.0}}, label: 'J'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5900, {{294.0, 622.0}, {38.7, 54.0}}, label: 'K'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5a40, {{332.7, 622.0}, {38.7, 54.0}}, label: 'L'
+PVUITEST|E41-3|HIER|                  Button, 0x1131c5b80, {{4.7, 676.0}, {50.0, 54.0}}, identifier: 'shift', label: 'shift', Selected
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5cc0, {{62.3, 676.0}, {38.7, 54.0}}, label: 'Z'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5e00, {{101.0, 676.0}, {38.7, 54.0}}, label: 'X'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c5f40, {{139.7, 676.0}, {38.7, 54.0}}, label: 'C'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c6080, {{178.3, 676.0}, {38.3, 54.0}}, label: 'V'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c61c0, {{216.7, 676.0}, {38.7, 54.0}}, label: 'B'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c6300, {{255.3, 676.0}, {38.7, 54.0}}, label: 'N'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c6440, {{294.0, 676.0}, {38.7, 54.0}}, label: 'M'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c6580, {{340.3, 676.0}, {50.3, 54.0}}, identifier: 'delete', label: 'delete'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c66c0, {{4.7, 730.0}, {48.0, 54.0}}, identifier: 'more', label: 'numbers'
+PVUITEST|E41-3|HIER|                  Button, 0x1131c6800, {{52.7, 730.0}, {48.3, 54.0}}, identifier: 'emoji', label: 'Emoji'
+PVUITEST|E41-3|HIER|                  Key, 0x1131c6940, {{101.0, 730.0}, {193.0, 54.0}}, identifier: 'space', label: ' '
+PVUITEST|E41-3|HIER|                  Button, 0x1131c6a80, {{294.0, 730.0}, {96.7, 54.0}}, identifier: 'Return', label: 'return'
+PVUITEST|E41-3|HIER|          Other, 0x1131c6bc0, {{0.0, 561.0}, {393.0, 291.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1131c6d00, {{8.5, 783.7}, {68.1, 68.7}}, label: 'Next keyboard', value: English & Polski
+PVUITEST|E41-3|HIER|              StaticText, 0x1131c6e40, {{8.5, 783.7}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1131c6f80, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1131c70c0, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|            Button, 0x1131c7200, {{316.4, 783.4}, {68.1, 68.7}}, identifier: 'dictation', label: 'Dictate'
+PVUITEST|E41-3|HIER|              StaticText, 0x1131c7340, {{316.4, 783.4}, {0.0, 0.0}}
+PVUITEST|E41-3|HIER|Path to element:
+PVUITEST|E41-3|HIER| →Application, 0x1130fb0c0, pid: 92793, label: 'Safari'
+PVUITEST|E41-3|HIER|Query chain:
+PVUITEST|E41-3|HIER| →Find: Application 'com.apple.mobilesafari'
+PVUITEST|E41-3|HIER|  Output: {
+PVUITEST|E41-3|HIER|    Application, 0x1131c7480, pid: 92793, label: 'Safari'
+PVUITEST|E41-3|HIER|  }
+PVUITEST|E41-3|HIER|
+PVUITEST|E41-3|location=loc5-clean-control-reverted url=http://e413-unreg.localhost:8091/ suggested=NONE

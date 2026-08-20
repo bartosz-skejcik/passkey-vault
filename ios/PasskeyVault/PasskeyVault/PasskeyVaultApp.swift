@@ -60,6 +60,19 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 41, Plan 41-05, Task 1 (E41-3): registers three diagnostic identities (one
+        // `.domain`, two `.URL` differing only by port) directly through `ASCredentialIdentityStore`,
+        // bypassing `IdentityStoreSync` (see `MatchingProbe.swift`'s own header for why). Compiled
+        // in only under `PV_PROBE_E41_3` -- inert for every other probe. Rule 2 deviation
+        // (`MatchingProbe.swift` is not in 41-05-PLAN.md's `files_modified`), same class as
+        // `IdentityStoreSyncProbe.swift`/`TracerFillSeeder.swift`'s own precedent -- documented in
+        // 41-05-SUMMARY.md.
+        #if PV_PROBE_E41_3
+        Task {
+            await MatchingProbe.runIfMarked()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

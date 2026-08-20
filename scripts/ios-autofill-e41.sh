@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -1191,6 +1191,456 @@ cmd_e41_2() {
   fi
 }
 
+# =============================================================================
+# e41-3 -- which ASCredentialServiceIdentifierType actually matches? (Task 1, 41-05)
+# =============================================================================
+#
+# PORT NOTE (see `MatchingProbe.swift`'s own header, and `ios/evidence/41/e41-3-matching-matrix.md`'s
+# own "what this does NOT settle" section -- stated in all three places, never softened): this
+# harness has no non-interactive root on the host Mac (`sudo -n true` checked live, requires a
+# password), so binding TCP 80/443 -- the literal IANA default ports for http/https -- is not
+# reachable without an interactive prompt this project's "no interactive prompts in automation"
+# rule forbids for a routine, repeatable experiment. Every location below uses an explicit,
+# non-privileged port instead. `*.localhost` hostnames resolve to loopback with NO `/etc/hosts` edit
+# and NO root (RFC 6761, confirmed live via `ping`).
+E41_3_RAW_LOG="$EVIDENCE_DIR/e41-3-raw.log"
+E41_3_MATRIX="$EVIDENCE_DIR/e41-3-matching-matrix.md"
+E41_3_WWW_DIR="/tmp/pv-e413-www"
+E41_3_CERT_DIR="/tmp/pv-e413-certs"
+E41_3_PORT_B=8091
+E41_3_PORT_C=8092
+E41_3_PORT_HTTPS=8093
+
+ensure_e41_3_www() {
+  mkdir -p "$E41_3_WWW_DIR"
+  cat > "$E41_3_WWW_DIR/index.html" <<'HTML'
+<!DOCTYPE html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>
+<form>
+<input id="u" type="text" name="username" autocomplete="username">
+<input id="p" type="password" name="password" autocomplete="current-password">
+</form>
+</body></html>
+HTML
+}
+
+# Throwaway local CA + leaf cert (SAN covers every `*.localhost` host this experiment visits),
+# trusted into the PINNED SIMULATOR's own trust store via `simctl keychain <udid> add-root-cert`
+# -- device-scoped, no host-Mac root needed at all (unlike binding a privileged port).
+ensure_e41_3_certs() {
+  local udid="$1"
+  mkdir -p "$E41_3_CERT_DIR"
+  if [ ! -f "$E41_3_CERT_DIR/leaf-combined.pem" ]; then
+    echo "==> e41-3: generating throwaway local CA + leaf cert (SAN: e413.localhost, sub.e413.localhost, e413-unreg.localhost)" >&2
+    openssl req -x509 -nodes -newkey rsa:2048 -days 2 \
+      -keyout "$E41_3_CERT_DIR/ca.key" -out "$E41_3_CERT_DIR/ca.pem" \
+      -subj "/CN=PV E41-3 throwaway test CA" 2>/dev/null
+    cat > "$E41_3_CERT_DIR/leaf.cnf" <<'CNF'
+[req]
+distinguished_name = dn
+req_extensions = ext
+prompt = no
+[dn]
+CN = e413.localhost
+[ext]
+subjectAltName = DNS:e413.localhost,DNS:sub.e413.localhost,DNS:e413-unreg.localhost
+CNF
+    openssl req -new -nodes -newkey rsa:2048 \
+      -keyout "$E41_3_CERT_DIR/leaf.key" -out "$E41_3_CERT_DIR/leaf.csr" \
+      -config "$E41_3_CERT_DIR/leaf.cnf" 2>/dev/null
+    openssl x509 -req -in "$E41_3_CERT_DIR/leaf.csr" \
+      -CA "$E41_3_CERT_DIR/ca.pem" -CAkey "$E41_3_CERT_DIR/ca.key" -CAcreateserial \
+      -out "$E41_3_CERT_DIR/leaf.pem" -days 2 \
+      -extfile "$E41_3_CERT_DIR/leaf.cnf" -extensions ext 2>/dev/null
+    cat "$E41_3_CERT_DIR/leaf.pem" "$E41_3_CERT_DIR/leaf.key" > "$E41_3_CERT_DIR/leaf-combined.pem"
+  fi
+  xcrun simctl keychain "$udid" add-root-cert "$E41_3_CERT_DIR/ca.pem" >/dev/null 2>&1 || true
+}
+
+ensure_e41_3_servers() {
+  local udid="$1"
+  ensure_e41_3_www
+  if ! curl -s -o /dev/null "http://127.0.0.1:$E41_3_PORT_B/" 2>/dev/null; then
+    echo "==> e41-3: starting HTTP server on 127.0.0.1:$E41_3_PORT_B" >&2
+    (cd "$E41_3_WWW_DIR" && nohup python3 -m http.server "$E41_3_PORT_B" --bind 127.0.0.1 > /tmp/pv-e413-http-b.log 2>&1 &)
+  fi
+  if ! curl -s -o /dev/null "http://127.0.0.1:$E41_3_PORT_C/" 2>/dev/null; then
+    echo "==> e41-3: starting HTTP server on 127.0.0.1:$E41_3_PORT_C" >&2
+    (cd "$E41_3_WWW_DIR" && nohup python3 -m http.server "$E41_3_PORT_C" --bind 127.0.0.1 > /tmp/pv-e413-http-c.log 2>&1 &)
+  fi
+  ensure_e41_3_certs "$udid"
+  if ! curl -sk -o /dev/null "https://127.0.0.1:$E41_3_PORT_HTTPS/" 2>/dev/null; then
+    echo "==> e41-3: starting HTTPS server on 127.0.0.1:$E41_3_PORT_HTTPS" >&2
+    (cd "$E41_3_WWW_DIR" && nohup python3 -c "
+import http.server, ssl
+server = http.server.HTTPServer(('127.0.0.1', $E41_3_PORT_HTTPS), http.server.SimpleHTTPRequestHandler)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain('$E41_3_CERT_DIR/leaf-combined.pem')
+server.socket = ctx.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+" > /tmp/pv-e413-https.log 2>&1 &)
+  fi
+  sleep 1
+}
+
+E41_3_APP_PRODUCT="$PV_APP_PRODUCT"
+
+run_e41_3_register_marker() {
+  local udid="$1" group_dir="$2" marker_file="$3" wait_seconds="$4"
+  touch "$group_dir/$marker_file"
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  xcrun simctl launch "$udid" cloud.blonie.PasskeyVault > /dev/null 2>&1 || true
+  sleep "$wait_seconds"
+  xcrun simctl terminate "$udid" cloud.blonie.PasskeyVault > /dev/null 2>&1 || true
+  rm -f "$group_dir/$marker_file"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep 'PVFILL|E41-3|' >> "$E41_3_RAW_LOG" || true
+}
+
+run_e41_3_test_method() {
+  local udid="$1" method="$2" out_log="$3"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"PasskeyVaultUITests/AutoFillMatchingUITests/$method" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E41_3" \
+    test > "$out_log" 2>&1
+}
+
+# Runs a test method AND, in parallel, captures the EXTENSION's OWN os_log stream for the run's
+# whole duration -- the independent, harness-scraping-free ground truth for what service
+# identifier `prepareCredentialList`/the fill entry points actually received at each real
+# navigation (`stage=list-evaluate`/`stage=diagnose-target`,
+# `CredentialProviderViewController.swift`), appended to `$E41_3_RAW_LOG` under its own heading so
+# it can be correlated against this SAME run's `PVUITEST|E41-3|ts=...` stdout lines by timestamp.
+run_e41_3_test_method_with_extension_log() {
+  local udid="$1" method="$2" out_log="$3"
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  run_e41_3_test_method "$udid" "$method" "$out_log" || true
+  echo "" >> "$E41_3_RAW_LOG"
+  echo "### Extension os_log stream during $method" >> "$E41_3_RAW_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep 'PVFILL|E41-3|' >> "$E41_3_RAW_LOG" || true
+}
+
+cmd_e41_3() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_3 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-3: pinned simulator UDID: $udid"
+
+  ensure_e41_3_servers "$udid"
+
+  echo "==> e41-3: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-3: building app+extension (PV_PROBE_E41_3)"
+  build_with_l10_retry "$udid" "PV_PROBE_E41_3" /tmp/pv-e41-3-build.log
+  xcrun simctl install "$udid" "$E41_3_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found for $udid" >&2
+    exit 1
+  fi
+
+  : > "$E41_3_RAW_LOG"
+
+  echo "## Registration" >> "$E41_3_RAW_LOG"
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-register.marker" 3
+
+  echo "" >> "$E41_3_RAW_LOG"
+  echo "## Five-location drive" >> "$E41_3_RAW_LOG"
+  local drive_log
+  drive_log=$(mktemp)
+  run_e41_3_test_method_with_extension_log "$udid" "testE41_3AllLocations" "$drive_log"
+  grep 'PVUITEST|E41-3|' "$drive_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$drive_log"
+
+  echo "" >> "$E41_3_RAW_LOG"
+  echo "## Control-probe falsification (register at loc5, observe, remove, revert)" >> "$E41_3_RAW_LOG"
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-control-register.marker" 3
+  local ctrl_show_log
+  ctrl_show_log=$(mktemp)
+  run_e41_3_test_method "$udid" "testE41_3ControlProbeShowsSuggestion" "$ctrl_show_log" || true
+  grep 'PVUITEST|E41-3|' "$ctrl_show_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$ctrl_show_log"
+
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-control-remove.marker" 3
+  local ctrl_revert_log
+  ctrl_revert_log=$(mktemp)
+  run_e41_3_test_method "$udid" "testE41_3ControlProbeReverts" "$ctrl_revert_log" || true
+  grep 'PVUITEST|E41-3|' "$ctrl_revert_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$ctrl_revert_log"
+
+  echo "" >> "$E41_3_RAW_LOG"
+  echo "## URL-only falsification (identity A removed; only B/C .URL-typed registered)" >> "$E41_3_RAW_LOG"
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-url-only.marker" 3
+  local url_only_log
+  url_only_log=$(mktemp)
+  run_e41_3_test_method_with_extension_log "$udid" "testE41_3UrlOnlyLoc1AndLoc5" "$url_only_log"
+  grep 'PVUITEST|E41-3|' "$url_only_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$url_only_log"
+
+  echo "" >> "$E41_3_RAW_LOG"
+  echo "## Corrected control-probe falsification (against the CLEAN url-only baseline, loc5 confirmed NONE above)" >> "$E41_3_RAW_LOG"
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-clean-control-register.marker" 3
+  local clean_ctrl_show_log
+  clean_ctrl_show_log=$(mktemp)
+  run_e41_3_test_method "$udid" "testE41_3ControlProbeOnCleanBaselineShowsSuggestion" "$clean_ctrl_show_log" || true
+  grep 'PVUITEST|E41-3|' "$clean_ctrl_show_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$clean_ctrl_show_log"
+
+  run_e41_3_register_marker "$udid" "$group_dir" "e41-3-clean-control-remove.marker" 3
+  local clean_ctrl_revert_log
+  clean_ctrl_revert_log=$(mktemp)
+  run_e41_3_test_method "$udid" "testE41_3ControlProbeOnCleanBaselineReverts" "$clean_ctrl_revert_log" || true
+  grep 'PVUITEST|E41-3|' "$clean_ctrl_revert_log" >> "$E41_3_RAW_LOG" || true
+  rm -f "$clean_ctrl_revert_log"
+
+  echo "==> e41-3: raw drive complete -- $E41_3_RAW_LOG"
+
+  # The matrix itself is hand-composed from the raw log (the task's own action text: a table PLUS
+  # a narrative "what this does NOT settle" section a script cannot author) -- but once it exists,
+  # THIS subcommand's own full run asserts against it too, matching every sibling subcommand's own
+  # "the full drive gates on its own assertions" discipline, and satisfying the task's own action
+  # text ("asserting that the matrix file exists... Exit non-zero otherwise"). A first-ever run,
+  # before the matrix has been authored, reports the raw-drive completion and exits 0 -- there is
+  # nothing to assert against yet.
+  if [ -f "$E41_3_MATRIX" ]; then
+    if assert_e41_3 "$E41_3_MATRIX"; then
+      echo "PASS: e41-3 -- raw drive AND matrix assertions both green. See $E41_3_RAW_LOG, $E41_3_MATRIX."
+      exit 0
+    else
+      echo "FAIL: e41-3 -- raw drive completed but matrix assertions failed. See $E41_3_RAW_LOG, $E41_3_MATRIX." >&2
+      exit 1
+    fi
+  else
+    echo "PASS: e41-3 drive complete -- raw observations in $E41_3_RAW_LOG. Compose $E41_3_MATRIX from it, then re-run 'e41-3' (or 'e41-3 --assert-only $E41_3_MATRIX')."
+    exit 0
+  fi
+}
+
+assert_e41_3() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-3"; then
+    return 1
+  fi
+  local failed=0
+  local i
+  for i in 1 2 3 4 5; do
+    if ! grep -qE "^\| loc${i}" "$target"; then
+      echo "FAIL: e41-3 -- location row loc${i} not found in $target" >&2
+      failed=1
+    fi
+  done
+  # No blank cell: a markdown table row with an EMPTY cell shows two adjacent "|" separated only
+  # by whitespace.
+  if grep -qE '^\| loc[0-9].*\|[[:space:]]*\|' "$target"; then
+    echo "FAIL: e41-3 -- a location row contains a blank cell in $target" >&2
+    failed=1
+  fi
+  # The unregistered-location control row must either (a) be genuinely clean (no username string
+  # in the row), or (b) if it is NOT clean -- a real, live, replicated possibility this project's
+  # own epistemology requires reporting rather than hiding -- the file must say so explicitly, in
+  # words, via the standard marker phrase below. A row with a suggested identity AND no such
+  # marker is the one shape this gate refuses: a control silently reported as clean when it was
+  # not.
+  local loc5_row
+  loc5_row=$(grep -E '^\| loc5' "$target" || true)
+  if [ -z "$loc5_row" ]; then
+    echo "FAIL: e41-3 -- loc5 (unregistered control) row missing" >&2
+    failed=1
+  elif printf '%s' "$loc5_row" | grep -qE '@pv\.test'; then
+    if ! grep -qi "the control did not come back clean" "$target"; then
+      echo "FAIL: e41-3 -- loc5 (unregistered control) row shows a suggested identity, and the file does not explicitly say the control did not come back clean" >&2
+      failed=1
+    fi
+  fi
+  if ! grep -qi "does NOT settle" "$target"; then
+    echo "FAIL: e41-3 -- no \"what this does NOT settle\" section found in $target" >&2
+    failed=1
+  fi
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# =============================================================================
+# e41-3-policy -- DR-41-B committed + CredentialMatcher enforced at fill time (Task 2, 41-05)
+# =============================================================================
+E41_3_POLICY_LOG="$EVIDENCE_DIR/e41-3-policy.log"
+
+run_e41_3_policy_test_method() {
+  local udid="$1" method="$2" out_log="$3"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"PasskeyVaultUITests/AutoFillMatchingUITests/$method" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER" \
+    test > "$out_log" 2>&1
+}
+
+cmd_e41_3_policy() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_3_policy "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-3-policy: pinned simulator UDID: $udid"
+
+  # A second local server on a DIFFERENT port, serving the IDENTICAL login form -- the tracer
+  # item's registered `.domain` identity ("127.0.0.1") is host-only, so QuickType offers it here
+  # too; only `CredentialMatcher` can tell the fill entry point this port was never in the item's
+  # own stored URL set.
+  if ! curl -s -o /dev/null "http://127.0.0.1:8766/" 2>/dev/null; then
+    echo "==> e41-3-policy: starting second HTTP server on 127.0.0.1:8766 (mismatched-port location)" >&2
+    (cd "$TRACER_WWW_DIR" && nohup python3 -m http.server 8766 --bind 127.0.0.1 > /tmp/pv-e413-policy-http.log 2>&1 &)
+  fi
+
+  echo "==> e41-3-policy: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-3-policy: building app+extension (PV_PROBE_FILLTRACER)"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER" /tmp/pv-e41-3-policy-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -n "$group_dir" ]; then
+    rm -f "$group_dir/tracer-mutate-revision.marker" "$group_dir/tracer-omit-revision.marker"
+  fi
+
+  : > "$E41_3_POLICY_LOG"
+
+  echo "## Run accepted (matching port -- 8765)" >> "$E41_3_POLICY_LOG"
+  local accepted_log
+  accepted_log=$(mktemp)
+  local accepted_result=0
+  run_e41_3_policy_test_method "$udid" "testPolicyAcceptedFillSucceeds" "$accepted_log" || accepted_result=$?
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+    --last 2m >> "$E41_3_POLICY_LOG" 2>&1
+  grep 'PVUITEST|E41-3-POLICY|' "$accepted_log" >> "$E41_3_POLICY_LOG" || true
+  echo "ACCEPTED-RUN-XCODEBUILD-EXIT: $accepted_result" >> "$E41_3_POLICY_LOG"
+  rm -f "$accepted_log"
+
+  echo "" >> "$E41_3_POLICY_LOG"
+  echo "## Run refused (mismatched port -- 8766)" >> "$E41_3_POLICY_LOG"
+  local refused_log
+  refused_log=$(mktemp)
+  local refused_result=0
+  run_e41_3_policy_test_method "$udid" "testPolicyRefusedFillDoesNotFill" "$refused_log" || refused_result=$?
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+    --last 2m >> "$E41_3_POLICY_LOG" 2>&1
+  grep 'PVUITEST|E41-3-POLICY|' "$refused_log" >> "$E41_3_POLICY_LOG" || true
+  echo "REFUSED-RUN-XCODEBUILD-EXIT: $refused_result" >> "$E41_3_POLICY_LOG"
+  rm -f "$refused_log"
+
+  if assert_e41_3_policy "$E41_3_POLICY_LOG"; then
+    echo "PASS: e41-3-policy -- see $E41_3_POLICY_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-3-policy -- see $E41_3_POLICY_LOG" >&2
+    exit 1
+  fi
+}
+
+# Asserts on the CAPTURED FILE, never a pipeline's exit status (landmine L-3). The load-bearing
+# check is the LAST one: the two runs' terminal branch lines must DIFFER -- a matcher that is not
+# wired at all produces the SAME branch in both runs, and every other assertion here would still
+# pass, so this is the one that actually proves the guard is live.
+assert_e41_3_policy() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-3-policy"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -q "## Run accepted" "$target"; then
+    echo "FAIL: e41-3-policy -- accepted-run label missing in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "## Run refused" "$target"; then
+    echo "FAIL: e41-3-policy -- refused-run label missing in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'field-value-equal=true' "$target"; then
+    echo "FAIL: e41-3-policy -- accepted run's field-value equality line missing/false in $target" >&2
+    failed=1
+  fi
+  if ! sed -n '/## Run refused/,$p' "$target" | grep -qE 'PVFILL\|entry=(silent|interactive) stage=matcher status=refused'; then
+    echo "FAIL: e41-3-policy -- refused run's matcher-refusal branch line missing under the PVFILL| marker in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'field-still-original=true' "$target"; then
+    echo "FAIL: e41-3-policy -- refused run's field-still-original assertion missing/false in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'DR-41-B' "ios/IOS-SPIKE-LOG.md" || ! grep -q "e41-3-matching-matrix.md" "ios/IOS-SPIKE-LOG.md"; then
+    echo "FAIL: e41-3-policy -- ios/IOS-SPIKE-LOG.md does not carry a DR-41-B heading citing ios/evidence/41/e41-3-matching-matrix.md by path" >&2
+    failed=1
+  fi
+
+  # The load-bearing differential check: extract each run's OWN terminal branch line (accepted =
+  # "stage=fill status=ok"; refused = "stage=matcher status=refused") and require they differ.
+  local accepted_section refused_section accepted_terminal refused_terminal
+  accepted_section=$(sed -n '/## Run accepted/,/## Run refused/p' "$target")
+  refused_section=$(sed -n '/## Run refused/,$p' "$target")
+  accepted_terminal=$(printf '%s\n' "$accepted_section" | grep -oE 'stage=(fill status=ok|matcher status=refused)' | tail -1 || true)
+  refused_terminal=$(printf '%s\n' "$refused_section" | grep -oE 'stage=(fill status=ok|matcher status=refused)' | tail -1 || true)
+  if [ -z "$accepted_terminal" ] || [ -z "$refused_terminal" ]; then
+    echo "FAIL: e41-3-policy -- could not extract a terminal branch line from one or both runs in $target" >&2
+    failed=1
+  elif [ "$accepted_terminal" = "$refused_terminal" ]; then
+    echo "FAIL: e41-3-policy -- the two runs' terminal branch lines are IDENTICAL ($accepted_terminal) -- the matcher is not wired (or not differentiating), and every other assertion here would still pass without it" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
@@ -1218,5 +1668,7 @@ case "${1:-}" in
     ;;
   e41-2-build) shift; cmd_e41_2_build "$@" ;;
   e41-2) shift; cmd_e41_2 "$@" ;;
+  e41-3) shift; cmd_e41_3 "$@" ;;
+  e41-3-policy) shift; cmd_e41_3_policy "$@" ;;
   *) usage ;;
 esac
