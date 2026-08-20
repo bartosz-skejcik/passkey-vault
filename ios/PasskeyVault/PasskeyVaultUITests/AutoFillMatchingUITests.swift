@@ -138,16 +138,12 @@ final class AutoFillMatchingUITests: XCTestCase {
     private static let tracerExpectedPassword = "Tr4c3r-Fill-41-03!"
     private static let tracerHost = "127.0.0.1"
     private static let tracerAcceptedPort = 8765
-    /// A second local server, serving the IDENTICAL login form, on a port the tracer item's stored
-    /// URL does NOT name -- `.domain`-typed matching is host-based (F3), so QuickType offers our
-    /// identity here too; `CredentialMatcher` is the only thing that can tell the difference.
-    private static let tracerRefusedPort = 8766
 
     /// Run 1 (accepted): the fill must still succeed end to end after `CredentialMatcher` is wired
     /// in -- proves the refusal proof below is not achieved by breaking filling.
     @MainActor
     func testPolicyAcceptedFillSucceeds() throws {
-        let filled = driveTracerFormFill(port: Self.tracerAcceptedPort, expectFill: true)
+        let filled = driveTracerFormFill(host: Self.tracerHost, port: Self.tracerAcceptedPort, expectFill: true, isWarmUp: false)
         XCTAssertEqual(
             filled, Self.tracerExpectedPassword,
             "Accepted run: filled password (\"\(filled)\") did not byte-equal the expected tracer plaintext."
@@ -155,12 +151,28 @@ final class AutoFillMatchingUITests: XCTestCase {
         print("PVUITEST|E41-3-POLICY|run=accepted field-value-equal=\(filled == Self.tracerExpectedPassword)")
     }
 
-    /// Run 2 (refused): the SAME identity, offered at a mismatched port, must NOT fill the field --
-    /// asserted positively (the field still holds its known, un-filled placeholder), never merely
-    /// "no button appeared".
+    /// Run 2 (refused): the SAME reliable port-8765 suggestion/tap flow the accepted run already
+    /// proves works, but seeded by the driving script (`scripts/ios-autofill-e41.sh e41-3-policy`,
+    /// via `tracer-mismatch-stored-url.marker`) with the item's OWN plaintext `urls` naming a
+    /// COMPLETELY DIFFERENT host than the `.domain` identity it is registered under -- exactly
+    /// modelling a corrupted/malicious identity-store entry (T-41-25), the ONE scenario
+    /// `CredentialMatcher` can genuinely catch at fill time.
+    ///
+    /// Found live, this session, in order: (1) the extension's silent entry point is NOT invoked
+    /// merely by the username field gaining focus -- the suggestion sheet is populated entirely
+    /// system-side from `ASCredentialIdentityStore` metadata (E41-3's own key finding), and our
+    /// code only runs once a suggestion is actually TAPPED, so this method drives the SAME full
+    /// tap sequence `testPolicyAcceptedFillSucceeds` uses and asserts the OUTCOME (not filled)
+    /// rather than skipping the tap; (2) `request.credentialIdentity.serviceIdentifier` echoes OUR
+    /// OWN registered `.domain` identity verbatim, never the actually-visited page -- a
+    /// same-host-different-port mismatch is therefore structurally undetectable at fill time
+    /// (the identity's echoed host ALWAYS matches whatever `IdentityStoreSync` derived it from),
+    /// which is why this leg mismatches the ITEM's own stored data instead of the visited
+    /// location, and reuses the SAME proven port-8765 flow rather than a brand-new host whose own
+    /// suggestion-propagation reliability this session found unpredictable.
     @MainActor
     func testPolicyRefusedFillDoesNotFill() throws {
-        let filled = driveTracerFormFill(port: Self.tracerRefusedPort, expectFill: false)
+        let filled = driveTracerFormFill(host: Self.tracerHost, port: Self.tracerAcceptedPort, expectFill: true, isWarmUp: false)
         XCTAssertEqual(
             filled, "-none-",
             "Refused run: password field should still hold its original placeholder, got \"\(filled)\"."
@@ -168,33 +180,43 @@ final class AutoFillMatchingUITests: XCTestCase {
         print("PVUITEST|E41-3-POLICY|run=refused field-still-original=\(filled == "-none-")")
     }
 
-    /// Navigates Safari fresh to the tracer's login form at `port`, taps the username field
+    /// Navigates Safari fresh to the tracer's login form at `host:port`, taps the username field
     /// (triggering the silent entry point automatically -- `AutoFillFillUITests.swift`'s own header
     /// documents this), attempts the "Fill Password" confirmation chain when it appears (the
     /// ACCEPTED case), and returns whatever the password readback `<div>` shows afterward --
     /// `"-none-"` if nothing ever filled it (the REFUSED case's own positive assertion target).
     @MainActor
-    private func driveTracerFormFill(port: Int, expectFill: Bool) -> String {
+    private func driveTracerFormFill(host: String, port: Int, expectFill: Bool, isWarmUp: Bool) -> String {
+        // Host app FIRST, unconditionally -- PV_PROBE_FILLTRACER's seed sequence
+        // (`TracerFillSeeder.seed()`) must land BEFORE Safari/the extension is ever invoked, same
+        // ordered sequence `AutoFillFillUITests.swift`'s own established precedent uses. Without
+        // this, NOTHING is registered or cached and every subsequent step observes nothing at all
+        // (found live, this session: omitting this step produced
+        // `reason=no-fill-suggestion-surfaced` on the accepted run).
+        let hostApp = XCUIApplication(bundleIdentifier: "cloud.blonie.PasskeyVault")
+        hostApp.launch()
+        sleep(3)
+
         let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
         safari.terminate()
         safari.launch()
 
         let addressBar = safari.textFields.firstMatch
         guard addressBar.waitForExistence(timeout: 10) else {
-            print("PVUITEST|E41-3-POLICY|port=\(port) reason=no-address-bar")
+            print("PVUITEST|E41-3-POLICY|host=\(host) port=\(port) warmup=\(isWarmUp) reason=no-address-bar")
             return "-none-"
         }
         addressBar.tap()
-        addressBar.typeText("http://\(Self.tracerHost):\(port)/")
+        addressBar.typeText("http://\(host):\(port)/")
         addressBar.typeText("\n")
 
         let usernameField = safari.webViews.textFields.firstMatch
         guard usernameField.waitForExistence(timeout: 10) else {
-            print("PVUITEST|E41-3-POLICY|port=\(port) reason=no-username-field")
+            print("PVUITEST|E41-3-POLICY|host=\(host) port=\(port) warmup=\(isWarmUp) reason=no-username-field")
             return "-none-"
         }
         usernameField.tap()
-        sleep(2)
+        sleep(isWarmUp ? 4 : 2)
 
         if expectFill {
             var fillPasswordButton = safari.buttons["FillPasswordButton"]
@@ -233,12 +255,23 @@ final class AutoFillMatchingUITests: XCTestCase {
                     }
                 }
             } else {
-                print("PVUITEST|E41-3-POLICY|port=\(port) reason=no-fill-suggestion-surfaced")
+                print("PVUITEST|E41-3-POLICY|host=\(host) port=\(port) reason=no-fill-suggestion-surfaced")
             }
         } else {
-            // The refused case does not tap anything further -- the silent entry point already ran
-            // (and refused) the moment the field gained focus; waiting is the whole assertion.
-            sleep(3)
+            // The refused/warm-up case does not tap anything further -- the silent entry point
+            // already ran (and refused) the moment the field gained focus. Found live, this
+            // session: a bare `sleep()` here (no XCUITest activity) was observed to suppress the
+            // extension's own invocation entirely, even in a genuinely separate process -- an
+            // ACTIVE wait (`waitForExistence`, which repeatedly synchronizes with the app via the
+            // accessibility framework) is what actually lets the simulator schedule the
+            // extension's background work; a passive `sleep()` does not. This ALSO doubles as a
+            // diagnostic: whether a suggestion was offered at all on this (refused) path is itself
+            // informative and printed, never silently discarded.
+            let signInPredicate = NSPredicate(format: "label CONTAINS[c] %@", "Sign in to")
+            let sawSuggestion = safari.staticTexts.matching(signInPredicate).firstMatch.waitForExistence(timeout: 6)
+                || safari.buttons["Passwords"].waitForExistence(timeout: 2)
+            print("PVUITEST|E41-3-POLICY|host=\(host) port=\(port) warmup=\(isWarmUp) saw-suggestion=\(sawSuggestion)")
+            Thread.sleep(forTimeInterval: 2.0)
         }
 
         let passwordReadback = safari.webViews.staticTexts.matching(

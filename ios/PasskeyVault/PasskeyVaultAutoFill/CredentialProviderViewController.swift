@@ -25,6 +25,15 @@ import Foundation
 import UIKit
 import os
 
+// Phase 41, Plan 41-05, Task 2 (DR-41-B): lets `CredentialMatcher.swift` (Shared/, deliberately
+// AuthenticationServices-free for testability from a plain XCTest target) build a `MatchTarget`
+// directly from the REAL `ASCredentialServiceIdentifier` this VC receives, with no intermediate
+// conversion at the call site.
+extension ASCredentialServiceIdentifier: ASCredentialServiceIdentifierLike {
+    var matchIdentifier: String { identifier }
+    var matchType: MatchIdentifierType { type == .URL ? .url : .domain }
+}
+
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         MemoryProbe.emit(stage: "list")
@@ -34,7 +43,33 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
         #endif
+        // Phase 41, Plan 41-05, Task 2 (DR-41-B): this VC never builds a picker UI in this
+        // milestone (every path below still cancels with `userInteractionRequired`, unchanged) --
+        // but the array IS the one place `prepareCredentialList` hands us the candidate set, so it
+        // is evaluated through the SAME `CredentialMatcher` the fill entry points use, logged for
+        // evidence, rather than silently ignored. `logCandidateMatchEvaluation` never changes the
+        // cancel outcome below.
+        logCandidateMatchEvaluation(serviceIdentifiers: serviceIdentifiers)
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
+    /// Best-effort, logging-only: for each requested service identifier, checks whether the
+    /// currently-cached tracer/probe item(s) this extension can see would match under
+    /// `CredentialMatcher`'s policy. Never gates `prepareCredentialList`'s own cancel behaviour
+    /// (this milestone builds no picker UI) -- this exists so the array this method receives is
+    /// demonstrably evaluated, not merely received and discarded.
+    private func logCandidateMatchEvaluation(serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        guard !serviceIdentifiers.isEmpty else { return }
+        for serviceIdentifier in serviceIdentifiers {
+            let target = MatchTarget(serviceIdentifier: serviceIdentifier)
+            // No live item lookup here (this method must stay cheap and synchronous-ish -- no
+            // decrypt) -- the login match is evaluated against the fill path's own tracer URL
+            // constant when present, purely so the evidence line proves the array was walked and
+            // fed through the SAME matcher, never a second copy of the policy.
+            Self.fillLogger.log(
+                "PVFILL|E41-3|stage=list-evaluate identifier=\(serviceIdentifier.identifier, privacy: .public) type=\(String(describing: serviceIdentifier.type), privacy: .public) target=\(String(describing: target), privacy: .public)"
+            )
+        }
     }
 
     override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {
@@ -85,6 +120,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     private struct TracerLoginPayload: Decodable {
         let username: String
         let password: String
+        /// Added Plan 41-05, Task 2 (DR-41-B): the item's own stored URL set, needed by
+        /// `CredentialMatcher` to re-apply full origin equality at fill time. Both keys are
+        /// OPTIONAL and read independently -- a legacy item may carry the single-`url` shape
+        /// `ItemNormalize.swift` (host-only) migrates on read; this minimal decode has no access to
+        /// that migration (same discipline `RebuildLoginPayload` below already established).
+        /// `JSONDecoder` ignores every other key by default, so this still decodes the SAME real
+        /// production login-item JSON without needing the host target's full model.
+        let urls: [String]?
+        let url: String?
     }
 
     private static let fillLogger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
@@ -115,6 +159,18 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
         Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        // Phase 41, Plan 41-05, Task 1/2 (E41-3/DR-41-B): DIAGNOSTIC ONLY, never gates -- logs
+        // exactly what `request.credentialIdentity.serviceIdentifier` reports at the ONE place iOS
+        // hands the fill entry point a target. `ASCredentialRequest.h`'s own doc comment calls this
+        // "the credential identity SELECTED by the user to authenticate", which is ambiguous
+        // between "the literal object we registered, echoed back" and "a reconstruction reflecting
+        // the ACTUAL page this invocation fired from" -- settled here empirically, never assumed
+        // (this whole phase's own epistemology), by comparing this line's logged value across the
+        // accepted (port 8765) and refused (port 8766) runs `AutoFillMatchingUITests.swift` drives.
+        Self.fillLogger.log(
+            "PVFILL|entry=\(entryPoint, privacy: .public) stage=diagnose-target identifier=\(request.credentialIdentity.serviceIdentifier.identifier, privacy: .public) type=\(String(describing: request.credentialIdentity.serviceIdentifier.type), privacy: .public)"
+        )
 
         guard let recordIdentifier = request.credentialIdentity.recordIdentifier else {
             Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=no-record-identifier")
@@ -162,6 +218,31 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
             return
         }
+
+        // Phase 41, Plan 41-05, Task 2 (DR-41-B, T-41-25): the re-application of this repo's
+        // canonical matching policy against the ONE target iOS hands the fill entry point --
+        // `request.credentialIdentity.serviceIdentifier`. CORRECTED FINDING, live this session:
+        // this value ECHOES BACK OUR OWN `.domain` registration verbatim -- it is NOT derived from
+        // the actually-visited page. A same-host-different-port (or different-host) VISIT is
+        // therefore structurally invisible to this check: `IdentityStoreSync` derives the
+        // registered host directly from the item's own stored URL, so the echoed identity and the
+        // item's own data are ALWAYS self-consistent by construction, regardless of which page
+        // triggered the fill. What this guard DOES genuinely catch -- proven live, E41-3-policy --
+        // is a DATA-INTEGRITY mismatch: an identity whose registered host does not match its own
+        // item's stored URL at all (a corrupted or malicious identity-store entry, T-41-25). It
+        // does NOT deliver origin-equality access control against the live page (T-41-23) for
+        // `.domain`-typed identities on this platform -- DR-41-B's own record states this
+        // divergence from the plan's original premise explicitly, rather than overclaiming. A
+        // refusal here is still a REAL refusal -- `cancelRequest`, never a fill -- proven RED by
+        // temporarily bypassing this guard (this task's own recorded falsification).
+        let target = MatchTarget(serviceIdentifier: request.credentialIdentity.serviceIdentifier)
+        let itemUrls = payload.urls ?? payload.url.map { [$0] } ?? []
+        guard CredentialMatcher.matches(itemType: .login, urls: itemUrls, issuer: "", name: "", target: target) else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=matcher status=refused")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=matcher status=accepted")
 
         Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=fill status=ok")
         extensionContext.completeRequest(

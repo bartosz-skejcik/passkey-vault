@@ -627,6 +627,38 @@ drive_tracer_run() {
   return "$test_result"
 }
 
+# Generalised sibling of `drive_tracer_run` -- SAME parallel-pearl-match-loop discipline, but
+# parameterised on the test identifier so a DIFFERENT UI test (this plan's own
+# `AutoFillMatchingUITests` accepted/refused runs) can reuse it rather than duplicating the
+# "Safari's own LocalAuthentication confirmation gate needs a parallel `notifyutil` poster for the
+# whole run" mechanism `cmd_tracer`'s own header already documents.
+run_test_once_generic() {
+  local udid="$1" test_id="$2" extra_conditions="$3" out_log="$4"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"$test_id" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) $extra_conditions" \
+    test > "$out_log" 2>&1
+}
+
+drive_test_with_pearl_match() {
+  local udid="$1" test_id="$2" extra_conditions="$3" out_log="$4"
+  local test_result=0
+  run_test_once_generic "$udid" "$test_id" "$extra_conditions" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || test_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$test_result"
+}
+
 app_group_container_dir() {
   local udid="$1"
   local data_container
@@ -1493,20 +1525,6 @@ assert_e41_3() {
 # =============================================================================
 E41_3_POLICY_LOG="$EVIDENCE_DIR/e41-3-policy.log"
 
-run_e41_3_policy_test_method() {
-  local udid="$1" method="$2" out_log="$3"
-  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
-    -scheme PasskeyVault -configuration Debug \
-    -destination "platform=iOS Simulator,id=$udid" \
-    -derivedDataPath "$DD_PATH" \
-    -only-testing:"PasskeyVaultUITests/AutoFillMatchingUITests/$method" \
-    -skip-testing:PasskeyVaultTests \
-    -parallel-testing-enabled NO \
-    -maximum-concurrent-test-simulator-destinations 1 \
-    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER" \
-    test > "$out_log" 2>&1
-}
-
 cmd_e41_3_policy() {
   if [ "${1:-}" = "--assert-only" ]; then
     if [ -z "${2:-}" ]; then
@@ -1523,15 +1541,6 @@ cmd_e41_3_policy() {
   udid=$(resolve_pinned_udid)
   echo "==> e41-3-policy: pinned simulator UDID: $udid"
 
-  # A second local server on a DIFFERENT port, serving the IDENTICAL login form -- the tracer
-  # item's registered `.domain` identity ("127.0.0.1") is host-only, so QuickType offers it here
-  # too; only `CredentialMatcher` can tell the fill entry point this port was never in the item's
-  # own stored URL set.
-  if ! curl -s -o /dev/null "http://127.0.0.1:8766/" 2>/dev/null; then
-    echo "==> e41-3-policy: starting second HTTP server on 127.0.0.1:8766 (mismatched-port location)" >&2
-    (cd "$TRACER_WWW_DIR" && nohup python3 -m http.server 8766 --bind 127.0.0.1 > /tmp/pv-e413-policy-http.log 2>&1 &)
-  fi
-
   echo "==> e41-3-policy: building pv-ffi (plain variant)"
   "$REPO_ROOT/scripts/build-ios.sh"
 
@@ -1545,35 +1554,67 @@ cmd_e41_3_policy() {
   local group_dir
   group_dir=$(app_group_container_dir "$udid" || true)
   if [ -n "$group_dir" ]; then
-    rm -f "$group_dir/tracer-mutate-revision.marker" "$group_dir/tracer-omit-revision.marker"
+    rm -f "$group_dir/tracer-mutate-revision.marker" "$group_dir/tracer-omit-revision.marker" \
+      "$group_dir/tracer-mismatch-stored-url.marker"
   fi
 
   : > "$E41_3_POLICY_LOG"
 
   echo "## Run accepted (matching port -- 8765)" >> "$E41_3_POLICY_LOG"
-  local accepted_log
+  local accepted_log accepted_start
   accepted_log=$(mktemp)
+  accepted_start=$(date '+%Y-%m-%d %H:%M:%S')
   local accepted_result=0
-  run_e41_3_policy_test_method "$udid" "testPolicyAcceptedFillSucceeds" "$accepted_log" || accepted_result=$?
+  # The parallel pearl-match loop (`drive_test_with_pearl_match`, mirroring `cmd_tracer`'s own
+  # `drive_tracer_run`) is REQUIRED here: this run taps "Fill Password", which triggers Safari's
+  # own, SEPARATE LocalAuthentication confirmation gate -- without the loop posting
+  # `com.apple.BiometricKit_Sim.pearl.match` for the run's whole duration, that gate never clears
+  # and the fill never completes, regardless of whether `CredentialMatcher` itself is correct.
+  drive_test_with_pearl_match "$udid" \
+    "PasskeyVaultUITests/AutoFillMatchingUITests/testPolicyAcceptedFillSucceeds" \
+    "PV_PROBE_FILLTRACER" "$accepted_log" || accepted_result=$?
   xcrun simctl spawn "$udid" log show \
-    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
-    --last 2m >> "$E41_3_POLICY_LOG" 2>&1
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$accepted_start" \
+    >> "$E41_3_POLICY_LOG" 2>&1
   grep 'PVUITEST|E41-3-POLICY|' "$accepted_log" >> "$E41_3_POLICY_LOG" || true
   echo "ACCEPTED-RUN-XCODEBUILD-EXIT: $accepted_result" >> "$E41_3_POLICY_LOG"
   rm -f "$accepted_log"
 
+  # Arms the data-integrity mismatch: `TracerFillSeeder.seed()` (called at the START of the
+  # refused test's OWN host-app launch, inside `driveTracerFormFill`) checks this marker and
+  # writes the item's plaintext `urls` as a host sharing NOTHING with the `.domain` identity it is
+  # registered under -- see `TracerFillSeeder.swift`'s own header (the `storedUrl` local) for why
+  # this replaces the originally-planned same-host-different-port mismatch (structurally
+  # undetectable at fill time, found live) and why it reuses the SAME proven port-8765 flow.
+  if [ -n "$group_dir" ]; then
+    touch "$group_dir/tracer-mismatch-stored-url.marker"
+  fi
+
   echo "" >> "$E41_3_POLICY_LOG"
-  echo "## Run refused (mismatched port -- 8766)" >> "$E41_3_POLICY_LOG"
-  local refused_log
+  echo "## Run refused (data-integrity mismatch -- item's own stored URL does not match its registered identity)" >> "$E41_3_POLICY_LOG"
+  local refused_log refused_start
   refused_log=$(mktemp)
+  refused_start=$(date '+%Y-%m-%d %H:%M:%S')
   local refused_result=0
-  run_e41_3_policy_test_method "$udid" "testPolicyRefusedFillDoesNotFill" "$refused_log" || refused_result=$?
+  # Found live, this session: the extension's silent entry point is NOT invoked by mere field
+  # focus -- it only runs once a suggestion is actually TAPPED (E41-3's own key finding: the
+  # suggestion sheet is populated entirely system-side). This run therefore drives the SAME
+  # tap-through-to-"Fill Password" sequence the accepted run does, so it needs the SAME parallel
+  # pearl-match loop.
+  drive_test_with_pearl_match "$udid" \
+    "PasskeyVaultUITests/AutoFillMatchingUITests/testPolicyRefusedFillDoesNotFill" \
+    "PV_PROBE_FILLTRACER" "$refused_log" || refused_result=$?
   xcrun simctl spawn "$udid" log show \
-    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
-    --last 2m >> "$E41_3_POLICY_LOG" 2>&1
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$refused_start" \
+    >> "$E41_3_POLICY_LOG" 2>&1
   grep 'PVUITEST|E41-3-POLICY|' "$refused_log" >> "$E41_3_POLICY_LOG" || true
   echo "REFUSED-RUN-XCODEBUILD-EXIT: $refused_result" >> "$E41_3_POLICY_LOG"
   rm -f "$refused_log"
+
+  # Cleanup -- so a later run of this SAME subcommand starts from a clean baseline.
+  if [ -n "$group_dir" ]; then
+    rm -f "$group_dir/tracer-mismatch-stored-url.marker"
+  fi
 
   if assert_e41_3_policy "$E41_3_POLICY_LOG"; then
     echo "PASS: e41-3-policy -- see $E41_3_POLICY_LOG"

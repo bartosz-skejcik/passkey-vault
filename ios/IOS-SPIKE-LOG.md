@@ -1662,6 +1662,123 @@ wording — it was already a positive proof shape ("wygaśnięcie ... jest widoc
 **Evidence:** `.planning/ROADMAP.md` §"Phase 41" Success Criteria (quoted verbatim above);
 `41-RESEARCH.md` §"Wording the phase record must use", §F1, §"Pitfall 4".
 
+## 1j. Phase 41 decision record — DR-41-B, 2026-08-20
+
+Written against `ios/evidence/41/e41-3-matching-matrix.md` (E41-3, Plan 41-05 Task 1) — three
+diagnostic identities (one `.domain`, two `.URL` differing only by port) registered directly
+against the real `ASCredentialIdentityStore`, five real Safari navigations observed, replicated
+three complete times end to end on the pinned simulator.
+
+### DR-41-B — Credential↔service matching policy on iOS: **DECIDED — Option (a), `.domain`
+identities unchanged, full origin equality re-applied at fill time**
+
+**Decision: keep `IdentityStoreSync`'s existing `.domain`-typed registration (no code change to
+`IdentityStoreSync.swift` itself — DR-41-A/DR-41-C's own precedent for "the record states the
+outcome even when it is 'no change'" applies here too), and enforce this repo's canonical
+`originEquals`/`itemMatchesOrigin` policy (`extension/entrypoints/background/frame-guard.ts:135-184`)
+at the ONE place iOS hands the fill entry point a real target:
+`request.credentialIdentity.serviceIdentifier`, inside `provideCredentialWithoutUserInteraction`/
+`prepareInterfaceToProvideCredential` (`CredentialProviderViewController.swift`'s `fillOrCancel`).
+This is `CredentialMatcher.swift` (Shared/), a pure function mirroring the extension's own
+per-item-type rules, with the `.domain` case's lossy (no scheme/port) conversion made an explicit
+case in its own `MatchTarget` enum rather than hidden inside a helper.**
+
+**Rejected: Option (b), `.URL`-typed identities as the primary registration type.** E41-3's own
+table (`ios/evidence/41/e41-3-matching-matrix.md` §"Key findings") found `.URL`-typed identities B
+and C **never** offered through the system's own "Sign in to …" suggestion mechanism, in any of
+five direct tests — including at B's own exact registered address (loc1, url-only replication).
+This is not "collapsed to host" (the RESEARCH's own anticipated worst case,
+`41-RESEARCH.md` §"The matching-model divergence") — it is "not observed to be offered at all" on
+this simulator/toolchain. The plan's own REPLANNING TRIGGERS name exactly this outcome as taking
+Option (b) off the table; this record does so on stronger grounds than the trigger anticipated.
+
+**Rejected: Option (c), accept the divergence and document iOS as more permissive, with no
+fill-time gate.** Once the `.domain` identity's registration has propagated (E41-3's own Note 1),
+it is offered on **every** subsequently-visited location regardless of host — same host/port
+(loc1), the same host under a different scheme (loc2), a subdomain (loc3), the same host on a
+different port (loc4), and a **completely unrelated host** (loc5, the deliberately-unregistered
+control) — in all 3 replications for loc3/4/5. This is not a bounded divergence a record could
+merely "accept" (T-41-23's own "high" severity, `41-05-PLAN.md`'s `threat_model`) — a suggestion
+breadth this wide, left unenforced at fill time, means ANY password field on ANY http(s) page a
+user's cursor happens to focus can offer to fill with a credential registered for an entirely
+unrelated site. `CredentialMatcher`'s fill-time gate is what stands between that suggestion and an
+actual fill.
+
+**Stated plainly, per this record's own obligation not to soften it: iOS, as measured on this
+simulator/toolchain, is dramatically more permissive at the SUGGESTION layer than every other PV
+client (extension, web).** The browser extension's own `itemMatchesOrigin`/`originEquals`
+(`frame-guard.ts:22-23`) refuses a suggestion at the UI layer itself for anything but an exact
+origin match; iOS's suggestion layer applies **no** host-based filtering that this experiment could
+detect once a `.domain` identity's registration has settled. **This divergence was intended to be
+closed at fill time — see the CORRECTED FINDING below: it is NOT, in fact, closeable there for a
+mismatched LIVE PAGE, only for a mismatched STORED IDENTITY.** iOS structurally cannot filter its
+OWN suggestion set the way the extension filters its UI (F3, `41-RESEARCH.md`: "QuickType matching
+against registered identities is performed by the system, not by us" — confirmed live this session
+via `os_log`: zero `PasskeyVaultAutoFill` process activity during the entire five-location drive,
+meaning the suggestion sheet is populated by the system directly from stored metadata, never by
+invoking our extension code at all). The cost this record names in those words, now stated at its
+full severity per the correction below: a user can be offered a suggestion on a page that has
+nothing to do with the credential shown, AND — unlike the original hope — the fill is NOT
+guaranteed to be refused, because the fill-time check cannot see the live page either. This is the
+honest, unsoftened shape of what `.domain`'s measured breadth and `.URL`'s measured absence leave
+this milestone with.
+
+**Matching logic is deliberately NOT centralised into `crates/pv-core` or `crates/pv-provider`.**
+No matching logic exists there today (a repo-wide search for eTLD/public-suffix/domain-match style
+symbols finds only `pv-server/src/config.rs`, unchanged by this plan — `git diff --name-only`
+against this plan's own commits contains no path under `crates/`). The semantics iOS needs (a
+lossy host, sometimes; a real origin, when `.URL`-typed data is available) are not the semantics
+the browser extension needs (always a full origin) — porting `originEquals` into a shared crate
+would be a second, iOS-motivated addition to a crate this milestone's constraints protect, for
+semantics the extension does not require. The divergence is recorded here, honestly, rather than
+resolved by inventing a second, drifting matching model (FAM-04's own warning, cited by `41-RESEARCH.md`
+§"The matching-model divergence").
+
+**CORRECTED FINDING (E41-3-policy, live this session) — the fill-time gate does NOT enforce origin
+equality against the live page for `.domain`-typed identities; stated plainly, per this record's
+own obligation not to soften it.** The paragraphs above, drafted before Task 2's own live proof,
+assumed `request.credentialIdentity.serviceIdentifier` carries the fill's real target. It does
+not: measured live, it ECHOES OUR OWN REGISTERED `.domain` identity verbatim ("127.0.0.1"),
+identically, whether the actual visit was to the item's own registered port (8765, accepted) or a
+different port entirely (8766, still echoed as "127.0.0.1" with no port information at all). Since
+`IdentityStoreSync` derives the registered `.domain` host directly FROM the item's own stored URL,
+the echoed identity and the item's own data are self-consistent BY CONSTRUCTION regardless of
+which page actually triggered the fill — a same-host-different-port or different-host VISIT is
+therefore structurally invisible to `CredentialMatcher` at the fill entry point. **T-41-23
+("filling a credential on a service this product's own policy refuses") is, as measured, NOT
+mitigated by this fill-time gate for `.domain`-typed identities on this platform.** The threat
+register's own disposition for T-41-23 is amended by this correction (see the plan's own
+`threat_model`, this record's evidence trail).
+
+What the gate DOES genuinely enforce, proven live: a DATA-INTEGRITY property — does the identity
+selected for a fill actually belong, by its own registered host, to the item it claims via
+`recordIdentifier`. This defends T-41-25 (a corrupted or malicious identity-store entry naming the
+wrong host for a real item) even though it cannot defend T-41-23. The demonstration
+(`e41-3-policy`) therefore mismatches the ITEM's own stored URL against its correctly-registered
+identity — not the visited page against the identity, which this session found cannot be
+constructed at all via documented, available APIs for `.domain`-typed password credentials.
+`prepareCredentialList(for:)`'s own array DOES carry the live page's real `.URL`-typed identifier
+(confirmed live, `stage=list-evaluate`), but that callback never reaches a specific fill decision
+in this milestone (no picker UI is built here) — logged for evidence
+(`logCandidateMatchEvaluation`), never gated.
+
+**Falsification of the guard itself:** `CredentialMatcher`'s per-item-type behaviour matches the
+extension's exactly (login: full origin equality including the `.domain` degradation; totp: issuer
+heuristic; card/identity: offered everywhere; note: never) — proven by 22 unit tests
+(`PasskeyVaultTests/CredentialMatcherTests.swift`). The fill-time gate's OWN data-integrity check
+was demonstrated able to fail: bypassing the matcher check in `fillOrCancel` (`true ||` around the
+guard) and re-running against a deliberately item/identity-mismatched item showed the fill SUCCEED
+where it should have been refused — both runs' terminal log line became `stage=fill status=ok`,
+and the harness's own differential assertion caught it (`the two runs' terminal branch lines are
+IDENTICAL`) — before the guard was restored and shown refusing correctly, both verified live
+(`scripts/ios-autofill-e41.sh e41-3-policy`, `ios/evidence/41/e41-3-policy.log`).
+
+**Evidence:** `ios/evidence/41/e41-3-matching-matrix.md` (the full table, methodology, and honest
+account of the control's own failure to stay clean); `ios/evidence/41/e41-3-raw.log` (raw
+observations); `ios/evidence/41/e41-3-policy.log` (the fill-time gate's own accepted/refused
+proof); `PasskeyVault/Shared/CredentialMatcher.swift`; `41-RESEARCH.md` §"The matching-model
+divergence (F3)", §"Decision records this phase owns" → DR-41-B.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)

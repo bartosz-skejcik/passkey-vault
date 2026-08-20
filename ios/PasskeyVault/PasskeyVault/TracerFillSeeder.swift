@@ -37,6 +37,7 @@
 //  value, not this seeder's own marker.
 //
 
+import AuthenticationServices
 import CryptoKit
 import Foundation
 import os
@@ -89,6 +90,19 @@ enum TracerFillSeeder {
         ) else { return false }
         return FileManager.default.fileExists(
             atPath: containerURL.appendingPathComponent(omitRevisionMarkerFileName).path
+        )
+    }
+
+    /// Plan 41-05, Task 2's own marker -- see the `storedUrl` local's own header at its call site
+    /// for what this triggers.
+    private static let mismatchStoredUrlMarkerFileName = "tracer-mismatch-stored-url.marker"
+
+    private static func shouldMismatchStoredUrl() -> Bool {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: groupIdentifier
+        ) else { return false }
+        return FileManager.default.fileExists(
+            atPath: containerURL.appendingPathComponent(mismatchStoredUrlMarkerFileName).path
         )
     }
 
@@ -170,6 +184,22 @@ enum TracerFillSeeder {
             return
         }
 
+        // Plan 41-05, Task 2 (DR-41-B correction): the DATA-INTEGRITY mismatch leg, marker-gated
+        // like `shouldMutateRevision()`/`shouldOmitRevisionKey()` above -- see this file's own
+        // `CredentialMatcher` header note: `request.credentialIdentity.serviceIdentifier` was
+        // found live, this session, to echo OUR OWN registered `.domain` identity ("127.0.0.1")
+        // verbatim, never the actually-visited page, which makes a same-host-different-port
+        // mismatch structurally undetectable at fill time. This is the scenario
+        // `CredentialMatcher` CAN genuinely catch: the item's OWN plaintext `urls` naming a
+        // COMPLETELY DIFFERENT host than the identity it is registered under -- exactly modelling
+        // a corrupted/malicious identity-store entry (T-41-25), independent of which page is
+        // visited, and reusing the SAME reliable port-8765 suggestion/tap flow the accepted run
+        // already proves works (rather than a brand-new host's own suggestion-propagation
+        // reliability, which this session found to be unpredictable).
+        let storedUrl = shouldMismatchStoredUrl()
+            ? "https://not-the-real-service.example/"
+            : "http://\(tracerServiceIdentifier):8765"
+
         // The plaintext JSON matches `LoginFields`' own wire shape exactly
         // (`Vault/ItemFields.swift`) so a real decode of this exact string through
         // `ItemNormalize.normalizeItemFields(fromPlaintext:)` would succeed unchanged -- this
@@ -177,7 +207,7 @@ enum TracerFillSeeder {
         let plaintext = """
         {"type":"login","name":"Tracer 41-03","folderId":null,"tags":[],\
         "username":"\(tracerUsername)","password":"\(tracerPassword)",\
-        "urls":["http://\(tracerServiceIdentifier):8765"],"notes":""}
+        "urls":["\(storedUrl)"],"notes":""}
         """
 
         let wire: FfiEncryptedItemWire
@@ -270,4 +300,5 @@ enum TracerFillSeeder {
             writeStatusMarker(status: "fail", step: "identity")
         }
     }
+
 }
