@@ -165,11 +165,12 @@ enum TracerFillSeeder {
             return
         }
 
-        let bootSessionId = LockMarker.currentBootSessionId() ?? "unknown-boot-session"
-        LockMarker.write(LockMarker(
-            bootSessionId: bootSessionId,
-            systemUptimeAtUnlock: ProcessInfo.processInfo.systemUptime
-        ))
+        // Phase 41, Plan 41-07: routed through `SessionLifecycle.recordHostUnlock()` -- the SAME
+        // real writer `ContentView.handleUnlocked(_:)` now calls on every genuine host-app
+        // unlock -- rather than hand-constructing `LockMarker` here, so this seeder's own
+        // "simulate a real unlock" claim stays true against the WIDENED marker shape (Task 1
+        // added `hostUnlockUptime`/`writer`) without duplicating that construction a second time.
+        SessionLifecycle.recordHostUnlock()
         logger.log("PVFILL|stage=seed status=ok step=lockmarker")
 
         do {

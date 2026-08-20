@@ -43,6 +43,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
         #endif
+        // Phase 41, Plan 41-07, Task 1: the THIRD of the three entry points ACC-06's lazy check
+        // must run before -- this method reads no key material today (no picker UI this
+        // milestone, every path below still cancels), but the truth this task must prove is
+        // "runs before any key read at EVERY entry point," not "only where a read currently
+        // happens" -- a future picker UI must inherit this call already in place, and the count
+        // this task's own acceptance criterion demands (one line per entry point, in a live run)
+        // requires it be observably present now. Never gates this method's own cancel behaviour.
+        SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "list", deleteKeyArtifact: SessionKeyReader.delete)
+
         // Phase 41, Plan 41-05, Task 2 (DR-41-B): this VC never builds a picker UI in this
         // milestone (every path below still cancels with `userInteractionRequired`, unchanged) --
         // but the array IS the one place `prepareCredentialList` hands us the candidate set, so it
@@ -133,27 +142,19 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
     private static let fillLogger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
-    /// Placeholder idle window for the tracer's own `LockMarker` check -- Plan 41-07 owns the
-    /// real, configured value and the 12h absolute ceiling (DR-41-C). 15 minutes is generous for
-    /// this task's own evidence run.
-    private static let tracerIdleWindowSeconds: TimeInterval = 15 * 60
-
-    /// Runs, in order: the `LockMarker` lazy check (ACC-06's inherited premise); the
+    /// Runs, in order: `SessionLifecycle`'s lazy check (ACC-06's inherited premise, Plan 41-07 --
+    /// the REAL configured idle window from `AutoLockPolicy` plus DR-41-C's 12h absolute
+    /// ceiling, superseding this task's own former hardcoded 15-minute placeholder); the
     /// `SessionKeyReader` read (Secret C, DR-41-A); the cache lookup keyed by
     /// `request.credentialIdentity.recordIdentifier`; `importUserKeyFromSession`; `decryptItem`
     /// with the cache record's OWN `itemId`/`revision` (its AAD binding); then
-    /// `completeRequest(withSelectedCredential:)`. Any failure before the fill exits through
-    /// `cancelRequest(withError:)` carrying `ASExtensionError.userInteractionRequired`. Logs the
-    /// branch taken and the terminal status through `os_log` with this phase's `PVFILL|` marker --
-    /// NEVER the password, the key bytes, or the marker value (T-41-12/T-41-15).
+    /// `completeRequest(withSelectedCredential:)`, followed by ACC-07's activity refresh. Any
+    /// failure before the fill exits through `cancelRequest(withError:)` carrying
+    /// `ASExtensionError.userInteractionRequired`. Logs the branch taken and the terminal status
+    /// through `os_log` with this phase's `PVFILL|` marker -- NEVER the password, the key bytes,
+    /// or the marker value (T-41-12/T-41-15).
     private func fillOrCancel(for request: any ASCredentialRequest, entryPoint: String) {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard
-            let marker = LockMarker.read(),
-            let currentBootSessionId = LockMarker.currentBootSessionId(),
-            marker.bootSessionId == currentBootSessionId,
-            marker.isUnlockedLazily(now: now, idleWindow: Self.tracerIdleWindowSeconds)
-        else {
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) else {
             Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
             extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
             return
@@ -250,6 +251,12 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             completionHandler: nil
         )
 
+        // Plan 41-07, Task 1 (ACC-07): the activity refresh, AFTER a successful fill -- DR-41-C
+        // grants the extension write permission specifically so AutoFill-only usage does not log
+        // the user out mid-use. Extends the idle window only; `hostUnlockUptime` (the absolute
+        // ceiling) is carried forward unchanged by `SessionLifecycle.refreshActivity` itself.
+        SessionLifecycle.refreshActivity(writer: "extension")
+
         // Plan 41-04 (FILL-03): the post-fill self-heal write. A cold fill just proved this ONE
         // item is reachable end-to-end (lock check, session key, cache lookup, decrypt) -- that
         // is exactly the information needed to repair ITS OWN identity-store entry if a prior
@@ -326,13 +333,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
 
-        let now = ProcessInfo.processInfo.systemUptime
-        guard
-            let marker = LockMarker.read(),
-            let currentBootSessionId = LockMarker.currentBootSessionId(),
-            marker.bootSessionId == currentBootSessionId,
-            marker.isUnlockedLazily(now: now, idleWindow: 15 * 60)
-        else {
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "rebuild", deleteKeyArtifact: SessionKeyReader.delete) else {
             fillLogger.log("PVFILL|E41-2|stage=rebuild status=locked-skip")
             return
         }

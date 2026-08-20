@@ -444,6 +444,18 @@ struct LockView: View {
             return
         }
         #endif
+        // Phase 41, Plan 41-07, Task 1: the host app's OWN "unlock path" entry point
+        // (`read_first`'s own naming). This screen is reached whenever the host app currently
+        // holds NO live in-memory session (`ContentView`'s own `.lock` route) -- a stale Secret C
+        // left over from a PRIOR unlock (a killed process, a jetsammed extension leaving no
+        // in-memory state behind here to catch it any other way) is exactly ACC-06's own inherited
+        // premise: nothing else expires it. Running the check here means arriving at THIS screen
+        // always leaves Secret C in a state consistent with whatever `SessionLifecycle` itself
+        // would report -- never gates the biometric/password attempt below, which always
+        // re-establishes a fresh, correct marker via `handleUnlocked` -> `recordHostUnlock()`
+        // regardless of what this check found.
+        SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "host-unlock", deleteKeyArtifact: SessionKeyStore.delete)
+
         let currentAvailability = BiometricUnlockService.biometryAvailability()
         availability = currentAvailability
 

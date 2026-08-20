@@ -257,6 +257,19 @@ struct ContentView: View {
     private func handleUnlocked(_ session: UnlockedSession) {
         _ = storeFor(session)
         _ = folderStoreFor(session)
+        // Phase 41, Plan 41-07, Task 1 (DR-41-A/DR-41-C): THIS is the single choke point BOTH
+        // `AuthView` (register/sign-in) and `LockView` (password unlock AND biometric unlock)
+        // funnel every successful host-app unlock through -- `SessionKeyStore.swift`'s own
+        // header named this exact call site as "PRODUCTION WIRING ... left to a later plan."
+        // Writes Secret C (the non-biometric session artifact the extension reads, DR-41-A) and
+        // resets `SessionLifecycle`'s marker -- including `hostUnlockUptime`, the ONLY thing that
+        // may move DR-41-C's 12h absolute ceiling forward. `try?`: a failed write here must never
+        // block the user from reaching their own already-unlocked vault; it only means AutoFill
+        // will not have a fresh Secret C to read until the next successful unlock.
+        var sessionBytes = exportUserKeyForSession(userKey: session.userKey)
+        defer { sessionBytes.resetBytes(in: 0..<sessionBytes.count) }
+        try? SessionKeyStore.store(sessionBytes)
+        SessionLifecycle.recordHostUnlock()
         route = .unlocked(session)
     }
 
@@ -352,6 +365,20 @@ struct ContentView: View {
         // safe no-op rather than a crash.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
+                // Phase 41, Plan 41-07, Task 1: the host app's OWN "foreground path" entry point
+                // (`read_first`'s own naming) for ACC-06's lazy check -- an unlocked `VaultStore`
+                // holds its `FfiUserKey` in memory indefinitely once built (`storeFor(_:)`'s own
+                // one-per-session discipline); nothing previously re-checked whether the SAME
+                // idle window that governs Secret C had already elapsed while this app sat
+                // backgrounded. Foregrounding is this plan's own chosen "vault interaction"
+                // signal for the host's ACC-07 refresh too -- both calls share this one
+                // transition rather than being wired into every individual `VaultStore` mutation
+                // (documented choice, 41-07-SUMMARY.md).
+                if SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "host-foreground", deleteKeyArtifact: SessionKeyStore.delete) {
+                    SessionLifecycle.refreshActivity(writer: "host")
+                } else {
+                    performLock()
+                }
                 syncCoordinator?.handleScenePhaseBecameActive()
             }
         }
@@ -399,6 +426,13 @@ struct ContentView: View {
     /// decided by a live call each time, not a local cache; a lock is just
     /// another entry into that same decision.
     private func performLock() {
+        // Phase 41, Plan 41-07, Task 1: the explicit lock. Without this, tapping "Lock now" tore
+        // down only the host app's OWN in-memory session (below) -- Secret C, the artifact the
+        // AutoFill extension reads with NO biometric challenge (DR-41-A), was left fully live,
+        // so AutoFill would keep silently filling for whatever remained of the idle window even
+        // though the user just explicitly asked to lock. Called BEFORE the teardown below so a
+        // failure in the (rare) delete path never blocks the user's own route change.
+        SessionLifecycle.lock(deleteKeyArtifact: SessionKeyStore.delete)
         syncCoordinator?.stop()
         syncCoordinator = nil
         vaultStore = nil
@@ -430,6 +464,9 @@ struct ContentView: View {
     /// resolves the App Group container itself), so this runs regardless of
     /// whether `vaultStore` had already been constructed this session.
     private func performSignOut() {
+        // Phase 41, Plan 41-07, Task 1: same reasoning as `performLock()`'s own note -- a
+        // sign-out must ALSO tear down Secret C, not merely the in-memory session below.
+        SessionLifecycle.lock(deleteKeyArtifact: SessionKeyStore.delete)
         syncCoordinator?.stop()
         syncCoordinator = nil
         vaultStore = nil

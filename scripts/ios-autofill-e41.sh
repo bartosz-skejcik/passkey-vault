@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy|e41-6-encoding|e41-6} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy|e41-6-encoding|e41-6|lock-build|e41-4|e41-7} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -2219,6 +2219,130 @@ assert_e41_6() {
   return 0
 }
 
+# =============================================================================
+# lock-build -- both targets build clean with deprecation warnings escalated to
+# errors, LockMarkerTests' five predicate cases pass by name (Task 1, 41-07)
+# =============================================================================
+#
+# `-Werror DeprecatedDeclaration` (this Swift toolchain's own per-diagnostic-group promotion,
+# `swiftc -print-diagnostic-groups`/`-Werror <group>`, confirmed live this session -- NOT
+# `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`, which would also fail the build on this repo's many
+# PRE-EXISTING, out-of-scope main-actor-isolation/Swift-6-mode warnings, exactly the SCOPE
+# BOUNDARY this project's own executor rules forbid auto-fixing) escalates ONLY deprecated-API
+# usage to a build error -- F2's own concern (the identity-store/ViewController overload traps)
+# made mechanically enforceable, not merely documented. Confirmed clean against this repo's
+# CURRENT state before this task ever ran (no deprecated spelling anywhere in either target).
+#
+# Runs `PasskeyVaultTests/LockMarkerTests` (never a suite a later task creates) via `xcodebuild
+# test`, which builds BOTH the host app target and the `PasskeyVaultAutoFill` extension target as
+# a precondition (the extension is an "Embed Foundation Extensions" dependency of the host app
+# target, confirmed live this session via `grep -c "target 'PasskeyVaultAutoFill'"` against a
+# `PasskeyVaultTests`-only run) -- one `xcodebuild` invocation covers both targets' own build
+# gate, never two separate builds.
+LOCK_BUILD_LOG="$EVIDENCE_DIR/lock-build.log"
+LOCK_MARKER_TEST_CASES=(
+  "anInstantInsideTheIdleWindowIsUnlocked"
+  "anInstantExactlyAtTheIdleBoundaryIsStillUnlocked"
+  "anInstantOneSecondPastTheIdleBoundaryIsExpired"
+  "aMarkerDatedInTheFutureIsNeverUnlocked"
+  "aMarkerFromADifferentBootIsNeverValidRegardlessOfElapsedTime"
+)
+
+run_lock_build_once() {
+  local udid="$1" out_log="$2"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultTests/LockMarkerTests \
+    -skip-testing:PasskeyVaultUITests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    OTHER_SWIFT_FLAGS='$(inherited) -Werror DeprecatedDeclaration' \
+    test > "$out_log" 2>&1
+}
+
+assert_lock_build() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "lock-build"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -qE '^XCODEBUILD-EXIT: 0$' "$target"; then
+    echo "FAIL: lock-build -- recorded exit status is not zero in $target" >&2
+    failed=1
+  fi
+  if ! grep -q '\*\* TEST SUCCEEDED \*\*' "$target"; then
+    echo "FAIL: lock-build -- no '** TEST SUCCEEDED **' marker in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "target 'PasskeyVault'" "$target"; then
+    echo "FAIL: lock-build -- no evidence the PasskeyVault (host) target was built in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "target 'PasskeyVaultAutoFill'" "$target"; then
+    echo "FAIL: lock-build -- no evidence the PasskeyVaultAutoFill (extension) target was built in $target" >&2
+    failed=1
+  fi
+
+  local case_name
+  for case_name in "${LOCK_MARKER_TEST_CASES[@]}"; do
+    if ! grep -qE "Test ${case_name}\(\) passed" "$target"; then
+      echo "FAIL: lock-build -- no passed-result line for predicate case '$case_name' in $target" >&2
+      failed=1
+    fi
+  done
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+cmd_lock_build() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_lock_build "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> lock-build: pinned simulator UDID: $udid"
+
+  echo "==> lock-build: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  local raw_log result=0
+  raw_log=$(mktemp)
+  run_lock_build_once "$udid" "$raw_log" || result=$?
+  if [ "$result" -ne 0 ] && grep -qE 'uniffiEnsurePvFfiInitialized|cannot find .* in scope' "$raw_log"; then
+    echo "==> HIT landmine L-10 (cold DerivedData mismatch) -- retrying once" >&2
+    result=0
+    run_lock_build_once "$udid" "$raw_log" || result=$?
+  fi
+
+  : > "$LOCK_BUILD_LOG"
+  echo "## lock-build -- both targets, -Werror DeprecatedDeclaration, LockMarkerTests" >> "$LOCK_BUILD_LOG"
+  cat "$raw_log" >> "$LOCK_BUILD_LOG"
+  echo "" >> "$LOCK_BUILD_LOG"
+  echo "XCODEBUILD-EXIT: $result" >> "$LOCK_BUILD_LOG"
+  rm -f "$raw_log"
+
+  if assert_lock_build "$LOCK_BUILD_LOG"; then
+    echo "PASS: lock-build -- see $LOCK_BUILD_LOG"
+    exit 0
+  else
+    echo "FAIL: lock-build -- see $LOCK_BUILD_LOG" >&2
+    exit 1
+  fi
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
@@ -2250,5 +2374,8 @@ case "${1:-}" in
   e41-3-policy) shift; cmd_e41_3_policy "$@" ;;
   e41-6-encoding) shift; cmd_e41_6_encoding "$@" ;;
   e41-6) shift; cmd_e41_6 "$@" ;;
+  lock-build) shift; cmd_lock_build "$@" ;;
+  e41-4) shift; cmd_e41_4 "$@" ;;
+  e41-7) shift; cmd_e41_7 "$@" ;;
   *) usage ;;
 esac

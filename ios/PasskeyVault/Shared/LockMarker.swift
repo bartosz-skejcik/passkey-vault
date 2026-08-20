@@ -10,21 +10,33 @@
 //  PREVIOUS boot cannot be distinguished from a small elapsed value in the CURRENT one without a
 //  per-boot identifier).
 //
-//  THIS TASK implements the READ and the LAZY CHECK only, per 41-03-PLAN.md's own scoping:
-//  "Full expiry semantics (the explicit delete, the refresh from either process, the clock legs)
-//  are 41-07's job; this task implements the read and the check only, and 41-07 widens the same
-//  type rather than replacing it." `write(_:)` exists so this task's own seeder
-//  (`TracerFillSeeder.swift`) can simulate "the host app just completed a real unlock" -- the
-//  REAL refresh-on-activity write (ACC-07) and the explicit `SecItemDelete`-shaped expiry
-//  (ACC-06, this type carries no secret so there is nothing to delete here, but the STANDING
-//  session-ended semantics it is asked to represent are) are Plan 41-07's job.
+//  41-03 implemented the READ and the LAZY CHECK only, per its own scoping: "Full expiry
+//  semantics (the explicit delete, the refresh from either process, the clock legs) are 41-07's
+//  job... 41-07 widens the same type rather than replacing it." THIS is that widening (Phase 41,
+//  Plan 41-07, Task 1): two fields added --
 //
-//  `isUnlockedLazily(now:idleWindow:)` is a PURE function of its two explicit inputs plus `self`
-//  -- no I/O, no `UserDefaults` read, no `sysctlbyname` call -- so it is directly testable
-//  without a process (this task's own action wording). The `bootSessionId` EQUALITY check against
-//  the CURRENT boot is a SEPARATE concern, composed by the caller (`currentBootSessionId()` below
-//  plus a plain `==`) -- a reboot ending the session is a coarser, binary fact than the lazy idle
-//  check, and keeping the two checks separate is what lets each be tested independently.
+//  * `hostUnlockUptime` -- DR-41-C's 12-hour ABSOLUTE session ceiling anchor. Set ONLY by a REAL
+//    host-app unlock (`SessionLifecycle.recordHostUnlock()`); the extension's own activity
+//    refresh (ACC-07, `SessionLifecycle.refreshActivity(writer:)`) reads the CURRENT marker and
+//    carries this field forward UNCHANGED -- "the ceiling is tracked as a separate,
+//    host-app-only-writable field the extension's own refresh never touches"
+//    (`ios/IOS-SPIKE-LOG.md` DR-41-C).
+//  * `writer` -- which process most recently wrote this marker (`"host"`/`"extension"`), the
+//    tag Task 1's own action text asks for ("write a fresh marker value, tagged with which
+//    process wrote it") -- lets E41-7's ACC-07 leg assert the HOST reads a value the EXTENSION
+//    itself logged writing, receiver-side.
+//
+//  `write(_:)`/`read()`/`clear()` are the ONLY I/O this file performs; `SessionLifecycle.swift`
+//  (this same plan) is the impure layer composing them with the Keychain delete neither process
+//  may import from the other's target (`SessionKeyStore`/`SessionKeyReader`, host-only/
+//  extension-only respectively) -- see that file's own header.
+//
+//  `isUnlockedLazily(now:idleWindow:absoluteCeiling:)` remains a PURE function of its explicit
+//  inputs plus `self` -- no I/O, no `UserDefaults` read, no `sysctlbyname` call -- so it is
+//  directly testable without a process. The `bootSessionId` EQUALITY check against the CURRENT
+//  boot is a SEPARATE concern, composed by the caller (`currentBootSessionId()` below plus a
+//  plain `==`) -- a reboot ending the session is a coarser, binary fact than the lazy idle check,
+//  and keeping the two checks separate is what lets each be tested independently.
 //
 
 import Foundation
@@ -36,12 +48,28 @@ public struct LockMarker: Codable, Equatable {
     public let bootSessionId: String
 
     /// `ProcessInfo.processInfo.systemUptime` at WRITE time -- the monotonic half of DR-41-C's
-    /// clock pair.
+    /// clock pair. ACC-07's activity refresh (either process) updates THIS field; it never
+    /// touches `hostUnlockUptime` below.
     public let systemUptimeAtUnlock: Double
 
-    public init(bootSessionId: String, systemUptimeAtUnlock: Double) {
+    /// DR-41-C's 12-hour ABSOLUTE ceiling anchor -- the `systemUptime` at the last REAL host-app
+    /// unlock. Set ONLY by `SessionLifecycle.recordHostUnlock()` (host-only caller); AutoFill
+    /// activity (`SessionLifecycle.refreshActivity(writer:)`) can extend `systemUptimeAtUnlock`
+    /// (the idle window) but must carry THIS field forward unchanged, exactly as DR-41-C
+    /// requires: "AutoFill traffic ... can extend the idle window but can never push the session
+    /// past this 12-hour ceiling."
+    public let hostUnlockUptime: Double
+
+    /// Which process most recently wrote this marker -- `"host"` or `"extension"`. Task 1's own
+    /// action text: "tagged with which process wrote it." Never security-load-bearing on its
+    /// own (a value ONLY a reader can compare against what a writer logged, E41-7's ACC-07 leg).
+    public let writer: String
+
+    public init(bootSessionId: String, systemUptimeAtUnlock: Double, hostUnlockUptime: Double, writer: String) {
         self.bootSessionId = bootSessionId
         self.systemUptimeAtUnlock = systemUptimeAtUnlock
+        self.hostUnlockUptime = hostUnlockUptime
+        self.writer = writer
     }
 
     // MARK: - Storage (DR-41-C: the App Group container, `UserDefaults(suiteName:)`)
@@ -57,13 +85,22 @@ public struct LockMarker: Codable, Equatable {
         return try? JSONDecoder().decode(LockMarker.self, from: data)
     }
 
-    /// Writes the marker whole. ACC-07 (DR-41-C) permits BOTH processes to call this -- the
-    /// extension's own refresh-on-activity write is Plan 41-07's job; this task's seeder calls it
-    /// from the HOST side only, to simulate a real unlock having just happened.
+    /// Writes the marker whole. ACC-07 (DR-41-C) permits BOTH processes to call this -- never
+    /// called directly outside `SessionLifecycle.swift` in production code (that type owns which
+    /// fields each caller may/may not carry forward; see its own header).
     public static func write(_ marker: LockMarker) {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }
         guard let data = try? JSONEncoder().encode(marker) else { return }
         defaults.set(data, forKey: defaultsKey)
+    }
+
+    /// ACC-06's explicit-delete-on-expiry counterpart for the MARKER half (the Keychain artifact
+    /// itself is deleted by `SessionLifecycle`'s caller-supplied `deleteKeyArtifact` closure,
+    /// never by this file -- this type owns no Keychain code). Idempotent: clearing an
+    /// already-absent marker is not an error.
+    public static func clear() {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+        defaults.removeObject(forKey: defaultsKey)
     }
 
     // MARK: - Clock: the CURRENT boot's session identifier
@@ -85,14 +122,38 @@ public struct LockMarker: Codable, Equatable {
 
     // MARK: - The lazy check (ACC-06's inherited premise; this task's own scope)
 
-    /// `true` if and only if the elapsed monotonic uptime since `systemUptimeAtUnlock` is within
-    /// `idleWindow`. A PURE function of `self`, `now`, and `idleWindow` -- no I/O. The caller is
-    /// responsible for ALSO checking `bootSessionId` equality against `currentBootSessionId()`
-    /// before trusting a `true` result here (see this file's header) -- that check is
-    /// deliberately NOT folded into this function, so each can be tested independently.
-    public func isUnlockedLazily(now: TimeInterval, idleWindow: TimeInterval) -> Bool {
-        guard now >= systemUptimeAtUnlock else { return false }
-        let elapsed = now - systemUptimeAtUnlock
-        return elapsed <= idleWindow
+    /// `true` if and only if BOTH bounds hold: the elapsed monotonic uptime since
+    /// `systemUptimeAtUnlock` is within `idleWindow` (ACC-06's own lazy check), AND the elapsed
+    /// uptime since `hostUnlockUptime` is within `absoluteCeiling` (DR-41-C's 12-hour ceiling,
+    /// independent of any AutoFill activity). A PURE function of `self` and its three explicit
+    /// inputs -- no I/O. The caller is responsible for ALSO checking `bootSessionId` equality
+    /// against `currentBootSessionId()` before trusting a `true` result here (see this file's
+    /// header) -- that check is deliberately NOT folded into this function, so each can be tested
+    /// independently.
+    ///
+    /// A `now` earlier than either anchor (a rewound clock, or a marker from the future) is
+    /// treated as expired, never as "unlocked forever" -- T-41-35's own guard: a clock a user can
+    /// move backward must never be able to resurrect a session by making `elapsed` negative.
+    public func isUnlockedLazily(now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval) -> Bool {
+        guard now >= systemUptimeAtUnlock, now >= hostUnlockUptime else { return false }
+        let idleElapsed = now - systemUptimeAtUnlock
+        let ceilingElapsed = now - hostUnlockUptime
+        return idleElapsed <= idleWindow && ceilingElapsed <= absoluteCeiling
+    }
+
+    /// The FULL lazy-check predicate (Plan 41-07, Task 1): folds the `bootSessionId` equality
+    /// check together with `isUnlockedLazily`'s own idle/ceiling arithmetic into ONE pure
+    /// function of `self` plus its FOUR explicit inputs -- still no I/O, no `sysctlbyname` call.
+    /// `SessionLifecycle` (the impure caller) supplies `currentBootSessionId` from
+    /// `LockMarker.currentBootSessionId()`'s own sysctl read; this function never calls it
+    /// itself, which is exactly what lets `LockMarkerTests.swift` exercise "a marker carrying a
+    /// different boot identity" as a plain value, with no process/sysctl dependency at all.
+    /// `isUnlockedLazily` above remains available separately (41-03's own design) for testing the
+    /// idle/ceiling arithmetic in isolation from the boot-identity check.
+    public func isValid(
+        currentBootSessionId: String, now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval
+    ) -> Bool {
+        guard bootSessionId == currentBootSessionId else { return false }
+        return isUnlockedLazily(now: now, idleWindow: idleWindow, absoluteCeiling: absoluteCeiling)
     }
 }

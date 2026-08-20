@@ -105,4 +105,19 @@ enum SessionKeyReader {
             return .failure(.keychain(status))
         }
     }
+
+    /// Phase 41, Plan 41-07, Task 1 (ACC-06's explicit delete, DR-41-A's own artifact choice).
+    /// Deliberately built from `baseQuery` above -- byte-identical to `readSilently()`'s own
+    /// matching attributes and to `SessionKeyStore.delete()`'s query (host target) -- see
+    /// `SessionLifecycle.swift`'s own header for why this is duplicated per-target rather than
+    /// shared. Idempotent: deleting an already-absent item is not an error, matching
+    /// `SessionKeyStore.delete()`'s own precondition.
+    static func delete() {
+        let status = SecItemDelete(baseQuery as CFDictionary)
+        precondition(
+            status == errSecSuccess || status == errSecItemNotFound,
+            "SessionKeyReader.delete unexpected status \(status)"
+        )
+        logger.log("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public)")
+    }
 }
