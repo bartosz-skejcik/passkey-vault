@@ -42,11 +42,21 @@ import CryptoKit
 import Foundation
 import os
 
-// WR-10 (41-REVIEW.md): the call site was correctly gated; this file's own BODY was not, so it
-// compiled and linked into every build including App Store Release. See
+// WR-10 (41-REVIEW.md iteration 1): the call site was correctly gated; this file's own BODY was
+// not, so it compiled and linked into every build including App Store Release. See
 // `SessionKeyProbeSeeder.swift`'s own note for the identical reasoning (same class of blast
 // radius: `seed()`/`seedThirdPartyDomain()` write through REAL production writers).
-#if DEBUG || PV_PROBE_FILLTRACER
+//
+// WR-10 (41-REVIEW.md iteration 2): the fix above was incomplete -- `seedThirdPartyDomain()`
+// (below) is called under `#if PV_PROBE_E41_8` in `PasskeyVaultApp.swift`, and
+// `scripts/ios-autofill-e41.sh`'s own E41-8 leg builds with `PV_PROBE_E41_8` ALONE
+// (`build_with_l10_retry "$udid" "PV_PROBE_E41_8"`) -- no `PV_PROBE_FILLTRACER`. It compiled today
+// purely because `build_with_l10_retry` hardcodes `-configuration Debug`, so `DEBUG` was ALSO
+// always defined for every harness build; the moment anyone runs E41-8 (or any future probe leg)
+// against a Release configuration -- the exact build this guard exists to protect -- the call site
+// would reference a type that does not exist and the build breaks. This file's own condition is
+// now the UNION of every call site's condition across the codebase, not just `PV_PROBE_FILLTRACER`.
+#if DEBUG || PV_PROBE_FILLTRACER || PV_PROBE_E41_8
 enum TracerFillSeeder {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
