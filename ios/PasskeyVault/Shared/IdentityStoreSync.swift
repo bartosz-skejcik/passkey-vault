@@ -167,6 +167,27 @@ enum IdentityStoreSync {
         UserDefaults(suiteName: suiteName)?.bool(forKey: rebuildPendingKey) ?? false
     }
 
+    /// WR-01 (41-REVIEW.md): sign-out (HOST-ONLY caller, `ContentView.performSignOut()`) must
+    /// remove every registered identity, not merely leave the store as-is -- a signed-out
+    /// account's usernames were otherwise offered by QuickType indefinitely (cleaned up only
+    /// incidentally, the next time a DIFFERENT account's `performRefresh` republish happened to
+    /// compute the old entries as removals, or never, if nobody signs in again). Deliberately does
+    /// NOT run on a mere lock (`performLock()`) -- a locked vault should still be offered,
+    /// prompting an unlock; that difference is intentional, not accidental (WR-01's own note).
+    @discardableResult
+    static func removeAllPublished() async -> Swift.Result<Void, IdentityStoreSyncError> {
+        do {
+            try await ASCredentialIdentityStore.shared.removeAllCredentialIdentities()
+            persistPublishedKeys([])
+            markRebuildPending(false)
+            logger.log("PVFILL|E41-2|stage=remove-all-published status=ok")
+            return .success(())
+        } catch {
+            logger.error("PVFILL|E41-2|stage=remove-all-published status=fail error=\(String(describing: error), privacy: .public)")
+            return .failure(.removeFailed(error))
+        }
+    }
+
     // MARK: - CR-01 (41-REVIEW.md): the additive, single-identity choke point
 
     /// Marks a rebuild owed BEFORE a caller performs a fire-and-forget `upsertOne(source:)` --

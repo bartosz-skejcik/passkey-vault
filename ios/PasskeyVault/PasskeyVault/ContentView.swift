@@ -489,6 +489,12 @@ struct ContentView: View {
             let service = AccountService(apiClient: apiClient)
             await service.logout()
             AppGroupCiphertextCacheStore().purge()
+            // WR-01 (41-REVIEW.md): sign-out must ALSO remove every registered QuickType
+            // identity -- without this, a signed-out account's usernames kept being offered
+            // indefinitely (this device may now be in someone else's hands, or signed in as a
+            // different user). Deliberately NOT called from `performLock()` -- a locked vault
+            // should still be offered, prompting an unlock.
+            await IdentityStoreSync.removeAllPublished()
             route = .auth(initialMode: .signIn)
         }
     }
