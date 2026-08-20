@@ -340,16 +340,15 @@ enum IdentityStoreSync {
     /// `41-RESEARCH.md`) -- QuickType matches by the CURRENT PAGE'S host, never by the raw string
     /// an item happened to store. Handles both a bare host ("example.com") and a full URL
     /// ("https://example.com/login") the same way an item may legitimately carry either.
+    ///
+    /// CR-02 (41-REVIEW.md): routed through `OriginNormalize.host(fromURLString:)` -- the SAME
+    /// function `CredentialMatcher.loginUrlMatches` (the fill-time matcher) now uses -- so the
+    /// registrar and the matcher can never apply two different rules to the same stored string
+    /// again. WR-09 (41-REVIEW.md): a value that fails to parse even after the https-assumption is
+    /// a genuine parse failure, and the registrar fails CLOSED (`nil`, skip) rather than
+    /// registering the raw, un-parseable string as a permanent junk `.domain` entry.
     private static func serviceHost(fromURLString raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if let url = URL(string: trimmed), let host = url.host, !host.isEmpty {
-            return host
-        }
-        if let url = URL(string: "https://\(trimmed)"), let host = url.host, !host.isEmpty {
-            return host
-        }
-        return trimmed
+        OriginNormalize.host(fromURLString: raw)
     }
 
     // MARK: - Rebuild-pending / published-set persistence

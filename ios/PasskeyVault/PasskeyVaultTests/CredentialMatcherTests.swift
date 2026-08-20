@@ -216,4 +216,42 @@ struct CredentialMatcherTests {
         let target = MatchTarget(serviceIdentifier: FakeServiceIdentifier(matchIdentifier: "https://example.com/", matchType: .url))
         #expect(target == .url("https://example.com/"))
     }
+
+    // MARK: - CR-02 (41-REVIEW.md): a scheme-less stored URL must be fillable, both against a
+    // `.domain` target (registrar's own registration shape) and a `.url` target that assumed the
+    // SAME https default the registrar assumed -- and a genuine scheme mismatch must still refuse.
+
+    @Test func loginMatchesSchemeLessStoredUrlAgainstDomainTarget() {
+        // The registrar registers a `.domain`-typed identity for a bare-host item regardless of
+        // scheme, so the domain-target comparison was never broken by CR-02 -- this pins that it
+        // stays true now that `loginUrlMatches` routes through `OriginNormalize`.
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com"], issuer: "", name: "",
+            target: .domain(host: "example.com")
+        )
+        #expect(matched)
+    }
+
+    @Test func loginMatchesSchemeLessStoredUrlAgainstHttpsUrlTarget() {
+        // CR-02's own defect: before the shared `OriginNormalize` helper, this was the case that
+        // registered fine (via IdentityStoreSync's own bare-host handling) but could NEVER fill
+        // (CredentialMatcher required an explicit scheme and refused everything else).
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com"], issuer: "", name: "",
+            target: .url("https://example.com/")
+        )
+        #expect(matched)
+    }
+
+    @Test func loginRefusesSchemeMismatchWhenStoredUrlIsSchemeLess() {
+        // CR-02's own guard against overcorrection: the https-assumption applies ONLY to the
+        // scheme-less STORED value -- a `.url` target visiting over plain http still does not
+        // match a stored bare host (which is read as https), preserving T-10-05's full origin
+        // equality rather than widening the policy to make scheme-less items match anything.
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com"], issuer: "", name: "",
+            target: .url("http://example.com/")
+        )
+        #expect(!matched)
+    }
 }

@@ -543,6 +543,20 @@ struct ItemFormView: View {
         }
     }
 
+    /// CR-02 (41-REVIEW.md): a URL typed with no scheme ("example.com") is a completely normal
+    /// thing to type into this field -- prefix it with `https://` on save so the stored string
+    /// carries an explicit scheme going forward, matching the same https-assumption
+    /// `OriginNormalize` (Shared/) applies at BOTH the registrar and the fill-time matcher. This is
+    /// belt-and-suspenders on top of that shared normalization (which already makes a scheme-less
+    /// stored value fillable) -- storing a scheme explicitly means a future reader never has to
+    /// re-derive the assumption at all. A value that already carries a scheme is left untouched.
+    private static func normalizedLoginURL(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+        guard URL(string: trimmed)?.scheme == nil else { return trimmed }
+        return "https://\(trimmed)"
+    }
+
     /// The `ItemFields` this form currently represents, tags parsed from the
     /// comma-separated editor, folder id untouched (edited via the picker's
     /// own binding above).
@@ -553,7 +567,9 @@ struct ItemFormView: View {
             .filter { !$0.isEmpty }
         switch kind {
         case .login:
-            var f = loginFields; f.tags = parsedTags; return .login(f)
+            var f = loginFields; f.tags = parsedTags
+            f.urls = f.urls.map(Self.normalizedLoginURL)
+            return .login(f)
         case .card:
             var f = cardFields; f.tags = parsedTags; return .card(f)
         case .identity:

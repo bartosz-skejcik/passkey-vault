@@ -123,11 +123,19 @@ enum CredentialMatcher {
 
     // MARK: - Login: full origin equality (T-10-05), including the `.domain` degradation
 
+    /// CR-02 (41-REVIEW.md): both `stored` and `visited` now derive through
+    /// `OriginNormalize.components(fromURLString:)` -- the SAME function `IdentityStoreSync
+    /// .serviceHost(fromURLString:)` (the registrar) uses -- so a bare-host stored URL
+    /// ("example.com") is read identically at registration time and at fill time. The
+    /// https-assumption only ever applies to a string that itself carries no scheme; a `.url`
+    /// target from a real visited page always carries an explicit scheme, so a genuine
+    /// scheme mismatch (`http://` visit vs a `https://`-assumed stored bare host) still refuses,
+    /// preserving T-10-05's full origin equality.
     private static func loginUrlMatches(_ storedUrl: String, target: MatchTarget) -> Bool {
-        guard let stored = originComponents(fromURLString: storedUrl) else { return false }
+        guard let stored = OriginNormalize.components(fromURLString: storedUrl) else { return false }
         switch target {
         case let .url(raw):
-            guard let visited = originComponents(fromURLString: raw) else { return false }
+            guard let visited = OriginNormalize.components(fromURLString: raw) else { return false }
             return stored == visited
         case let .domain(host):
             // LOSSY: no scheme/port in a `.domain` identifier -- host-only comparison, explicitly
@@ -135,35 +143,6 @@ enum CredentialMatcher {
             // hidden here.
             return stored.host.caseInsensitiveCompare(host) == .orderedSame
         }
-    }
-
-    private struct OriginComponents: Equatable {
-        let scheme: String
-        let host: String
-        let port: Int
-    }
-
-    private static func defaultPort(forScheme scheme: String) -> Int? {
-        switch scheme {
-        case "http": return 80
-        case "https": return 443
-        default: return nil
-        }
-    }
-
-    /// Mirrors `frame-guard.ts`'s own `originEquals` parsing discipline (`new URL(...)` in a
-    /// try/catch, failing CLOSED -- never treating "could not parse" as a match) -- `URL`'s own
-    /// `.host`/`.scheme` are used directly rather than any substring/suffix heuristic, and an
-    /// explicit or implicit port is normalized to the scheme's IANA default so
-    /// `"https://x"` and `"https://x:443"` compare equal, matching `URL#origin`'s own behaviour in
-    /// the browser extension.
-    private static func originComponents(fromURLString raw: String) -> OriginComponents? {
-        guard let url = URL(string: raw), let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(),
-              !host.isEmpty
-        else { return nil }
-        let port = url.port ?? defaultPort(forScheme: scheme)
-        guard let resolvedPort = port else { return nil }
-        return OriginComponents(scheme: scheme, host: host, port: resolvedPort)
     }
 
     // MARK: - Totp: issuer/host heuristic, ported verbatim from `frame-guard.ts`'s own rules
