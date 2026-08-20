@@ -18,6 +18,19 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
+  # WR-06 (41-REVIEW.md): 41-08-SUMMARY.md calls these two scripts "standing gates", but their
+  # only caller was `scripts/ios-autofill-e41.sh gates`, invoked BY HAND -- a gate nobody runs
+  # cannot catch the regression it exists for. Both scripts are pure bash + awk + grep over
+  # sources (no Xcode, no simulator), so they run on ubuntu-latest without any iOS toolchain.
+  ios-structural-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: iOS AutoFill structural gates
+        run: |
+          bash scripts/audit-ios-autofill-deprecated-apis.sh
+          bash scripts/audit-ios-identity-store-chokepoint.sh
+
   web:
     runs-on: ubuntu-latest
     env:
