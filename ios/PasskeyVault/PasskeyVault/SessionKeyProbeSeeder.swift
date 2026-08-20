@@ -31,6 +31,15 @@ import CryptoKit
 import Foundation
 import os
 
+// WR-10 (41-REVIEW.md): the CALL SITE (`PasskeyVaultApp.swift`) was correctly gated behind
+// `PV_PROBE_SESSIONKEY`, but this file's own BODY carried no compile-time gate at all -- it
+// compiled and linked into EVERY build, including App Store Release, where `seed()` writes a
+// fixed test vector through the REAL production writer `UkEnvelopeStore.store(_:)`. One
+// accidental call site in a shipped build would destroy the user's real biometric-unlock
+// envelope. `DEBUG` keeps this available to a normal Debug build (unchanged local-dev ergonomics,
+// still inert unless called); `PV_PROBE_SESSIONKEY` keeps it available to an explicit
+// Release-configuration evidence build that needs it.
+#if DEBUG || PV_PROBE_SESSIONKEY
 enum SessionKeyProbeSeeder {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
@@ -62,3 +71,4 @@ enum SessionKeyProbeSeeder {
         }
     }
 }
+#endif

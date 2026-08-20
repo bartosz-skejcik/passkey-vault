@@ -41,6 +41,10 @@ import AuthenticationServices
 import Foundation
 import os
 
+// WR-10 (41-REVIEW.md): the call site was correctly gated; this file's own BODY was not. See
+// `SessionKeyProbeSeeder.swift`'s own note for the identical reasoning -- this probe calls
+// `removeAllCredentialIdentities()` for test-isolation resets between its own runs.
+#if DEBUG || PV_PROBE_IDENTITYSTORE
 enum IdentityStoreSyncProbe {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
     private static let groupIdentifier = "group.cloud.blonie.PasskeyVault"
@@ -195,3 +199,4 @@ enum IdentityStoreSyncProbe {
         } as? ASPasswordCredentialIdentity
     }
 }
+#endif

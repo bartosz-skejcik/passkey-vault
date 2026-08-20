@@ -42,6 +42,11 @@ import CryptoKit
 import Foundation
 import os
 
+// WR-10 (41-REVIEW.md): the call site was correctly gated; this file's own BODY was not, so it
+// compiled and linked into every build including App Store Release. See
+// `SessionKeyProbeSeeder.swift`'s own note for the identical reasoning (same class of blast
+// radius: `seed()`/`seedThirdPartyDomain()` write through REAL production writers).
+#if DEBUG || PV_PROBE_FILLTRACER
 enum TracerFillSeeder {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
@@ -417,3 +422,4 @@ enum TracerFillSeeder {
     }
 
 }
+#endif

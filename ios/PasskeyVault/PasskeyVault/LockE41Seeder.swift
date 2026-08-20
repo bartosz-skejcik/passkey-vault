@@ -37,6 +37,9 @@ import CryptoKit
 import Foundation
 import os
 
+// WR-10 (41-REVIEW.md): the call site was correctly gated; this file's own BODY was not. See
+// `SessionKeyProbeSeeder.swift`'s own note for the identical reasoning.
+#if DEBUG || PV_PROBE_E41_LOCK
 enum LockE41Seeder {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
@@ -145,3 +148,4 @@ enum LockE41Seeder {
         }
     }
 }
+#endif

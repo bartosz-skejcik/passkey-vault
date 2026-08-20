@@ -38,6 +38,12 @@ import AuthenticationServices
 import Foundation
 import os
 
+// WR-10 (41-REVIEW.md): the call site was correctly gated; this file's own BODY was not. See
+// `SessionKeyProbeSeeder.swift`'s own note for the identical reasoning. `register()`/
+// `registerUrlOnly()` here call `removeAllCredentialIdentities()` directly (bypassing
+// `IdentityStoreSync` deliberately, this file's own header) -- a large blast radius to leave a
+// single stray call site away in a Release build.
+#if DEBUG || PV_PROBE_E41_3
 enum MatchingProbe {
     private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
@@ -207,3 +213,4 @@ enum MatchingProbe {
         }
     }
 }
+#endif
