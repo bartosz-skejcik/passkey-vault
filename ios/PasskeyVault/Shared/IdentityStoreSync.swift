@@ -167,6 +167,56 @@ enum IdentityStoreSync {
         UserDefaults(suiteName: suiteName)?.bool(forKey: rebuildPendingKey) ?? false
     }
 
+    // MARK: - CR-01 (41-REVIEW.md): the additive, single-identity choke point
+
+    /// Marks a rebuild owed BEFORE a caller performs a fire-and-forget `upsertOne(source:)` --
+    /// so a process kill mid-flight (the AutoFill extension is torn down at exactly this moment,
+    /// right after `completeRequest`) leaves an explicit repair obligation rather than a silently
+    /// stale `identityPublishedKeys` blob. `upsertOne(source:)` clears this itself on success;
+    /// callers that never reach a terminal result (a kill) leave it set, which is the whole point.
+    static func markSelfHealPending() {
+        markRebuildPending(true)
+    }
+
+    /// The additive counterpart to `republish(sources:)` -- CR-01 (41-REVIEW.md): `republish`
+    /// treats its argument as "the CURRENT, COMPLETE vault item set" and computes REMOVALS by
+    /// diffing against everything previously published; handing it a one-item set (as the
+    /// post-fill self-heal used to) makes it delete every OTHER identity as an unintended
+    /// removal. `upsertOne` NEVER diffs and NEVER removes -- it only SAVES the one identity this
+    /// caller already proved reachable, and widens the persisted `publishedKeys` record by UNION
+    /// rather than replacing it with a subset. Safe to call for an item that is already published
+    /// (idempotent: re-saving an existing identity is a no-op update, not a duplicate).
+    @discardableResult
+    static func upsertOne(source: VaultIdentitySource) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let state = await ASCredentialIdentityStore.shared.state()
+        guard state.isEnabled else {
+            logger.log("PVFILL|E41-2|stage=upsert-one status=store-disabled")
+            markRebuildPending(true)
+            return .failure(.storeDisabled)
+        }
+
+        let identities = buildIdentities(from: [source])
+        guard !identities.isEmpty else {
+            markRebuildPending(false)
+            return .success(())
+        }
+
+        let result = await saveWithRetry(identities as [any ASCredentialIdentity])
+        switch result {
+        case .success:
+            // UNION, never replace: this is the one property that makes `upsertOne` safe to hand
+            // a single-item source -- the persisted published-keys blob only ever grows or updates
+            // an existing entry here, never shrinks.
+            let newKeys = Set(identities.map(PublishedKey.init(identity:)))
+            persistPublishedKeys(readPublishedKeys().union(newKeys))
+            markRebuildPending(false)
+            logger.log("PVFILL|E41-2|stage=upsert-one status=ok")
+        case let .failure(error):
+            logger.error("PVFILL|E41-2|stage=upsert-one status=fail error=\(error.description, privacy: .public)")
+        }
+        return result
+    }
+
     // MARK: - Incremental (save + remove) vs full replacement
 
     private static func republishIncremental(

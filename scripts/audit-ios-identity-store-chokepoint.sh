@@ -216,6 +216,26 @@ CALL_SITE_ANCHORS=(
   "private static func runIdentityRebuildIfPending() async {"
 )
 CALL_SITE_WINDOWS=(90 100 30 90 140 80)
+# CR-01 (41-REVIEW.md): the REQUIRED call differs per site -- this is "contract shape, not string
+# proximity". The four `VaultStore` mutation sites and the full-rebuild recovery path each hand
+# the writer "the CURRENT, COMPLETE vault item set" (`republish(sources:)`'s own documented
+# contract), so `IdentityStoreSync.republish(` is the correct, and only correct, call for them.
+# The post-fill self-heal site is different BY DESIGN: it proves reachability for exactly ONE
+# item and must never be able to compute removals against everything else that's published --
+# `IdentityStoreSync.upsertOne(` is a STRUCTURALLY different entry point (it takes one `source:`,
+# never an array) that cannot be handed a delta by construction. Before CR-01's fix this site
+# called `.republish(sources: [oneItem])`, which satisfied the OLD proximity-only check (it
+# merely grepped for the literal substring `IdentityStoreSync.republish(` anywhere in the window)
+# while still being the exact defect CR-01 names. Requiring the SITE-SPECIFIC call name is what
+# makes this gate RED on that old shape and GREEN only on the fix.
+CALL_SITE_REQUIRED_CALLS=(
+  "IdentityStoreSync.republish("
+  "IdentityStoreSync.republish("
+  "IdentityStoreSync.republish("
+  "IdentityStoreSync.republish("
+  "IdentityStoreSync.upsertOne("
+  "IdentityStoreSync.republish("
+)
 
 VIOLATIONS_B=""
 
@@ -224,6 +244,7 @@ for i in "${!CALL_SITE_LABELS[@]}"; do
   file="${CALL_SITE_FILES[$i]}"
   anchor="${CALL_SITE_ANCHORS[$i]}"
   window="${CALL_SITE_WINDOWS[$i]}"
+  required_call="${CALL_SITE_REQUIRED_CALLS[$i]}"
 
   STRIPPED="$SCRATCH/$(echo "$file" | tr '/' '_').stripped"
   # Reuse the already-stripped copy from the (A) loop above if present; otherwise strip now (the
@@ -241,8 +262,8 @@ for i in "${!CALL_SITE_LABELS[@]}"; do
 
   window_end=$((anchor_line + window))
   window_text=$(sed -n "${anchor_line},${window_end}p" "$STRIPPED")
-  if ! printf '%s\n' "$window_text" | grep -qF 'IdentityStoreSync.republish('; then
-    VIOLATIONS_B="${VIOLATIONS_B}${label} (${file}, declared at line ${anchor_line}) -- no IdentityStoreSync.republish( call found within ${window} lines"$'\n'
+  if ! printf '%s\n' "$window_text" | grep -qF "$required_call"; then
+    VIOLATIONS_B="${VIOLATIONS_B}${label} (${file}, declared at line ${anchor_line}) -- no ${required_call} call found within ${window} lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)"$'\n'
   fi
 done
 
@@ -259,4 +280,4 @@ if [ -n "$VIOLATIONS_A" ] || [ -n "$VIOLATIONS_B" ]; then
   exit 1
 fi
 
-echo "PASS: the identity store is written ONLY from the reviewed allow-list (${ALLOWLIST[*]}), and all ${#CALL_SITE_LABELS[@]} enumerated mutation call sites still reach IdentityStoreSync.republish( (FILL-03)"
+echo "PASS: the identity store is written ONLY from the reviewed allow-list (${ALLOWLIST[*]}), and all ${#CALL_SITE_LABELS[@]} enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)"

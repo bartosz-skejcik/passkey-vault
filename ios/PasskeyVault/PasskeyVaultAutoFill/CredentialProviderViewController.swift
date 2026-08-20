@@ -268,13 +268,22 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         let selfHealRecordIdentifier = recordIdentifier
         let selfHealUsername = payload.username
         let selfHealServiceIdentifier = request.credentialIdentity.serviceIdentifier.identifier
+        // CR-01 (41-REVIEW.md): this MUST be `upsertOne`, never `republish` -- `republish` treats
+        // its argument as the CURRENT, COMPLETE vault item set and computes removals against
+        // everything previously published; handing it this ONE item deleted every other QuickType
+        // entry on the very next successful fill. `upsertOne` only saves, never diffs/removes.
+        // `markSelfHealPending()` runs BEFORE the detached `Task`, synchronously, so a process kill
+        // landing anywhere inside the `Task` below (the extension is free to be torn down right
+        // after `completeRequest`, immediately above) still leaves a rebuild owed; `upsertOne`
+        // clears it itself on success.
+        IdentityStoreSync.markSelfHealPending()
         Task {
-            let result = await IdentityStoreSync.republish(sources: [
-                VaultIdentitySource(itemId: selfHealRecordIdentifier, username: selfHealUsername, urls: [selfHealServiceIdentifier]),
-            ])
+            let result = await IdentityStoreSync.upsertOne(source:
+                VaultIdentitySource(itemId: selfHealRecordIdentifier, username: selfHealUsername, urls: [selfHealServiceIdentifier])
+            )
             switch result {
             case .success:
-                Self.fillLogger.log("PVFILL|E41-2|stage=self-heal status=ok record=\(selfHealRecordIdentifier, privacy: .public)")
+                Self.fillLogger.log("PVFILL|E41-2|stage=self-heal status=ok record=\(selfHealRecordIdentifier, privacy: .private)")
             case let .failure(error):
                 Self.fillLogger.log("PVFILL|E41-2|stage=self-heal status=fail error=\(error.description, privacy: .public)")
             }
