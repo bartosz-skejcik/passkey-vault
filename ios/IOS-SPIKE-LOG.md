@@ -1638,6 +1638,31 @@ DR-41-C's own clock choice was designed to have no attack surface against. See
 of the "delete query byte-identical to Phase 37's write query" acceptance criterion against this
 record's own artifact choice (Secret C, never Secret A).
 
+**AMENDMENT (CR-04 / WR-07, 41-REVIEW.md, 2026-08-20): the monotonic clock changed; this record's
+own "Clock" paragraph above did not, until now.** `ProcessInfo.processInfo.systemUptime` is
+documented by Apple as "the amount of time the system has been awake since the last time it was
+restarted" — backed by `mach_absolute_time()`, which does **not** accrue while the device sleeps.
+Both the idle-window comparison and the 12-hour absolute-ceiling comparison this record describes
+therefore under-counted real elapsed time by however long the device slept between marker-write and
+marker-read — the fail-**open** direction, on the artifact that lets a second process read the User
+Key with no biometric challenge. CR-04 (iteration 1 fix pass) replaced the monotonic half with
+`LockMarker.monotonicNow()` (`clock_gettime_nsec_np(CLOCK_MONOTONIC)`, backed by
+`mach_continuous_time()` on Darwin, documented as incrementing "including when the system is
+asleep" — still monotonic and NOT user-rewindable, so this record's own rewound-clock rejection two
+paragraphs up is unaffected). The marker's persisted-defaults key was bumped to
+`cloud.blonie.PasskeyVault.lockMarker.v2` in the same fix so a marker written by a pre-CR-04 build
+is treated as unreadable (fails closed to "expired") rather than silently compared across two
+different clock domains, and the field itself was renamed `systemUptimeAtUnlock` ->
+`monotonicAtUnlock` (WR-07, iteration 2) so the artifact's own name stops asserting the rejected
+clock. Wherever this record (above) reads `ProcessInfo.processInfo.systemUptime` or
+`systemUptimeAtUnlock`, substitute `LockMarker.monotonicNow()` / `monotonicAtUnlock` — the design
+intent (a boot-session-identifier + monotonic-uptime pair, never wall-clock `Date()` alone) is
+unchanged; only the specific monotonic primitive and the field's name are. This determination is
+DOCUMENTED against Apple's xnu header documentation for the `CLOCK_MONOTONIC` family, not
+empirically re-verified against a real device-sleep cycle in either fix pass (doing so safely
+requires suspending the host Mac mid-session, which neither pass automated unattended) — carried
+forward as a `human_verification_required` item on both REVIEW.md iterations.
+
 ### Restated success criteria for Phase 41
 
 Both restatements are forced by `41-RESEARCH.md` F1 (SC3) and Pitfall 4 (SC2). Quoted verbatim first,

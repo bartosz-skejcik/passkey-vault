@@ -101,7 +101,7 @@ enum SessionLifecycle {
     /// (never a re-implementation) without disturbing a real device's container.
     @discardableResult
     static func checkAndExpireIfNeeded(
-        entryPoint: String, deleteKeyArtifact: () -> Void, defaults: UserDefaults? = nil
+        entryPoint: String, deleteKeyArtifact: () -> Bool, defaults: UserDefaults? = nil
     ) -> Bool {
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
@@ -133,9 +133,37 @@ enum SessionLifecycle {
 
         switch state {
         case .expired:
-            deleteKeyArtifact()
+            // WR-02 (41-REVIEW.md iteration 2): a genuine, evaluated expiry ALWAYS clears the
+            // marker (there is nothing left to evaluate against), but the Keychain deletion itself
+            // is only confirmed discharged when the closure reports success -- a failure records
+            // an owed deletion so the NEXT entry point retries it, rather than ACC-06's own
+            // invariant ("deletion, never a mere refusal") silently degrading to "one best-effort
+            // attempt, then never again" once WR-03's `.indeterminate` reclassification stops the
+            // very next check from treating the (now unreadable) marker as expired too.
+            if deleteKeyArtifact() {
+                LockMarker.markDeleteOwed(false, defaults: defaults)
+            } else {
+                LockMarker.markDeleteOwed(true, defaults: defaults)
+            }
             LockMarker.clear(defaults: defaults)
-        case .unlocked, .indeterminate:
+        case .indeterminate:
+            // WR-02: the marker could not be read at all -- refuse the session (already the
+            // default via `state == .unlocked` below), but do NOT treat this as "nothing to do"
+            // when there is independent evidence an artifact may still be owed a deletion: either
+            // a PRIOR `.expired` delete that failed (`isDeleteOwed`), or a pre-`.v2` marker still
+            // sitting in the container (`legacyMarkerKeyHasData` -- the mid-upgrade scenario
+            // CR-04's own comment claimed was already handled and was not). Never clears the
+            // CURRENT marker here -- there is nothing evaluated to clear -- and never treats a
+            // successful retry as evidence of expiry.
+            if LockMarker.isDeleteOwed(defaults: defaults) || LockMarker.legacyMarkerKeyHasData(defaults: defaults) {
+                if deleteKeyArtifact() {
+                    LockMarker.markDeleteOwed(false, defaults: defaults)
+                    LockMarker.clearLegacyMarkerKey(defaults: defaults)
+                } else {
+                    LockMarker.markDeleteOwed(true, defaults: defaults)
+                }
+            }
+        case .unlocked:
             break
         }
         logger.log("PVLOCK|entry=\(entryPoint, privacy: .public) stage=lazy-check status=\(state.description, privacy: .public)")
@@ -148,7 +176,7 @@ enum SessionLifecycle {
     /// `AutoLockPolicy`'s own original idle-timer design intent already assumed, 38-11-SUMMARY.md)
     /// in the host app. Reads the CURRENT marker and carries `bootSessionId`/`hostUnlockUptime`
     /// forward UNCHANGED -- the absolute ceiling this refresh must never move (DR-41-C) -- only
-    /// `systemUptimeAtUnlock`/`writer` are updated. A no-op if no marker exists (nothing to
+    /// `monotonicAtUnlock`/`writer` are updated. A no-op if no marker exists (nothing to
     /// refresh; the lazy check would already have refused and deleted).
     static func refreshActivity(writer: String, defaults: UserDefaults? = nil) {
         guard let current = LockMarker.read(defaults: defaults) else { return }
@@ -156,7 +184,7 @@ enum SessionLifecycle {
             bootSessionId: current.bootSessionId,
             // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, not `ProcessInfo.processInfo
             // .systemUptime` -- see that function's own header.
-            systemUptimeAtUnlock: LockMarker.monotonicNow(),
+            monotonicAtUnlock: LockMarker.monotonicNow(),
             hostUnlockUptime: current.hostUnlockUptime,
             writer: writer
         ), defaults: defaults)
@@ -174,7 +202,7 @@ enum SessionLifecycle {
         // real elapsed time (fail-open) across a device sleep.
         let now = LockMarker.monotonicNow()
         LockMarker.write(LockMarker(
-            bootSessionId: bootSessionId, systemUptimeAtUnlock: now, hostUnlockUptime: now, writer: "host"
+            bootSessionId: bootSessionId, monotonicAtUnlock: now, hostUnlockUptime: now, writer: "host"
         ), defaults: defaults)
         logger.log("PVLOCK|stage=host-unlock bootSessionId=\(bootSessionId, privacy: .public)")
     }
@@ -183,8 +211,17 @@ enum SessionLifecycle {
     /// `performSignOut()`). Deletes both the key artifact and the marker, unconditionally --
     /// without this, tapping "Lock now" would tear down the host app's OWN in-memory session
     /// while leaving Secret C (and therefore AutoFill) fully able to keep filling.
-    static func lock(deleteKeyArtifact: () -> Void, defaults: UserDefaults? = nil) {
-        deleteKeyArtifact()
+    static func lock(deleteKeyArtifact: () -> Bool, defaults: UserDefaults? = nil) {
+        // WR-02 (41-REVIEW.md iteration 2): the explicit lock is user-initiated and always ends
+        // the in-memory session (the marker is cleared regardless of the delete outcome, matching
+        // the pre-fix behaviour) -- but a Keychain deletion that failed here is recorded exactly
+        // like a failed `.expired` deletion, so the NEXT `checkAndExpireIfNeeded` call retries it
+        // instead of "Lock now" ever silently leaving Secret C behind.
+        if deleteKeyArtifact() {
+            LockMarker.markDeleteOwed(false, defaults: defaults)
+        } else {
+            LockMarker.markDeleteOwed(true, defaults: defaults)
+        }
         LockMarker.clear(defaults: defaults)
         logger.log("PVLOCK|stage=explicit-lock")
     }

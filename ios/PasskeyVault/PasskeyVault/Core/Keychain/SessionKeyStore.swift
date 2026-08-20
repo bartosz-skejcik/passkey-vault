@@ -88,12 +88,18 @@ enum SessionKeyStore {
     /// builds; a host-app crash the moment the user taps "Lock now" is the worst possible time to
     /// abort, over an error path whose correct behaviour (fail closed, log loudly, continue) is
     /// already obvious. Reports and continues instead.
-    static func delete() {
+    ///
+    /// WR-02 (41-REVIEW.md iteration 2): returns whether the deletion actually landed -- see
+    /// `SessionKeyReader.delete()`'s own (extension-target) sibling for the full rationale; this is
+    /// the host-target half of the SAME fix.
+    @discardableResult
+    static func delete() -> Bool {
         let status = SecItemDelete(baseQuery as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
             logger.error("PVLOCK|stage=sessionkey-delete status=\(status, privacy: .public) unexpected")
-        } else {
-            logger.log("PVLOCK|stage=sessionkey-delete status=\(status, privacy: .public)")
+            return false
         }
+        logger.log("PVLOCK|stage=sessionkey-delete status=\(status, privacy: .public)")
+        return true
     }
 }

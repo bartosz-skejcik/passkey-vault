@@ -4,11 +4,13 @@
 //
 //  Phase 41 (autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami), plan 41-03. DR-41-C's lock
 //  marker (`ios/IOS-SPIKE-LOG.md` §1i), committed by Plan 41-02: App Group `UserDefaults`
-//  storage, a `(bootSessionId, systemUptimeAtUnlock)` clock pair -- never `Date()` alone
+//  storage, a `(bootSessionId, monotonicAtUnlock)` clock pair -- never `Date()` alone
 //  (user-rewindable, a direct session-extension attack surface against ACC-06's own expiry) and
-//  never bare `systemUptime` alone (resets near zero on every boot, so a stale value from a
-//  PREVIOUS boot cannot be distinguished from a small elapsed value in the CURRENT one without a
-//  per-boot identifier).
+//  never a sleep-EXCLUDING monotonic clock alone (WR-07, 41-REVIEW.md iteration 2: CR-04 moved
+//  this field from `ProcessInfo.processInfo.systemUptime` to `LockMarker.monotonicNow()` --
+//  see that function's own header) and never bare uptime alone regardless of which clock (resets
+//  near zero on every boot, so a stale value from a PREVIOUS boot cannot be distinguished from a
+//  small elapsed value in the CURRENT one without a per-boot identifier).
 //
 //  41-03 implemented the READ and the LAZY CHECK only, per its own scoping: "Full expiry
 //  semantics (the explicit delete, the refresh from either process, the clock legs) are 41-07's
@@ -47,14 +49,21 @@ public struct LockMarker: Codable, Equatable {
     /// written; DR-41-C treats that as expired (a defensible default, not a defect).
     public let bootSessionId: String
 
-    /// `ProcessInfo.processInfo.systemUptime` at WRITE time -- the monotonic half of DR-41-C's
-    /// clock pair. ACC-07's activity refresh (either process) updates THIS field; it never
-    /// touches `hostUnlockUptime` below.
-    public let systemUptimeAtUnlock: Double
+    /// WR-07 (41-REVIEW.md iteration 2): renamed from `systemUptimeAtUnlock` -- CR-04 changed the
+    /// clock this field carries FROM `ProcessInfo.processInfo.systemUptime` (excludes sleep) TO
+    /// `LockMarker.monotonicNow()` (`clock_gettime_nsec_np(CLOCK_MONOTONIC)`, backed by
+    /// `mach_continuous_time()`, INCLUDES sleep) -- see that function's own header. The field name
+    /// itself is part of what makes an artifact "true", and the `.v2` `defaultsKey` bump below
+    /// already invalidates every pre-CR-04 marker, so this rename costs nothing beyond this commit
+    /// and never gets cheaper the longer the old name (and the old clock it implies) survives.
+    /// The monotonic half of DR-41-C's clock pair. ACC-07's activity refresh (either process)
+    /// updates THIS field; it never touches `hostUnlockUptime` below.
+    public let monotonicAtUnlock: Double
 
-    /// DR-41-C's 12-hour ABSOLUTE ceiling anchor -- the `systemUptime` at the last REAL host-app
-    /// unlock. Set ONLY by `SessionLifecycle.recordHostUnlock()` (host-only caller); AutoFill
-    /// activity (`SessionLifecycle.refreshActivity(writer:)`) can extend `systemUptimeAtUnlock`
+    /// DR-41-C's 12-hour ABSOLUTE ceiling anchor -- the monotonic clock (`LockMarker
+    /// .monotonicNow()`, sleep-inclusive) at the last REAL host-app unlock. Set ONLY by
+    /// `SessionLifecycle.recordHostUnlock()` (host-only caller); AutoFill activity
+    /// (`SessionLifecycle.refreshActivity(writer:)`) can extend `monotonicAtUnlock`
     /// (the idle window) but must carry THIS field forward unchanged, exactly as DR-41-C
     /// requires: "AutoFill traffic ... can extend the idle window but can never push the session
     /// past this 12-hour ceiling."
@@ -65,9 +74,9 @@ public struct LockMarker: Codable, Equatable {
     /// own (a value ONLY a reader can compare against what a writer logged, E41-7's ACC-07 leg).
     public let writer: String
 
-    public init(bootSessionId: String, systemUptimeAtUnlock: Double, hostUnlockUptime: Double, writer: String) {
+    public init(bootSessionId: String, monotonicAtUnlock: Double, hostUnlockUptime: Double, writer: String) {
         self.bootSessionId = bootSessionId
-        self.systemUptimeAtUnlock = systemUptimeAtUnlock
+        self.monotonicAtUnlock = monotonicAtUnlock
         self.hostUnlockUptime = hostUnlockUptime
         self.writer = writer
     }
@@ -80,10 +89,33 @@ public struct LockMarker: Codable, Equatable {
     // one). A marker written by a build predating this fix must be treated as invalid rather than
     // silently compared against a different clock -- reading the OLD key back would either always
     // look expired (safe) or, worse, mix an old-clock anchor with a new-clock `now` and produce an
-    // arithmetically meaningless `elapsed`. The key bump makes a mid-upgrade marker expire CLOSED
-    // (unreadable under the new key -> `LockMarker.read()` returns `nil` -> treated as expired)
-    // rather than silently comparing two different clocks.
+    // arithmetically meaningless `elapsed`. The key bump makes a mid-upgrade marker UNREADABLE
+    // under the new key (`LockMarker.read()` returns `nil`), which reads never treat as a session
+    // (correct -- WR-02, 41-REVIEW.md iteration 2: this line ORIGINALLY claimed that also means
+    // "treated as expired", i.e. Secret C gets deleted. That was FALSE after WR-03 reclassified a
+    // `nil` read as `.indeterminate`, which does not delete -- a mid-upgrade user's pre-`.v2`
+    // Secret C was silently orphaned in the Keychain until their next explicit lock. WR-02 closes
+    // that gap via `legacyMarkerKeyHasData`/`isDeleteOwed` below: reads are correctly refused
+    // either way, but the artifact itself is no longer merely left behind.
     private static let defaultsKey = "cloud.blonie.PasskeyVault.lockMarker.v2"
+
+    /// WR-02 (41-REVIEW.md iteration 2): the PRE-`.v2` key -- still checked (never re-read as a
+    /// marker; its shape may not even decode under the current type) purely to detect "a
+    /// pre-CR-04 marker is still sitting in the App Group container", the mid-upgrade scenario
+    /// CR-04's own `.v2` comment claimed was handled and WR-02 found was not: a live session that
+    /// upgrades carries an orphaned Secret C in the Keychain until the user's next explicit lock,
+    /// because `LockMarker.read()` returning `nil` under the new key is `.indeterminate`
+    /// (WR-03), not `.expired`, and `.indeterminate` never used to delete anything.
+    private static let legacyDefaultsKey = "cloud.blonie.PasskeyVault.lockMarker"
+
+    /// WR-02 (41-REVIEW.md iteration 2): an owed-but-not-yet-confirmed Keychain deletion --
+    /// recorded when `SessionLifecycle.checkAndExpireIfNeeded`'s `deleteKeyArtifact` closure
+    /// reports failure on a genuine `.expired` determination. Survives `LockMarker.clear()` (the
+    /// marker and the delete obligation are deliberately independent: clearing the EVALUATED
+    /// state must never silently discard an obligation that state produced) so the NEXT entry
+    /// point retries the deletion instead of ACC-06's own invariant ("deletion, never a mere
+    /// refusal") degrading to "one best-effort attempt, then never again".
+    private static let deleteOwedKey = "cloud.blonie.PasskeyVault.lockMarker.deleteOwed"
 
     /// WR-12 (41-REVIEW.md): resolves the CALLER-supplied `UserDefaults` override if present,
     /// otherwise the real App Group container -- the SAME injectable-suite discipline
@@ -120,6 +152,35 @@ public struct LockMarker: Codable, Equatable {
     public static func clear(defaults override: UserDefaults? = nil) {
         guard let defaults = resolveDefaults(override) else { return }
         defaults.removeObject(forKey: defaultsKey)
+    }
+
+    // MARK: - WR-02 (41-REVIEW.md iteration 2): the owed-deletion obligation, independent of the
+    // marker's own read/write/clear surface above.
+
+    /// `true` when a prior `.expired` determination's `deleteKeyArtifact()` call reported failure,
+    /// or when a pre-`.v2` marker was ever observed still sitting in the container (the mid-upgrade
+    /// scenario CR-04's own comment claimed was already handled).
+    public static func isDeleteOwed(defaults override: UserDefaults? = nil) -> Bool {
+        resolveDefaults(override)?.bool(forKey: deleteOwedKey) ?? false
+    }
+
+    public static func markDeleteOwed(_ owed: Bool, defaults override: UserDefaults? = nil) {
+        resolveDefaults(override)?.set(owed, forKey: deleteOwedKey)
+    }
+
+    /// `true` when the OLD, pre-`.v2` defaults key still carries a value -- evidence a device
+    /// upgraded across CR-04's key bump while a session was live, and therefore may still be
+    /// carrying an orphaned Secret C nothing has deleted yet. Never decodes the legacy value as a
+    /// `LockMarker` (its clock field means something different, WR-07) -- presence alone is the
+    /// only fact this needs.
+    public static func legacyMarkerKeyHasData(defaults override: UserDefaults? = nil) -> Bool {
+        resolveDefaults(override)?.data(forKey: legacyDefaultsKey) != nil
+    }
+
+    /// Clears the pre-`.v2` key once its presence has done its one job (triggering a retry via
+    /// `legacyMarkerKeyHasData`) -- idempotent, and never touches the CURRENT `.v2` marker.
+    public static func clearLegacyMarkerKey(defaults override: UserDefaults? = nil) {
+        resolveDefaults(override)?.removeObject(forKey: legacyDefaultsKey)
     }
 
     // MARK: - Clock: the sleep-inclusive monotonic "now" (CR-04, 41-REVIEW.md)
@@ -170,7 +231,7 @@ public struct LockMarker: Codable, Equatable {
     // MARK: - The lazy check (ACC-06's inherited premise; this task's own scope)
 
     /// `true` if and only if BOTH bounds hold: the elapsed monotonic uptime since
-    /// `systemUptimeAtUnlock` is within `idleWindow` (ACC-06's own lazy check), AND the elapsed
+    /// `monotonicAtUnlock` is within `idleWindow` (ACC-06's own lazy check), AND the elapsed
     /// uptime since `hostUnlockUptime` is within `absoluteCeiling` (DR-41-C's 12-hour ceiling,
     /// independent of any AutoFill activity). A PURE function of `self` and its three explicit
     /// inputs -- no I/O. The caller is responsible for ALSO checking `bootSessionId` equality
@@ -182,8 +243,8 @@ public struct LockMarker: Codable, Equatable {
     /// treated as expired, never as "unlocked forever" -- T-41-35's own guard: a clock a user can
     /// move backward must never be able to resurrect a session by making `elapsed` negative.
     public func isUnlockedLazily(now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval) -> Bool {
-        guard now >= systemUptimeAtUnlock, now >= hostUnlockUptime else { return false }
-        let idleElapsed = now - systemUptimeAtUnlock
+        guard now >= monotonicAtUnlock, now >= hostUnlockUptime else { return false }
+        let idleElapsed = now - monotonicAtUnlock
         let ceilingElapsed = now - hostUnlockUptime
         return idleElapsed <= idleWindow && ceilingElapsed <= absoluteCeiling
     }

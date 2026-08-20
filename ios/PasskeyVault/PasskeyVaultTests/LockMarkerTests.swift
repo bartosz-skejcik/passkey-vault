@@ -35,7 +35,7 @@ struct LockMarkerTests {
         boot: String = bootA, unlockedAt: TimeInterval = 1_000, hostUnlockAt: TimeInterval? = nil, writer: String = "host"
     ) -> LockMarker {
         LockMarker(
-            bootSessionId: boot, systemUptimeAtUnlock: unlockedAt,
+            bootSessionId: boot, monotonicAtUnlock: unlockedAt,
             hostUnlockUptime: hostUnlockAt ?? unlockedAt, writer: writer
         )
     }
@@ -64,7 +64,7 @@ struct LockMarkerTests {
 
     @Test
     func aMarkerDatedInTheFutureIsNeverUnlocked() {
-        // `now` earlier than `systemUptimeAtUnlock` -- a rewound clock or a corrupted marker.
+        // `now` earlier than `monotonicAtUnlock` -- a rewound clock or a corrupted marker.
         // T-41-35's own guard: this must NEVER read as "unlocked forever" via a negative elapsed.
         let m = Self.marker(unlockedAt: 5_000)
         #expect(!m.isUnlockedLazily(now: 4_999, idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours))
@@ -72,7 +72,7 @@ struct LockMarkerTests {
 
     @Test
     func theAbsoluteCeilingExpiresEvenWithAFreshIdleRefresh() {
-        // ACC-07's own bound: activity CAN extend `systemUptimeAtUnlock` (the idle window) but
+        // ACC-07's own bound: activity CAN extend `monotonicAtUnlock` (the idle window) but
         // must NEVER be able to push the session past `hostUnlockUptime + absoluteCeiling`
         // (DR-41-C's 12h ceiling, independent of any AutoFill activity). Here the idle window is
         // satisfied trivially (refreshed 1 second ago) but the host unlock was 13 hours ago.
@@ -206,16 +206,89 @@ struct LockMarkerTests {
         // has actually been up, unlike gating on idle-window elapsed time.
         LockMarker.write(
             LockMarker(
-                bootSessionId: "not-the-real-boot-session-id", systemUptimeAtUnlock: 0,
+                bootSessionId: "not-the-real-boot-session-id", monotonicAtUnlock: 0,
                 hostUnlockUptime: 0, writer: "host"
             ),
             defaults: defaults
         )
         let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
-            entryPoint: "test", deleteKeyArtifact: { deletes += 1 }, defaults: defaults
+            entryPoint: "test", deleteKeyArtifact: { deletes += 1; return true }, defaults: defaults
         )
         #expect(!unlocked)
         #expect(deletes == 1)
+    }
+
+    // MARK: - WR-02 (41-REVIEW.md iteration 2): a failed delete must be retried, never forgotten.
+
+    @Test
+    func aFailedExpiryDeleteRecordsAnOwedDeletionRatherThanForgettingIt() {
+        let defaults = Self.freshDefaults()
+        LockMarker.write(
+            LockMarker(
+                bootSessionId: "not-the-real-boot-session-id", monotonicAtUnlock: 0,
+                hostUnlockUptime: 0, writer: "host"
+            ),
+            defaults: defaults
+        )
+        #expect(!LockMarker.isDeleteOwed(defaults: defaults))
+
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { false }, defaults: defaults
+        )
+        #expect(!unlocked)
+        #expect(
+            LockMarker.isDeleteOwed(defaults: defaults),
+            "a delete closure that FAILS must leave an owed-deletion obligation, not silently drop it -- WR-02"
+        )
+    }
+
+    @Test
+    func anIndeterminateReadRetriesAPreviouslyOwedDeletion() {
+        let defaults = Self.freshDefaults()
+        // Simulate the outcome of the test above: a prior expiry's delete failed and the marker
+        // was cleared, leaving the NEXT read `.indeterminate` (no marker) with an owed deletion.
+        LockMarker.markDeleteOwed(true, defaults: defaults)
+        var deleteAttempts = 0
+
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
+        )
+        #expect(!unlocked, "an indeterminate read must still refuse the session")
+        #expect(deleteAttempts == 1, "an owed deletion must be RETRIED on the next check, even though the read itself is indeterminate -- WR-02")
+        #expect(!LockMarker.isDeleteOwed(defaults: defaults), "a successful retry must clear the owed flag")
+    }
+
+    @Test
+    func anIndeterminateReadWithNoOwedDeletionAndNoLegacyMarkerNeverInvokesTheDeleteClosure() {
+        let defaults = Self.freshDefaults()
+        var deleteAttempts = 0
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
+        )
+        #expect(!unlocked)
+        #expect(deleteAttempts == 0, "an indeterminate read with nothing owed must never invoke the delete closure -- WR-03's own invariant, unchanged by WR-02")
+    }
+
+    @Test
+    func aLegacyPreV2MarkerStillPresentTriggersARetriedDeleteOnAnIndeterminateRead() {
+        let defaults = Self.freshDefaults()
+        // CR-04's `.v2` key bump means a pre-upgrade marker is invisible to `LockMarker.read()`
+        // (a decode/key miss, not a value this type will ever decode) -- write directly under the
+        // OLD key name to simulate a device that upgraded mid-session, matching WR-02's own
+        // reproduction of CR-04's comment's false claim.
+        defaults.set(Data("legacy-marker-bytes".utf8), forKey: "cloud.blonie.PasskeyVault.lockMarker")
+        #expect(LockMarker.legacyMarkerKeyHasData(defaults: defaults))
+        var deleteAttempts = 0
+
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
+        )
+        #expect(!unlocked)
+        #expect(
+            deleteAttempts == 1,
+            "a pre-v2 marker still present must trigger a retried delete on the very next (indeterminate) check -- WR-02, closing the gap CR-04's own `.v2` comment claimed was already closed"
+        )
+        #expect(!LockMarker.legacyMarkerKeyHasData(defaults: defaults), "the legacy key must be cleared once its one job (triggering the retry) is done")
     }
 
     @Test
@@ -226,7 +299,7 @@ struct LockMarkerTests {
         let defaults = Self.freshDefaults()
         var deletes = 0
         let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
-            entryPoint: "test", deleteKeyArtifact: { deletes += 1 }, defaults: defaults
+            entryPoint: "test", deleteKeyArtifact: { deletes += 1; return true }, defaults: defaults
         )
         #expect(!unlocked)
         #expect(deletes == 0, "an indeterminate (unreadable) marker must never trigger a delete -- WR-03")
@@ -239,6 +312,7 @@ struct LockMarkerTests {
         var markerStillPresentAtDeleteTime = false
         SessionLifecycle.lock(deleteKeyArtifact: {
             markerStillPresentAtDeleteTime = (LockMarker.read(defaults: defaults) != nil)
+            return true
         }, defaults: defaults)
         #expect(markerStillPresentAtDeleteTime, "the key artifact must be deleted BEFORE the marker is cleared")
         #expect(LockMarker.read(defaults: defaults) == nil)

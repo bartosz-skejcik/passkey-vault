@@ -170,7 +170,7 @@ final class AutoFillLockUITests: XCTestCase {
     /// EFFECT a rewound clock would have produced: `e41-lock-marker-offset.marker` set to a
     /// POSITIVE offset (the marker claims to have been written in the future), applied by
     /// `AutoFillLockE41TestHook` immediately after the real unlock below. Must NOT resurrect the
-    /// session -- `LockMarker.isUnlockedLazily`'s own `now >= systemUptimeAtUnlock` guard is the
+    /// session -- `LockMarker.isUnlockedLazily`'s own `now >= monotonicAtUnlock` guard is the
     /// mechanism, already unit-proven pure in `LockMarkerTests
     /// .aMarkerDatedInTheFutureIsNeverUnlocked`; this is that SAME guard's live, two-process leg.
     @MainActor

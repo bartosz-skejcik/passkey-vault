@@ -17,12 +17,14 @@
 //     idle window.
 //   * A POSITIVE offset (E41-7's backward-clock leg): the marker is rewritten to look like it was
 //     written that many seconds in the FUTURE. DR-41-C's own clock choice (boot-session id +
-//     monotonic `systemUptime`, NEVER wall-clock `Date()`) means there is no live mechanism on
-//     this harness to literally rewind the Mac's system clock and have it affect
-//     `ProcessInfo.processInfo.systemUptime` (monotonic by definition) -- this offset instead
+//     a monotonic clock, NEVER wall-clock `Date()`) means there is no live mechanism on this
+//     harness to literally rewind the Mac's system clock and have it affect
+//     `LockMarker.monotonicNow()` (monotonic by definition -- WR-07, 41-REVIEW.md iteration 2:
+//     this is `clock_gettime_nsec_np(CLOCK_MONOTONIC)`/`mach_continuous_time()` since CR-04, NOT
+//     `ProcessInfo.processInfo.systemUptime` as originally recorded) -- this offset instead
 //     models the EFFECT a rewound clock would have produced under a `Date()`-based design (a
 //     marker whose recorded instant is now in the future relative to `now`), which
-//     `LockMarker.isUnlockedLazily`'s own `now >= systemUptimeAtUnlock` guard already refuses
+//     `LockMarker.isUnlockedLazily`'s own `now >= monotonicAtUnlock` guard already refuses
 //     unconditionally. 41-07-SUMMARY.md states this reconciliation explicitly, per Pitfall 5's
 //     own discipline: this is a statement about the code's intent under a rewound-clock INPUT,
 //     not a claim that this harness moved the Mac's real system clock.
@@ -69,7 +71,7 @@ enum AutoFillLockE41TestHook {
         let mutatedUptime = max(0, LockMarker.monotonicNow() + offsetSeconds)
         LockMarker.write(LockMarker(
             bootSessionId: bootSessionId,
-            systemUptimeAtUnlock: mutatedUptime,
+            monotonicAtUnlock: mutatedUptime,
             hostUnlockUptime: mutatedUptime,
             writer: "host"
         ))

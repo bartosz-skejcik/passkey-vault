@@ -119,13 +119,21 @@ enum SessionKeyReader {
     /// locked, `errSecMissingEntitlement` on access-group drift) would hard-abort the extension
     /// process mid-fill -- the worst possible time to crash, over an error path whose correct
     /// behaviour (fail closed, log loudly, continue) is already obvious. Reports and continues
-    /// instead; the caller (`SessionLifecycle`) already treats the marker as cleared regardless.
-    static func delete() {
+    /// instead.
+    ///
+    /// WR-02 (41-REVIEW.md iteration 2): returns whether the deletion actually landed (`true` for
+    /// `errSecSuccess`/`errSecItemNotFound`, `false` for anything else) -- before this fix the
+    /// caller (`SessionLifecycle`) had no way to tell "deleted" apart from "failed, logged, moved
+    /// on", so a failed delete was indistinguishable from a successful one and NOTHING ever
+    /// retried it. `SessionLifecycle` uses this to record an owed deletion on `false`.
+    @discardableResult
+    static func delete() -> Bool {
         let status = SecItemDelete(baseQuery as CFDictionary)
         if status != errSecSuccess && status != errSecItemNotFound {
             logger.error("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public) unexpected")
-        } else {
-            logger.log("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public)")
+            return false
         }
+        logger.log("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public)")
+        return true
     }
 }
