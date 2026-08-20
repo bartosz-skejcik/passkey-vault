@@ -64,6 +64,11 @@ enum IdentityStoreSyncError: Swift.Error, CustomStringConvertible {
     case saveFailed(Swift.Error)
     case removeFailed(Swift.Error)
     case replaceFailed(Swift.Error)
+    /// CR-02 (41-REVIEW.md iteration 2): `upsertOne` built zero identities from its source (every
+    /// URL failed `OriginNormalize.host(fromURLString:)`, WR-04) -- distinct from `.storeDisabled`
+    /// so a caller/log reader can tell "the store refused us" apart from "we had nothing valid to
+    /// give it". Either way the self-heal obligation is NOT discharged.
+    case nothingToWrite
 
     var description: String {
         switch self {
@@ -71,6 +76,7 @@ enum IdentityStoreSyncError: Swift.Error, CustomStringConvertible {
         case let .saveFailed(error): return "saveCredentialIdentities failed: \(error)"
         case let .removeFailed(error): return "removeCredentialIdentities failed: \(error)"
         case let .replaceFailed(error): return "replaceCredentialIdentities failed: \(error)"
+        case .nothingToWrite: return "no identity could be built from the given source"
         }
     }
 }
@@ -83,6 +89,16 @@ enum IdentityStoreSync {
 
     private static let suiteName = "group.cloud.blonie.PasskeyVault"
     private static let rebuildPendingKey = "cloud.blonie.PasskeyVault.identityRebuildPending"
+    /// CR-02 (41-REVIEW.md iteration 2): a SEPARATE obligation from `rebuildPendingKey`.
+    /// `rebuildPendingKey` names "the whole vault's identity set may be out of sync -- a full
+    /// rebuild is owed"; this key names "one specific `upsertOne` write may not have landed -- a
+    /// single-item repair is owed". `upsertOne` (by construction, knows about exactly one item)
+    /// may clear ONLY this key on success -- it must never clear `rebuildPendingKey`, which it has
+    /// no way to know is fully satisfied. `isRebuildPending()` is true when EITHER is set;
+    /// `republish(sources:)` (the only writer that ever sees the complete vault item set) is the
+    /// only thing that may clear `rebuildPendingKey`, and a successful full republish discharges
+    /// both obligations at once.
+    private static let selfHealPendingKey = "cloud.blonie.PasskeyVault.identitySelfHealPending"
     private static let publishedKeysKey = "cloud.blonie.PasskeyVault.identityPublishedKeys"
 
     /// The whole identity of an `ASPasswordCredentialIdentity` as far as diffing/removal cares
@@ -141,6 +157,11 @@ enum IdentityStoreSync {
         case .success:
             persistPublishedKeys(desiredKeys)
             markRebuildPending(false)
+            // CR-02 (41-REVIEW.md iteration 2): a completed FULL republish (this function is the
+            // only caller that ever hands over the complete vault item set) discharges every
+            // outstanding single-item self-heal obligation too -- the whole-vault write it just
+            // performed necessarily includes whatever `upsertOne` may have owed.
+            clearSelfHealPending()
             logger.log(
                 "PVFILL|E41-2|stage=republish status=ok count=\(desired.count, privacy: .public) mode=\(state.supportsIncrementalUpdates ? "incremental" : "full", privacy: .public)"
             )
@@ -163,8 +184,13 @@ enum IdentityStoreSync {
         }
     }
 
+    /// CR-02 (41-REVIEW.md iteration 2): true when EITHER a whole-vault rebuild is owed OR a
+    /// single-item self-heal write may not have landed -- `runIdentityRebuildIfPending()` runs the
+    /// SAME full rebuild either way (it has no cheaper "repair just one item" path), so callers do
+    /// not need to distinguish the two here.
     static func isRebuildPending() -> Bool {
-        UserDefaults(suiteName: suiteName)?.bool(forKey: rebuildPendingKey) ?? false
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return false }
+        return defaults.bool(forKey: rebuildPendingKey) || defaults.bool(forKey: selfHealPendingKey)
     }
 
     /// WR-01 (41-REVIEW.md): sign-out (HOST-ONLY caller, `ContentView.performSignOut()`) must
@@ -190,13 +216,19 @@ enum IdentityStoreSync {
 
     // MARK: - CR-01 (41-REVIEW.md): the additive, single-identity choke point
 
-    /// Marks a rebuild owed BEFORE a caller performs a fire-and-forget `upsertOne(source:)` --
+    /// Marks a self-heal owed BEFORE a caller performs a fire-and-forget `upsertOne(source:)` --
     /// so a process kill mid-flight (the AutoFill extension is torn down at exactly this moment,
     /// right after `completeRequest`) leaves an explicit repair obligation rather than a silently
-    /// stale `identityPublishedKeys` blob. `upsertOne(source:)` clears this itself on success;
-    /// callers that never reach a terminal result (a kill) leave it set, which is the whole point.
+    /// stale `identityPublishedKeys` blob. `upsertOne(source:)` clears ONLY this flag itself on
+    /// success (CR-02, 41-REVIEW.md iteration 2 -- never the whole-vault `rebuildPendingKey`, which
+    /// a one-item write cannot know is fully satisfied); callers that never reach a terminal result
+    /// (a kill) leave it set, which is the whole point.
     static func markSelfHealPending() {
-        markRebuildPending(true)
+        UserDefaults(suiteName: suiteName)?.set(true, forKey: selfHealPendingKey)
+    }
+
+    private static func clearSelfHealPending() {
+        UserDefaults(suiteName: suiteName)?.set(false, forKey: selfHealPendingKey)
     }
 
     /// The additive counterpart to `republish(sources:)` -- CR-01 (41-REVIEW.md): `republish`
@@ -218,8 +250,16 @@ enum IdentityStoreSync {
 
         let identities = buildIdentities(from: [source])
         guard !identities.isEmpty else {
-            markRebuildPending(false)
-            return .success(())
+            // CR-02 (41-REVIEW.md iteration 2): wrote NOTHING at all -- the self-heal obligation
+            // this call exists to discharge is NOT discharged (every URL failed
+            // `OriginNormalize.host(fromURLString:)`, WR-04). Before this fix this cleared
+            // `rebuildPendingKey` unconditionally, silently forgetting a repair a killed prior fill
+            // may still owe (T-41-41). Escalate to a full-vault rebuild instead of clearing
+            // anything -- `runIdentityRebuildIfPending()` is the only path that can recover an
+            // item this single-item call could not build an identity for.
+            markRebuildPending(true)
+            logger.error("PVFILL|E41-2|stage=upsert-one status=no-identity-built")
+            return .failure(.nothingToWrite)
         }
 
         let result = await saveWithRetry(identities as [any ASCredentialIdentity])
@@ -230,7 +270,13 @@ enum IdentityStoreSync {
             // an existing entry here, never shrinks.
             let newKeys = Set(identities.map(PublishedKey.init(identity:)))
             persistPublishedKeys(readPublishedKeys().union(newKeys))
-            markRebuildPending(false)
+            // CR-02 (41-REVIEW.md iteration 2): clears ONLY the self-heal obligation THIS call
+            // discharged -- never `rebuildPendingKey`. Before this fix, a one-item success here
+            // cleared the WHOLE-VAULT rebuild flag, silently forgetting any OTHER item's still-owed
+            // repair (a killed prior fill for a DIFFERENT item, or an earlier `.storeDisabled`
+            // window) -- see CR-02's own issue text (T-41-41: "a dropped busy write is a
+            // PERMANENTLY missing QuickType entry").
+            clearSelfHealPending()
             logger.log("PVFILL|E41-2|stage=upsert-one status=ok")
         case let .failure(error):
             logger.error("PVFILL|E41-2|stage=upsert-one status=fail error=\(error.description, privacy: .public)")
