@@ -290,9 +290,11 @@ enum IdentityStoreSync {
         case .success:
             // UNION, never replace: this is the one property that makes `upsertOne` safe to hand
             // a single-item source -- the persisted published-keys blob only ever grows or updates
-            // an existing entry here, never shrinks.
+            // an existing entry here, never shrinks. WR-06 (41-REVIEW.md iteration 2):
+            // `unionIntoPublishedKeys` makes this union compare-and-swap by version rather than a
+            // plain unsynchronized read-then-write -- see that function's own header.
             let newKeys = Set(identities.map(PublishedKey.init(identity:)))
-            persistPublishedKeys(readPublishedKeys().union(newKeys))
+            unionIntoPublishedKeys(newKeys)
             // CR-02 (41-REVIEW.md iteration 2): clears ONLY the self-heal obligation THIS call
             // discharged -- never `rebuildPendingKey`. Before this fix, a one-item success here
             // cleared the WHOLE-VAULT rebuild flag, silently forgetting any OTHER item's still-owed
@@ -455,17 +457,66 @@ enum IdentityStoreSync {
         UserDefaults(suiteName: suiteName)?.set(pending, forKey: rebuildPendingKey)
     }
 
-    private static func readPublishedKeys() -> Set<PublishedKey> {
-        guard let defaults = UserDefaults(suiteName: suiteName),
-              let data = defaults.data(forKey: publishedKeysKey),
-              let keys = try? JSONDecoder().decode([PublishedKey].self, from: data)
-        else { return [] }
-        return Set(keys)
+    /// WR-06 (41-REVIEW.md iteration 2): the persisted shape gained a `version` counter -- read by
+    /// `unionIntoPublishedKeys` below to detect a concurrent write from the OTHER process between
+    /// its own read and write. A pre-fix (unversioned, bare `[PublishedKey]`) blob fails to decode
+    /// here and is treated as "no known published keys yet" (version 0) -- a one-time bookkeeping
+    /// reset on upgrade, never a security issue (the identity store itself is untouched; only this
+    /// file's OWN diffing record resets).
+    private struct PublishedKeySet: Codable {
+        let version: Int
+        let keys: [PublishedKey]
     }
 
+    private static func readPublishedKeySet() -> PublishedKeySet {
+        guard let defaults = UserDefaults(suiteName: suiteName),
+              let data = defaults.data(forKey: publishedKeysKey),
+              let set = try? JSONDecoder().decode(PublishedKeySet.self, from: data)
+        else { return PublishedKeySet(version: 0, keys: []) }
+        return set
+    }
+
+    private static func readPublishedKeys() -> Set<PublishedKey> {
+        Set(readPublishedKeySet().keys)
+    }
+
+    /// The WHOLE-SET replace `republish(sources:)` uses -- always wins (this IS the current,
+    /// complete desired set, never a merge), but still bumps `version` so a concurrent
+    /// `unionIntoPublishedKeys` (extension-side) retry below can detect it moved.
     private static func persistPublishedKeys(_ keys: Set<PublishedKey>) {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }
-        guard let data = try? JSONEncoder().encode(Array(keys)) else { return }
+        let next = PublishedKeySet(version: readPublishedKeySet().version &+ 1, keys: Array(keys))
+        guard let data = try? JSONEncoder().encode(next) else { return }
         defaults.set(data, forKey: publishedKeysKey)
+    }
+
+    /// WR-06 (41-REVIEW.md iteration 2): `upsertOne`'s own read-modify-write, made compare-and-swap
+    /// by version. Before this fix, `persistPublishedKeys(readPublishedKeys().union(newKeys))` ran
+    /// as two unsynchronized steps across a cross-PROCESS boundary (this file is compiled into both
+    /// the host app and the extension) -- a host `republish` landing between the read and the write
+    /// (exactly the moment the self-heal fires: right after the host may have just been active) was
+    /// silently overwritten by this call's own, now-stale union, dropping whatever item the host's
+    /// republish had just added from `identityPublishedKeys`'s record (a real, reachable removal-
+    /// diff gap: that item's QuickType entry then survives indefinitely past the item's own
+    /// deletion, because a later removal diff no longer knows to remove it).
+    ///
+    /// `UserDefaults` has no atomic CAS primitive, so this narrows the race window (a single
+    /// re-read-and-retry) rather than eliminating it outright -- WR-06's own issue text: the write
+    /// frequency here is bounded by real user actions (a fill, an edit), never a hot loop, so one
+    /// retry is proportionate to the actual collision probability rather than a full lock protocol.
+    private static func unionIntoPublishedKeys(_ newKeys: Set<PublishedKey>) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+        for _ in 0..<2 {
+            let before = readPublishedKeySet()
+            let merged = Set(before.keys).union(newKeys)
+            let next = PublishedKeySet(version: before.version &+ 1, keys: Array(merged))
+            guard let data = try? JSONEncoder().encode(next) else { return }
+            let versionMovedDuringMerge = readPublishedKeySet().version != before.version
+            defaults.set(data, forKey: publishedKeysKey)
+            if !versionMovedDuringMerge { return }
+            // The version moved between our read and write -- another writer's value may already
+            // be sitting under this key; loop once more to merge OUR keys into THAT value instead
+            // of silently having clobbered it.
+        }
     }
 }
