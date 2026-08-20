@@ -56,7 +56,22 @@ enum OriginNormalize {
         // `https://` rather than refusing outright. Only applied when `URL(string:)` itself
         // reports no scheme; a string that DOES carry one (including a non-http(s) one) is passed
         // through unchanged, so this never overrides an explicit scheme mismatch.
-        let candidate = (URL(string: trimmed)?.scheme == nil) ? "https://\(trimmed)" : trimmed
+        //
+        // WR-04 (41-REVIEW.md iteration 2): "carries no scheme at all" is NOT the same test as
+        // "`URL(string:).scheme == nil`". RFC 3986's scheme grammar is `ALPHA *( ALPHA / DIGIT /
+        // "+" / "-" / "." )` -- a dotted label like `example.com` is a SYNTACTICALLY valid scheme
+        // name, so `URL(string: "example.com:8443")` reports `scheme == "example.com"`, `host ==
+        // nil`, and the guard above never fired for it: CR-02's own issue text named exactly this
+        // string ("example.com:8443", "localhost:8765") as normal user input, and both were
+        // silently dropped (no QuickType entry, only a `status=skipped-unparseable-url` line
+        // carrying no identifier). Treat "a scheme parsed, but there is no authority AND the raw
+        // string never wrote `//` itself" as scheme-less too -- a REAL scheme+authority URL
+        // (`https://example.com`, `ftp://files.example.com`) always satisfies at least one of
+        // "has a host" or "the author wrote `//`", so this never overrides a genuine explicit
+        // scheme.
+        let looksSchemeless = (URL(string: trimmed)?.scheme == nil)
+            || (URL(string: trimmed)?.host == nil && !trimmed.contains("//"))
+        let candidate = looksSchemeless ? "https://\(trimmed)" : trimmed
         guard let url = URL(string: candidate), let scheme = url.scheme?.lowercased(),
               let host = url.host?.lowercased(), !host.isEmpty
         else { return nil }

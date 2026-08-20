@@ -553,7 +553,16 @@ struct ItemFormView: View {
     private static func normalizedLoginURL(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
-        guard URL(string: trimmed)?.scheme == nil else { return trimmed }
+        // WR-04 (41-REVIEW.md iteration 2): matches `OriginNormalize.components(fromURLString:)`'s
+        // own corrected heuristic (Shared/OriginNormalize.swift -- see that file's own comment for
+        // the full RFC-3986 rationale) -- `URL(string:).scheme == nil` alone is not evidence of "no
+        // scheme": `example.com:8443`/`localhost:8765` parse a syntactically valid dotted-label
+        // scheme with no authority, and this function's OWN duplicate of the old heuristic left
+        // those exact strings untouched (never prefixed), so they were stored exactly as typed and
+        // never became fillable even after OriginNormalize's own fix.
+        let looksSchemeless = (URL(string: trimmed)?.scheme == nil)
+            || (URL(string: trimmed)?.host == nil && !trimmed.contains("//"))
+        guard looksSchemeless else { return trimmed }
         return "https://\(trimmed)"
     }
 

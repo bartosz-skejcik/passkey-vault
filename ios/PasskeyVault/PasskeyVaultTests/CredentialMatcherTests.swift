@@ -254,4 +254,53 @@ struct CredentialMatcherTests {
         )
         #expect(!matched)
     }
+
+    // MARK: - WR-04 (41-REVIEW.md iteration 2): a bare `host:port` (no scheme at all) is CR-02's
+    // own named example of normal user input ("example.com:8443", "localhost:8765") -- Foundation's
+    // RFC-3986 scheme grammar accepts a dotted label as a syntactically valid scheme name, so
+    // `URL(string:).scheme == nil` alone was not evidence of "no scheme", and both strings were
+    // silently dropped (no host, no port, no QuickType entry) before this fix.
+
+    @Test func loginMatchesHostColonPortStoredUrlAgainstDomainTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com:8443"], issuer: "", name: "",
+            target: .domain(host: "example.com")
+        )
+        #expect(matched, "a bare host:port with no scheme must still register/match by host -- WR-04")
+    }
+
+    @Test func loginMatchesHostColonPortStoredUrlAgainstHttpsUrlTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com:8443"], issuer: "", name: "",
+            target: .url("https://example.com:8443/")
+        )
+        #expect(matched, "the assumed https scheme plus the EXPLICIT port from the bare host:port string must both carry through -- WR-04")
+    }
+
+    @Test func loginMatchesLocalhostColonPortStoredUrlAgainstDomainTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["localhost:8765"], issuer: "", name: "",
+            target: .domain(host: "localhost")
+        )
+        #expect(matched, "localhost:PORT is CR-02's own named example of normal user input -- WR-04")
+    }
+
+    @Test func loginMatchesLocalhostColonPortStoredUrlAgainstHttpsUrlTarget() {
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["localhost:8765"], issuer: "", name: "",
+            target: .url("https://localhost:8765/")
+        )
+        #expect(matched)
+    }
+
+    @Test func loginRefusesWrongPortWhenStoredUrlIsHostColonPort() {
+        // The explicit port from the bare host:port string is load-bearing, not discarded --
+        // a visit to a DIFFERENT port on the same host must still refuse (full origin equality,
+        // T-10-05), exactly as it would for an explicit-scheme stored URL.
+        let matched = CredentialMatcher.matches(
+            itemType: .login, urls: ["example.com:8443"], issuer: "", name: "",
+            target: .url("https://example.com:9999/")
+        )
+        #expect(!matched)
+    }
 }
