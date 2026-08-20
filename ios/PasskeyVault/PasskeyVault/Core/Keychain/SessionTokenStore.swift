@@ -21,6 +21,7 @@
 //
 
 import Foundation
+import os
 import Security
 
 /// Owns the session token Keychain item. Stores and returns the token as
@@ -33,6 +34,8 @@ import Security
 enum SessionTokenStore {
     static let service = "cloud.blonie.PasskeyVault.session-token"
 
+    private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
     private static var baseQuery: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -44,6 +47,15 @@ enum SessionTokenStore {
     /// Stores `token` verbatim as UTF-8 bytes. Delete-then-add, matching
     /// `UkEnvelopeStore`'s own recovery discipline, so a stale token from a
     /// prior session never collides with a fresh one.
+    ///
+    /// WR-01 (41-REVIEW.md iteration 2): NEVER `precondition()` on an external API's status --
+    /// same discipline CR-03 already applied to `SessionKeyStore.delete()`/`SessionLifecycle`'s
+    /// Keychain paths. Before this fix, `precondition(status == errSecSuccess)` aborted the app
+    /// (active in `-O` release builds) on `errSecDuplicateItem`/`errSecInteractionNotAllowed`
+    /// right after a successful login -- the exact user-facing hazard CR-03 named, just on a
+    /// sibling file CR-03's own changed-file set never reached. Reports and continues instead;
+    /// `load()` returning `nil` afterward is the honest, already-handled failure mode a caller
+    /// sees when this write did not land.
     static func save(_ token: String) {
         let deleteQuery = baseQuery
         SecItemDelete(deleteQuery as CFDictionary)
@@ -53,7 +65,12 @@ enum SessionTokenStore {
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
-        precondition(status == errSecSuccess, "SessionTokenStore.save unexpected status \(status)")
+        if status != errSecSuccess {
+            assertionFailure("SessionTokenStore.save unexpected status \(status)")
+            logger.error("PVLOCK|stage=token-save status=\(status, privacy: .public) unexpected")
+        } else {
+            logger.log("PVLOCK|stage=token-save status=\(status, privacy: .public)")
+        }
     }
 
     /// No `LAContext`, no biometric prompt, no async hop -- this item never
@@ -71,11 +88,19 @@ enum SessionTokenStore {
     }
 
     /// For logout. Idempotent.
+    ///
+    /// WR-01 (41-REVIEW.md iteration 2): this is the call CR-03's own issue text named directly
+    /// ("a host-app crash the moment the user taps Lock now/sign out") -- `ContentView
+    /// .performSignOut()` -> `AccountService.logout()` -> here. `precondition` on an unexpected
+    /// `OSStatus` is exactly the crash CR-03 removed from every other Keychain delete path; this
+    /// one survived only because it lives outside phase 41's originally-changed file set.
     static func clear() {
         let status = SecItemDelete(baseQuery as CFDictionary)
-        precondition(
-            status == errSecSuccess || status == errSecItemNotFound,
-            "SessionTokenStore.clear unexpected status \(status)"
-        )
+        if status != errSecSuccess && status != errSecItemNotFound {
+            assertionFailure("SessionTokenStore.clear unexpected status \(status)")
+            logger.error("PVLOCK|stage=token-clear status=\(status, privacy: .public) unexpected")
+        } else {
+            logger.log("PVLOCK|stage=token-clear status=\(status, privacy: .public)")
+        }
     }
 }

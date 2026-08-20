@@ -17,6 +17,7 @@
 
 import Foundation
 import LocalAuthentication
+import os
 import Security
 
 /// Thrown when `SecAccessControlCreateWithFlags` itself fails to construct
@@ -34,6 +35,8 @@ struct AccessControlConstructionError: Error {
 /// back into the process-local boolean ACC-04 forbids.
 enum UkEnvelopeStore {
     static let service = "cloud.blonie.PasskeyVault.uk-envelope"
+
+    private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
 
     /// ACC-03's protection class -- supplied ONLY to
     /// `SecAccessControlCreateWithFlags` below, NEVER additionally as an
@@ -154,12 +157,17 @@ enum UkEnvelopeStore {
     /// caller. (A subsequent `read` on a non-existent item classifies as
     /// `.envelopeUnusable`, never `.lockedNoUI` -- proven in
     /// `KeychainEnvelopeTests`.)
+    /// WR-01 (41-REVIEW.md iteration 2): same discipline CR-03 applied to `SessionKeyStore
+    /// .delete()` -- NEVER `precondition()` on an external API's status on a delete path a
+    /// sign-out/lock flow can reach. Reports and continues instead of aborting the app.
     static func delete() {
         let status = SecItemDelete(baseQuery as CFDictionary)
-        precondition(
-            status == errSecSuccess || status == errSecItemNotFound,
-            "UkEnvelopeStore.delete unexpected status \(status)"
-        )
+        if status != errSecSuccess && status != errSecItemNotFound {
+            assertionFailure("UkEnvelopeStore.delete unexpected status \(status)")
+            logger.error("PVLOCK|stage=uk-envelope-delete status=\(status, privacy: .public) unexpected")
+        } else {
+            logger.log("PVLOCK|stage=uk-envelope-delete status=\(status, privacy: .public)")
+        }
     }
 }
 
