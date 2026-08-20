@@ -120,8 +120,25 @@ gate_qa05() {
   # 1. Positive control FIRST. If this is empty, the query shape itself is
   #    broken (wrong range, wrong pathspec, detached HEAD, exclusion ref
   #    swallowing everything) and the .planning/ result below means nothing.
-  local ctl
-  ctl=$(qa05_query HEAD "$control_path")
+  #
+  #    E5 discipline (this file's own header): gate_qa05 runs as the direct
+  #    target of `if ! "gate_$g"` in run_gates, and bash disables `set -e`
+  #    for a function's ENTIRE body when it is invoked that way (verified
+  #    empirically writing this plan -- `false` mid-function did not abort
+  #    under `if ! f; then`). A genuine `git log` error here would therefore
+  #    NOT abort the script; it would produce empty output that is
+  #    indistinguishable from "legitimately no commits found" unless the
+  #    exit status is checked explicitly -- exactly the empty-read-as-pass
+  #    trap this whole phase exists to police, this time one level removed
+  #    (an ERROR silently read as an EMPTY RESULT silently read as a PASS).
+  #    So every qa05_query call below checks its own exit status before
+  #    testing emptiness of its output.
+  local ctl ctl_status
+  ctl=$(qa05_query HEAD "$control_path") && ctl_status=0 || ctl_status=$?
+  if [ "$ctl_status" -ne 0 ]; then
+    echo "FAIL[qa05]: the positive-control query itself errored (git log exit=$ctl_status) -- treating an error as a broken query shape, never as an empty result" >&2
+    return 1
+  fi
   if [ -z "$ctl" ]; then
     echo "FAIL[qa05]: positive control empty (query shape against -- $control_path, --no-merges, excluding \$QA05_EXCLUDE_REF=$QA05_EXCLUDE_REF, returned nothing) -- the .planning/ result would mean nothing, so this run stops here" >&2
     return 1
@@ -129,9 +146,14 @@ gate_qa05() {
   local ctl_count
   ctl_count=$(printf '%s\n' "$ctl" | wc -l | tr -d ' ')
 
-  # 2. The absence assertion.
-  local bad
-  bad=$(qa05_query HEAD .planning/)
+  # 2. The absence assertion. Same exit-status discipline as (1): a
+  #    genuinely errored query must never be read as "found nothing".
+  local bad bad_status
+  bad=$(qa05_query HEAD .planning/) && bad_status=0 || bad_status=$?
+  if [ "$bad_status" -ne 0 ]; then
+    echo "FAIL[qa05]: the absence-assertion query itself errored (git log exit=$bad_status) -- treating an error as a broken query, never as a clean result" >&2
+    return 1
+  fi
   if [ -n "$bad" ]; then
     echo "FAIL[qa05]: commit(s) touching .planning/ found in ${FORK}..HEAD, not already on \$QA05_EXCLUDE_REF=$QA05_EXCLUDE_REF (i.e. authored on this branch itself, not inherited via reconciliation):" >&2
     echo "$bad" >&2
