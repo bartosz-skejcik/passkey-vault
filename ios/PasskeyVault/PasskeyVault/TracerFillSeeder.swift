@@ -302,4 +302,118 @@ enum TracerFillSeeder {
         }
     }
 
+    // MARK: - Plan 41-08, Task 1 (E41-8/FILL-04) -- the third-party-domain seed
+
+    /// A SECOND, INDEPENDENT item/identity from `seed()`'s own tracer item above -- registered at
+    /// a domain this product does not control and has no relationship with at all
+    /// (`e418-outside-vendor.localhost:8770`, `AutoFillThirdPartyDomainUITests.swift`'s own header
+    /// explains why `.localhost` structurally can never carry a site-association file). Runs the
+    /// SAME real-writer sequence `seed()` above uses (`SessionLifecycle.recordHostUnlock()`,
+    /// `SessionKeyStore.store`, `encryptItemWire`, `AppGroupCiphertextCacheStore().write`,
+    /// `IdentityStoreSync.republish`) end to end on its own -- it does NOT depend on `seed()`
+    /// having run first, and does not touch `seed()`'s own tracer item/identity, so this can be
+    /// exercised in a build carrying ONLY `PV_PROBE_E41_8` (no `PV_PROBE_FILLTRACER` needed).
+    ///
+    /// DEVIATION (Rule 2, GSD executor rules): `41-08-PLAN.md`'s own `files_modified` list does
+    /// not name this file -- same class of deviation as `seed()`'s own header explains for
+    /// 41-03-SUMMARY.md: without a host-side seed for THIS item, E41-8's own precondition ("a
+    /// third-party domain with a login form is reachable... and this product controls no
+    /// site-association file for it") has nothing registered to fill. Documented here, not
+    /// silently introduced.
+    static let thirdPartyUsername = "e418-thirdparty@pv.test"
+    static let thirdPartyPassword = "E418-3rdParty-NoAD!"
+    static let thirdPartyItemId = "e418-thirdparty-item"
+    // CORRECTED live, this session: the original choice (`e418-outside-vendor.localhost`) never
+    // propagated to QuickType across 4 retried attempts (up to 24s of cumulative wait) --
+    // isolated to E41-3's own unresolved "What this does NOT settle" item (Falsification 3): a
+    // bare, additive, single-identity `saveCredentialIdentities` call (exactly the shape
+    // `IdentityStoreSync.republish`'s incremental path takes for a first-time item) was found
+    // there to never reliably propagate for a NEW `.localhost` host, in contrast to `127.0.0.1`
+    // -- the host `seed()`'s own tracer item already uses, registered the SAME way (single-item,
+    // `IdentityStoreSync` incremental), and PROVEN reliable across every prior plan in this
+    // phase. Switched to `127.0.0.1` on a fresh, unused port to isolate exactly that variable,
+    // rather than IdentityStoreSync's own incremental-registration propagation reliability
+    // (unresolved, out of this task's scope -- flagged for Phase 42's audit).
+    static let thirdPartyHost = "127.0.0.1"
+    static let thirdPartyPort = 8770
+    private static let thirdPartyAccountId = "e418-thirdparty-account"
+    private static let thirdPartyServerBaseURL = "https://e418-thirdparty.invalid"
+
+    static func seedThirdPartyDomain() async {
+        guard let userKey = try? FfiUserKey.generate() else {
+            logger.error("PVFILL|E41-8|stage=seed status=fail step=generate")
+            return
+        }
+
+        SessionLifecycle.recordHostUnlock()
+        logger.log("PVFILL|E41-8|stage=seed status=ok step=lockmarker")
+
+        do {
+            var sessionBytes = exportUserKeyForSession(userKey: userKey)
+            defer { sessionBytes.resetBytes(in: 0..<sessionBytes.count) }
+            try SessionKeyStore.store(sessionBytes)
+            logger.log("PVFILL|E41-8|stage=seed status=ok step=sessionkey")
+        } catch {
+            logger.error("PVFILL|E41-8|stage=seed status=fail step=sessionkey error=\(String(describing: error), privacy: .public)")
+            return
+        }
+
+        let storedUrl = "http://\(thirdPartyHost):\(thirdPartyPort)"
+        // The plaintext JSON matches `LoginFields`' own wire shape exactly (`Vault/ItemFields
+        // .swift`), same discipline `seed()`'s own plaintext literal above already established.
+        let plaintext = """
+        {"type":"login","name":"E41-8 Third Party","folderId":null,"tags":[],\
+        "username":"\(thirdPartyUsername)","password":"\(thirdPartyPassword)",\
+        "urls":["\(storedUrl)"],"notes":""}
+        """
+
+        let wire: FfiEncryptedItemWire
+        do {
+            wire = try encryptItemWire(
+                userKey: userKey, plaintext: plaintext, itemId: thirdPartyItemId, revision: 1
+            )
+        } catch {
+            logger.error("PVFILL|E41-8|stage=seed status=fail step=encrypt error=\(String(describing: error), privacy: .public)")
+            return
+        }
+
+        let item = CachedSnapshot.Item(
+            id: thirdPartyItemId,
+            encKey: wire.encKeyJson,
+            encData: wire.encDataJson,
+            revision: 1,
+            updatedAt: ISO8601DateFormatter().string(from: Date()),
+            lastUsedAt: nil,
+            isShared: false,
+            collectionId: nil,
+            lastEditorEmail: nil
+        )
+        let snapshot = CachedSnapshot(
+            revision: 1,
+            Int64(Date().timeIntervalSince1970 * 1000),
+            accountId: thirdPartyAccountId,
+            serverBaseURL: thirdPartyServerBaseURL,
+            items: [item],
+            folders: []
+        )
+
+        do {
+            try AppGroupCiphertextCacheStore().write(snapshot)
+            logger.log("PVFILL|E41-8|stage=seed status=ok step=cache itemId=\(thirdPartyItemId, privacy: .public)")
+        } catch {
+            logger.error("PVFILL|E41-8|stage=seed status=fail step=cache error=\(String(describing: error), privacy: .public)")
+            return
+        }
+
+        let registerResult = await IdentityStoreSync.republish(sources: [
+            VaultIdentitySource(itemId: thirdPartyItemId, username: thirdPartyUsername, urls: [storedUrl]),
+        ])
+        switch registerResult {
+        case .success:
+            logger.log("PVFILL|E41-8|stage=seed status=ok step=identity")
+        case let .failure(error):
+            logger.error("PVFILL|E41-8|stage=seed status=fail step=identity error=\(String(describing: error), privacy: .public)")
+        }
+    }
+
 }

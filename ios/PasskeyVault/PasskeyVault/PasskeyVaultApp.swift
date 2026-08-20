@@ -131,6 +131,18 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 41, Plan 41-08, Task 1 (E41-8/FILL-04): seeds a SECOND, independent item/identity
+        // at a domain this product does not control at all -- BEFORE the extension is ever
+        // invoked, same ordered host-then-extension sequence every other E41 seeder in this file
+        // already establishes. Compiled in only under `PV_PROBE_E41_8` -- inert for every other
+        // probe. See `TracerFillSeeder.seedThirdPartyDomain()`'s own header for why this deviates
+        // from files_modified (Rule 2, documented in 41-08-SUMMARY.md).
+        #if PV_PROBE_E41_8
+        Task {
+            await TracerFillSeeder.seedThirdPartyDomain()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

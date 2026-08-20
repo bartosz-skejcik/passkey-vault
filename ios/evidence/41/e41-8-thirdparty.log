@@ -1,0 +1,76 @@
+Phase 41, Plan 41-08, Task 1 (E41-8/FILL-04) -- 127.0.0.1:8770 chosen as the third-party domain
+after a first, failed run at a fresh `.localhost` subdomain never propagated to QuickType across
+4 retried attempts -- isolated to L-38 (`ios/IOS-SPIKE-LOG.md`), a live addition to E41-3's own
+unresolved Falsification-3 finding. 127.0.0.1 is loopback, not a registrable DNS domain: no
+publicly-trusted TLS cert can ever be issued for it and Apple's own AASA fetch mechanism could
+never retrieve a site-association file for it -- "no site-association file could exist" holds by
+construction, and it is clearly not a domain this product controls.
+
+## Falsification (acceptance criteria): expected password altered by one character, re-run,
+## observe failure, restored, re-run, observe pass again
+Temporarily changed the TEST's own `expectedPassword` constant by one character (the trailing
+character only), leaving the REAL seeded/filled password unchanged (T-41-12/T-41-15: never
+reproducing the literal plaintext password value in this evidence file):
+  $ bash scripts/ios-autofill-e41.sh e41-8
+  PVUITEST|E41-8|host=127.0.0.1 port=8770 attempt=1 status=filled-on-attempt
+  XCODEBUILD-EXIT: 65
+  FAIL: e41-8 -- no field-value-equal=true line found in ios/evidence/41/e41-8-thirdparty.log
+The extension's own os_log for this run confirms the ACTUAL fill still succeeded internally
+(`PVFILL|entry=silent stage=fill status=ok`) -- the failure is purely the test's own
+`XCTAssertEqual` catching the deliberately-wrong expectation, exactly as intended
+(`continueAfterFailure = false` stops the test before the `field-value-equal=...` print line ever
+runs, which is why that line is absent rather than printed `false`).
+Reverted the one-character change and re-ran: PASS (see below), confirming a clean restoration.
+
+## Positive proof -- password filled on a third-party domain (127.0.0.1:8770)
+PVUITEST|E41-8|host=127.0.0.1 port=8770 attempt=1 status=filled-on-attempt
+PVUITEST|E41-8|run=thirdparty-fill host=127.0.0.1 port=8770 field-value-equal=true
+XCODEBUILD-EXIT: 0
+
+## WINDOWS #18 check -- did prepareCredentialList (the 'list' entry point) fire live during this run?
+WINDOWS-18: NOT observed in this run -- the 'Passwords' accessory fallback path was not exercised (a direct single-suggestion sheet appeared instead, or nothing was offered); #18 remains open
+
+## Entitlement dump -- CONTEXT ONLY, never the proof (QA-03; the field-value-equal line above is the load-bearing proof)
+### App: /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>application-identifier</key>
+	<string>4S7F2M7YLW.cloud.blonie.PasskeyVault</string>
+	<key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cloud.blonie.PasskeyVault</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>4S7F2M7YLW.cloud.blonie.PasskeyVault</string>
+	</array>
+</dict>
+</plist>
+
+### Extension: /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex/PasskeyVaultAutoFill
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>application-identifier</key>
+	<string>4S7F2M7YLW.cloud.blonie.PasskeyVault.AutoFill</string>
+	<key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.cloud.blonie.PasskeyVault</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>4S7F2M7YLW.cloud.blonie.PasskeyVault</string>
+	</array>
+</dict>
+</plist>
+
+## Entitlement-dump-tool falsifier -- sim-entitlements.py against a binary with no entitlements section
+FAIL: no __TEXT,__entitlements section in /bin/ls
+FALSIFIER-EXIT: 2 (expect 2)
