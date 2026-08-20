@@ -1,0 +1,158 @@
+Phase 41, Plan 41-08, Task 2/3 (E41-9): the two standing structural gates, run live against the
+real tree, and each demonstrated able to FAIL before being trusted (QA-04) -- captured 2026-08-20.
+
+================================================================================================
+Gate: scripts/audit-ios-autofill-deprecated-apis.sh (Task 2 -- the deprecated-API gate)
+================================================================================================
+
+### Baseline (clean tree)
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 107 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (FILL-03, L-9/L-33)
+EXIT=0
+
+### RED transcript 1 -- a real hit
+Temporarily added, to ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift:
+    store.replaceCredentialIdentities(with: identities, completion: { _ in })
+
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+FAIL: deprecated AuthenticationServices spelling(s) found (FILL-03, L-9/L-33):
+ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift:42:        store.replaceCredentialIdentities(with: identities, completion: { _ in }) [deprecated store write: replaceCredentialIdentities(with:...) labelled form]
+EXIT=1
+
+Removed. Re-ran: PASS, EXIT=0 (confirmed clean revert, see below).
+
+### RED transcript 2 -- the SAME patterns placed inside comments near a real call site
+(the shape 35-REVIEW's CR-02 found: a gate must not be tripped by its own prose or by a
+code comment merely naming the pattern it searches for)
+
+Temporarily added, as `//`-commented lines immediately above `saveWithRetry(...)` in
+ios/PasskeyVault/Shared/IdentityStoreSync.swift:
+    // store.saveCredentialIdentities(identities, completion: { _ in })
+    // store.removeCredentialIdentities(identities, completion: { _ in })
+    // store.replaceCredentialIdentities(with: identities, completion: { _ in })
+
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 107 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (FILL-03, L-9/L-33)
+EXIT=0
+
+This is the transcript that makes transcript 1 meaningful rather than accidental: the SAME three
+literal patterns, present in the source, produce PASS when they are comments and FAIL when they
+are code -- proving the comment/string-stripping preprocessing (copied from
+scripts/audit-ffi-opaque-handles.sh's own CR-02-proven technique) is actually doing its job.
+
+Removed. Re-ran: PASS, EXIT=0 (confirmed clean revert, see below).
+
+### RED transcript 3 -- the missing-input precheck
+$ PV_AUDIT_DEPRECATED_APIS_SCAN_OVERRIDE=ios/PasskeyVault/DoesNotExist bash scripts/audit-ios-autofill-deprecated-apis.sh
+ERROR: expected Swift source directory missing: ios/PasskeyVault/DoesNotExist -- refusing to report PASS over an unscanned tree
+EXIT=1
+
+### Confirmed clean revert after both transcripts
+$ git diff --stat ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift
+(empty -- no diff)
+$ bash scripts/audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 107 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (FILL-03, L-9/L-33)
+EXIT=0
+
+### `test -x` and PIPESTATUS discipline
+$ test -x scripts/audit-ios-autofill-deprecated-apis.sh && echo OK
+OK
+$ grep -c 'pipestatus\|PIPESTATUS' scripts/audit-ios-autofill-deprecated-apis.sh
+0
+
+================================================================================================
+Gate: scripts/audit-ios-identity-store-chokepoint.sh (Task 3 -- the choke-point gate)
+================================================================================================
+
+### Baseline (clean tree)
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach IdentityStoreSync.republish( (FILL-03)
+EXIT=0
+
+### RED transcript 1 -- an extra writer outside the allow-list (assertion A)
+Temporarily added, to ios/PasskeyVault/PasskeyVault/Onboarding/AutoFillStatus.swift:
+    static func temp_red_transcript_1() {
+        let identity = ASPasswordCredentialIdentity(
+            serviceIdentifier: ASCredentialServiceIdentifier(identifier: "example.com", type: .domain),
+            user: "x", recordIdentifier: "y"
+        )
+        ASCredentialIdentityStore.shared.saveCredentialIdentities([identity], completion: { _ in })
+    }
+
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (A), writer outside the allow-list:
+ios/PasskeyVault/PasskeyVault/Onboarding/AutoFillStatus.swift:25:        let identity = ASPasswordCredentialIdentity( [identity-store write OUTSIDE the allow-list]
+ios/PasskeyVault/PasskeyVault/Onboarding/AutoFillStatus.swift:29:        ASCredentialIdentityStore.shared.saveCredentialIdentities([identity], completion: { _ in }) [identity-store write OUTSIDE the allow-list]
+EXIT=1
+
+Removed. Re-ran: PASS, EXIT=0 (confirmed clean revert, see below).
+
+### RED transcript 2 (LOAD-BEARING) -- a mutation call site that stops reaching the writer (assertion B)
+This is the transcript that matters per this task's own acceptance criteria: assertion (A)'s own
+falsification above only catches an EXTRA writer; only assertion (B) below catches a MISSING one,
+and a missing one is FILL-03's actual failure mode (T-41-41 -- a deleted vault item whose identity
+silently stays in QuickType, leaking a username+domain in an OS-owned plaintext database).
+
+Temporarily REMOVED, from ios/PasskeyVault/PasskeyVault/Vault/VaultStore.swift's `delete(_:)`:
+    await IdentityStoreSync.republish(sources: Self.identitySources(from: items))
+
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+VaultStore.delete (ios/PasskeyVault/PasskeyVault/Vault/VaultStore.swift, declared at line 542) -- no IdentityStoreSync.republish( call found within 30 lines
+EXIT=1
+
+Restored. Re-ran: PASS, EXIT=0 (confirmed clean revert, see below).
+
+### RED transcript 3 -- the missing-input precheck
+$ PV_AUDIT_CHOKEPOINT_SCAN_OVERRIDE=ios/PasskeyVault/DoesNotExist bash scripts/audit-ios-identity-store-chokepoint.sh
+ERROR: expected Swift source directory missing: ios/PasskeyVault/DoesNotExist -- refusing to report PASS over an unscanned tree
+EXIT=1
+
+### Confirmed clean revert after both transcripts
+$ git diff --stat ios/PasskeyVault/PasskeyVault/Onboarding/AutoFillStatus.swift ios/PasskeyVault/PasskeyVault/Vault/VaultStore.swift
+(empty -- no diff)
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach IdentityStoreSync.republish( (FILL-03)
+EXIT=0
+
+### `test -x` and PIPESTATUS discipline
+$ test -x scripts/audit-ios-identity-store-chokepoint.sh && echo OK
+OK
+$ grep -c 'pipestatus\|PIPESTATUS' scripts/audit-ios-identity-store-chokepoint.sh
+0
+
+================================================================================================
+`scripts/ios-autofill-e41.sh gates` -- both gates run together, demonstrated able to fail
+================================================================================================
+
+### Baseline (clean tree)
+$ bash scripts/ios-autofill-e41.sh gates
+==> gates: audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 107 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (FILL-03, L-9/L-33)
+gates: deprecated-API gate PASS
+==> gates: audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach IdentityStoreSync.republish( (FILL-03)
+gates: choke-point gate PASS
+PASS: gates -- both structural gates exit 0
+EXIT=0
+
+### `gates` demonstrated failing with one gate's RED mutation in place (Task 3's own acceptance
+criterion). Same choke-point-removal mutation as the load-bearing transcript above, reintroduced
+into `VaultStore.delete`:
+
+$ bash scripts/ios-autofill-e41.sh gates
+==> gates: audit-ios-autofill-deprecated-apis.sh
+PASS: no deprecated AuthenticationServices spelling found across 107 Swift file(s) under ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill ios/PasskeyVault/Shared (FILL-03, L-9/L-33)
+gates: deprecated-API gate PASS
+==> gates: audit-ios-identity-store-chokepoint.sh
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+VaultStore.delete (ios/PasskeyVault/PasskeyVault/Vault/VaultStore.swift, declared at line 542) -- no IdentityStoreSync.republish( call found within 30 lines
+gates: choke-point gate FAIL
+FAIL: gates -- at least one structural gate failed
+EXIT=1
+
+Restored. Confirmed clean revert (`git diff --stat` empty) and re-ran `gates`: PASS, EXIT=0 (see
+baseline transcript above, re-confirmed identical after restoration).

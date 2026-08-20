@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy|e41-6-encoding|e41-6|lock-build|e41-4|e41-7} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy|e41-6-encoding|e41-6|lock-build|e41-4|e41-7|e41-8|gates} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -2698,6 +2698,229 @@ cmd_e41_7() {
   fi
 }
 
+# =============================================================================
+# e41-8 -- FILL-04 demonstration: a password filled on a third-party domain, entitlement dump
+# captured as CONTEXT ONLY, never the proof (Task 1, 41-08)
+# =============================================================================
+E41_8_LOG="$EVIDENCE_DIR/e41-8-thirdparty.log"
+E41_8_WWW_DIR="/tmp/pv-e418-www"
+# CORRECTED live, this session: the original host (a fresh `.localhost` subdomain) never
+# propagated to QuickType across 4 retried attempts -- isolated to E41-3's own unresolved
+# Falsification-3 finding (`ios/evidence/41/e41-3-matching-matrix.md`). `127.0.0.1` is the SAME
+# host `TracerFillSeeder.seed()`'s own tracer item already uses (single-item, `IdentityStoreSync`
+# incremental registration), proven reliable across every prior plan in this phase. See
+# `AutoFillThirdPartyDomainUITests.swift`'s own header for the full reasoning, including why a
+# loopback address still satisfies "no site-association file could exist."
+E41_8_HOST="127.0.0.1"
+E41_8_PORT=8770
+
+# Binding the server to 127.0.0.1 (HTTP only, matching the tracer's own `ensure_tracer_server`
+# shape, never `ensure_e41_3_servers`'s HTTPS leg, which this test does not need).
+ensure_e41_8_server() {
+  mkdir -p "$E41_8_WWW_DIR"
+  cat > "$E41_8_WWW_DIR/index.html" <<'HTML'
+<!DOCTYPE html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>
+<form>
+<input id="u" type="text" name="username" autocomplete="username"
+  oninput="document.getElementById('ru').innerText='USERFIELD:'+this.value"
+  onchange="document.getElementById('ru').innerText='USERFIELD:'+this.value">
+<input id="p" type="password" name="password" autocomplete="current-password"
+  oninput="document.getElementById('rp').innerText='PWFIELD:'+this.value"
+  onchange="document.getElementById('rp').innerText='PWFIELD:'+this.value">
+</form>
+<div id="ru">USERFIELD:-none-</div>
+<div id="rp">PWFIELD:-none-</div>
+</body>
+</html>
+HTML
+  if ! curl -s -o /dev/null "http://127.0.0.1:$E41_8_PORT/" 2>/dev/null; then
+    echo "==> starting E41-8 third-party-domain login-form server on 127.0.0.1:$E41_8_PORT (reachable as http://$E41_8_HOST:$E41_8_PORT/)" >&2
+    (cd "$E41_8_WWW_DIR" && nohup python3 -m http.server "$E41_8_PORT" --bind 127.0.0.1 > /tmp/pv-e418-http.log 2>&1 &)
+    sleep 1
+  fi
+}
+
+run_e41_8_test_once() {
+  local udid="$1" out_log="$2"
+  run_test_once_generic "$udid" \
+    "PasskeyVaultUITests/AutoFillThirdPartyDomainUITests/testFillsPasswordOnThirdPartyDomainWithoutAssociatedDomains" \
+    "PV_PROBE_E41_8" "$out_log"
+}
+
+# Same parallel-pearl-match-loop discipline as `drive_test_with_pearl_match`: tapping "Fill
+# Password" triggers Safari's own, separate LocalAuthentication confirmation gate, which never
+# clears without a `notifyutil` poster running for the whole drive.
+drive_e41_8_test() {
+  local udid="$1" out_log="$2"
+  local test_result=0
+  run_e41_8_test_once "$udid" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || test_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$test_result"
+}
+
+cmd_e41_8() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_8 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_e41_8_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-8: pinned simulator UDID: $udid"
+
+  echo "==> e41-8: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-8: building app+extension (PV_PROBE_E41_8)"
+  build_with_l10_retry "$udid" "PV_PROBE_E41_8" /tmp/pv-e41-8-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  : > "$E41_8_LOG"
+  echo "## Positive proof -- password filled on a third-party domain (${E41_8_HOST}:${E41_8_PORT})" >> "$E41_8_LOG"
+  local fill_log fill_result=0 run_start
+  fill_log=$(mktemp)
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  drive_e41_8_test "$udid" "$fill_log" || fill_result=$?
+  grep 'PVUITEST|E41-8|' "$fill_log" >> "$E41_8_LOG" || true
+  echo "XCODEBUILD-EXIT: $fill_result" >> "$E41_8_LOG"
+  rm -f "$fill_log"
+
+  # WINDOWS.md #18: prepareCredentialList (the 'list' entry point) SessionLifecycle gate was never
+  # observed firing live in any prior Phase-41 plan. This run's own driving code includes a
+  # fallback path that taps the "Passwords" keyboard accessory (opening the system's own
+  # credential-list sheet, which invokes `prepareCredentialList(for:)`) whenever the direct
+  # single-suggestion sheet does not appear immediately -- so IF that fallback fired on any of
+  # this run's retry attempts, the extension's own `PVLOCK|entry=list stage=lazy-check` log line
+  # (`SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "list", ...)`,
+  # `CredentialProviderViewController.prepareCredentialList`) will be present in the captured
+  # window below. Recorded honestly either way -- present closes #18; absent leaves it open,
+  # exactly as this plan's own instructions require.
+  echo "" >> "$E41_8_LOG"
+  echo "## WINDOWS #18 check -- did prepareCredentialList (the 'list' entry point) fire live during this run?" >> "$E41_8_LOG"
+  local extension_log
+  extension_log=$(xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" 2>&1 || true)
+  if echo "$extension_log" | grep -q 'PVLOCK|entry=list stage=lazy-check'; then
+    echo "$extension_log" | grep 'PVLOCK|entry=list stage=lazy-check' >> "$E41_8_LOG"
+    echo "WINDOWS-18: OBSERVED LIVE -- prepareCredentialList's SessionLifecycle gate fired during this run" >> "$E41_8_LOG"
+  else
+    echo "WINDOWS-18: NOT observed in this run -- the 'Passwords' accessory fallback path was not exercised (a direct single-suggestion sheet appeared instead, or nothing was offered); #18 remains open" >> "$E41_8_LOG"
+  fi
+
+  echo "" >> "$E41_8_LOG"
+  echo "## Entitlement dump -- CONTEXT ONLY, never the proof (QA-03; the field-value-equal line above is the load-bearing proof)" >> "$E41_8_LOG"
+  echo "### App: $PV_APP_PRODUCT/PasskeyVault" >> "$E41_8_LOG"
+  python3 "$REPO_ROOT/scripts/sim-entitlements.py" "$PV_APP_PRODUCT/PasskeyVault" >> "$E41_8_LOG" 2>&1 \
+    || echo "(app entitlement dump failed/absent -- see output above)" >> "$E41_8_LOG"
+  echo "" >> "$E41_8_LOG"
+  echo "### Extension: $PV_APPEX_PRODUCT/PasskeyVaultAutoFill" >> "$E41_8_LOG"
+  python3 "$REPO_ROOT/scripts/sim-entitlements.py" "$PV_APPEX_PRODUCT/PasskeyVaultAutoFill" >> "$E41_8_LOG" 2>&1 \
+    || echo "(extension entitlement dump failed/absent -- see output above)" >> "$E41_8_LOG"
+
+  echo "" >> "$E41_8_LOG"
+  echo "## Entitlement-dump-tool falsifier -- sim-entitlements.py against a binary with no entitlements section" >> "$E41_8_LOG"
+  local falsifier_out falsifier_exit=0
+  falsifier_out=$(python3 "$REPO_ROOT/scripts/sim-entitlements.py" /bin/ls 2>&1) || falsifier_exit=$?
+  echo "$falsifier_out" >> "$E41_8_LOG"
+  echo "FALSIFIER-EXIT: $falsifier_exit (expect 2)" >> "$E41_8_LOG"
+
+  if assert_e41_8 "$E41_8_LOG"; then
+    echo "PASS: e41-8 -- see $E41_8_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-8 -- see $E41_8_LOG" >&2
+    exit 1
+  fi
+}
+
+# Asserts on the CAPTURED FILE, never a pipeline's exit status (landmine L-3).
+assert_e41_8() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-8"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -qE 'field-value-equal=true' "$target"; then
+    echo "FAIL: e41-8 -- no field-value-equal=true line found in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "CONTEXT ONLY" "$target"; then
+    echo "FAIL: e41-8 -- entitlement dump section is not explicitly labelled CONTEXT ONLY in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "### App:" "$target" || ! grep -q "### Extension:" "$target"; then
+    echo "FAIL: e41-8 -- missing app or extension entitlement dump section header in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE '<\?xml|<plist' "$target"; then
+    echo "FAIL: e41-8 -- no entitlements plist content found in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'FALSIFIER-EXIT: 2 ' "$target"; then
+    echo "FAIL: e41-8 -- entitlement-dump-tool falsifier did not record exit 2 in $target" >&2
+    failed=1
+  fi
+  # T-41-12/T-41-15: the evidence capture must never contain the plaintext password.
+  if grep -q "E418-3rdParty-NoAD!" "$target"; then
+    echo "FAIL: e41-8 -- evidence capture contains the plaintext third-party-domain password" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# =============================================================================
+# gates -- runs BOTH Task 2/Task 3 structural gates together (Task 3, 41-08)
+# =============================================================================
+cmd_gates() {
+  mkdir -p "$EVIDENCE_DIR"
+  local failed=0
+
+  echo "==> gates: audit-ios-autofill-deprecated-apis.sh"
+  if bash "$REPO_ROOT/scripts/audit-ios-autofill-deprecated-apis.sh"; then
+    echo "gates: deprecated-API gate PASS"
+  else
+    echo "gates: deprecated-API gate FAIL" >&2
+    failed=1
+  fi
+
+  echo "==> gates: audit-ios-identity-store-chokepoint.sh"
+  if bash "$REPO_ROOT/scripts/audit-ios-identity-store-chokepoint.sh"; then
+    echo "gates: choke-point gate PASS"
+  else
+    echo "gates: choke-point gate FAIL" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    echo "FAIL: gates -- at least one structural gate failed" >&2
+    exit 1
+  fi
+  echo "PASS: gates -- both structural gates exit 0"
+  exit 0
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
@@ -2732,5 +2955,7 @@ case "${1:-}" in
   lock-build) shift; cmd_lock_build "$@" ;;
   e41-4) shift; cmd_e41_4 "$@" ;;
   e41-7) shift; cmd_e41_7 "$@" ;;
+  e41-8) shift; cmd_e41_8 "$@" ;;
+  gates) shift; cmd_gates "$@" ;;
   *) usage ;;
 esac
