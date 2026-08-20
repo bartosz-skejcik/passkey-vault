@@ -63,34 +63,76 @@ enum SessionLifecycle {
         TimeInterval(AutoLockPolicy.read(defaults: defaults)) * 60
     }
 
+    /// WR-03 (41-REVIEW.md): the three outcomes `checkAndExpireIfNeeded` must distinguish. Before
+    /// this fix, a single `else` branch covered FOUR very different conditions -- genuine idle
+    /// expiry, ceiling expiry, a boot mismatch, AND "the marker could not be read at all" (App
+    /// Group container unresolvable in this particular extension invocation, a `JSONDecoder`
+    /// failure, `sysctlbyname` failing) -- and deleted Secret C in every one of them. Failing
+    /// CLOSED on an unreadable marker (never treating "cannot determine" as "unlocked") is
+    /// correct; DELETING the key artifact on an inconclusive read is not -- a transient container
+    /// resolution failure would permanently destroy a valid session, with no user-visible
+    /// explanation and no repair short of a full host-app unlock.
+    enum LockState: Equatable, CustomStringConvertible {
+        case unlocked
+        case expired
+        case indeterminate
+
+        var description: String {
+            switch self {
+            case .unlocked: return "unlocked"
+            case .expired: return "expired"
+            case .indeterminate: return "indeterminate"
+            }
+        }
+    }
+
     /// The lazy expiry check (ACC-06). MUST run before every key read, in both processes, at
-    /// every entry point. On expiry (idle window exceeded, absolute ceiling exceeded, a
-    /// boot-session mismatch, or no marker at all), EXPLICITLY deletes the key artifact via
-    /// `deleteKeyArtifact` and clears the marker -- ACC-06's own requirement IS deletion, never a
-    /// mere refusal to read. Returns `true` only when the session is genuinely still valid.
+    /// every entry point. On a POSITIVE expiry determination (idle window exceeded, absolute
+    /// ceiling exceeded, or a boot-session mismatch -- a marker that WAS read and evaluated),
+    /// EXPLICITLY deletes the key artifact via `deleteKeyArtifact` and clears the marker --
+    /// ACC-06's own requirement IS deletion, never a mere refusal to read. On an INDETERMINATE
+    /// read (the marker could not be read at all), refuses the read but never destroys a session
+    /// that could not be evaluated (WR-03). Returns `true` only when the session is genuinely
+    /// still valid.
     @discardableResult
     static func checkAndExpireIfNeeded(entryPoint: String, deleteKeyArtifact: () -> Void) -> Bool {
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
         // real elapsed time (fail-open) across a device sleep.
         let now = LockMarker.monotonicNow()
-        let unlocked: Bool
-        if
-            let marker = LockMarker.read(),
-            let currentBootSessionId = LockMarker.currentBootSessionId(),
-            marker.isValid(
-                currentBootSessionId: currentBootSessionId, now: now,
-                idleWindow: configuredIdleWindowSeconds(), absoluteCeiling: absoluteCeilingSeconds
-            )
-        {
-            unlocked = true
+        let state: LockState
+        if let marker = LockMarker.read() {
+            if
+                let currentBootSessionId = LockMarker.currentBootSessionId(),
+                marker.isValid(
+                    currentBootSessionId: currentBootSessionId, now: now,
+                    idleWindow: configuredIdleWindowSeconds(), absoluteCeiling: absoluteCeilingSeconds
+                )
+            {
+                state = .unlocked
+            } else {
+                // A marker WAS read (a real, positive expiry determination is possible) --
+                // `currentBootSessionId()` returning `nil` here (sysctl unreachable) is treated as
+                // "cannot confirm this boot", which `isValid` would have refused anyway; either
+                // way this is a genuine, evaluated refusal, not a missing-input non-verdict.
+                state = .expired
+            }
         } else {
-            unlocked = false
+            // The marker itself could not be read at all -- App Group container unresolvable in
+            // THIS invocation, a decode failure, or simply no marker ever written. This is
+            // "cannot determine", never "expired" -- WR-03's own distinction.
+            state = .indeterminate
+        }
+
+        switch state {
+        case .expired:
             deleteKeyArtifact()
             LockMarker.clear()
+        case .unlocked, .indeterminate:
+            break
         }
-        logger.log("PVLOCK|entry=\(entryPoint, privacy: .public) stage=lazy-check status=\(unlocked ? "unlocked" : "expired", privacy: .public)")
-        return unlocked
+        logger.log("PVLOCK|entry=\(entryPoint, privacy: .public) stage=lazy-check status=\(state.description, privacy: .public)")
+        return state == .unlocked
     }
 
     /// ACC-07's activity refresh -- called after a successful fill in the extension, and after a
