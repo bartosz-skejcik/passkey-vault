@@ -151,9 +151,11 @@ selector is a fallback, not dead code.**
 - Two isolated builds (variant A: only the current, `any ASCredentialRequest`-typed override;
   variant B: only the deprecated, `ASPasswordCredentialIdentity`-typed override) were each driven
   through a real system AutoFill invocation (`scripts/ios-autofill-e41.sh e41-5`,
-  `ios/evidence/41/e41-5-overload.log`). BOTH logged their own `PVFILL|E41-5|variant=<A|B>
-  stage=entry` marker on entry: `variant=A` at `2026-08-20 03:10:21`, `variant=B` at
-  `2026-08-20 03:12:36`.
+  `ios/evidence/41/e41-5-overload.log:2` (variant A's entry line),
+  `ios/evidence/41/e41-5-overload.log:4` (variant B's entry line)). BOTH logged their own
+  `PVFILL|E41-5|variant=<A|B> stage=entry` marker on entry: `variant=A` at `2026-08-20 03:10:21`,
+  `variant=B` at `2026-08-20 03:12:36`. Variant A's shipped marker itself lives at
+  `ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift:53-55`.
 - **Outcome, per `41-RESEARCH.md` §E41-5's own three-outcome taxonomy: "both log ⇒ the system
   falls back; the template is merely stale."** iOS 26.5 invokes whichever
   `provideCredentialWithoutUserInteraction` overload is actually present -- the current one when
