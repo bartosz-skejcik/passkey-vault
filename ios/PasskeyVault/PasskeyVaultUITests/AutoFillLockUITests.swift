@@ -93,9 +93,15 @@ final class AutoFillLockUITests: XCTestCase {
     // MARK: - Task 3 (E41-7)
 
     /// ACC-07 leg: a short idle window (`PV_UITEST_E41_7_IDLE_MINUTES=1`, set by the driving
-    /// script on the seed launch), one real unlock, then TWO extension-only fills spaced across
-    /// more than the original 60s window with NO host-app launch in between -- proving activity
-    /// ALONE keeps the session alive past the instant it would otherwise have expired at. The
+    /// script on the seed launch), one real unlock, then a SEQUENCE of extension-only fills, each
+    /// gap comfortably inside the 60s window on its own but ACCUMULATING to land well past the
+    /// window measured from the ORIGINAL unlock -- with NO host-app launch anywhere in between.
+    /// Found live, this session: a single big jump (one ~65s sleep, then one fill) is fragile --
+    /// that fill's own UI-driving overhead (Safari navigation + the "Fill Password" confirmation
+    /// chain, empirically ~15-20s) pushed the ACTUAL check moment to ~83s after the PRECEDING
+    /// refresh, past even the REFRESHED 60s window, producing a FALSE refusal that says nothing
+    /// about ACC-07. Three smaller, successive hops (each individual gap staying under 60s) reach
+    /// the same "past the original window" destination with much wider margin per hop. The
     /// receiver-side ACC-07 assertion itself (host reads a marker value the extension logged
     /// writing) is verified by the SCRIPT correlating `PasskeyVaultApp`'s own
     /// `PVLOCK|stage=host-launch-read writer=extension` log line (emitted on ITS OWN next
@@ -106,20 +112,17 @@ final class AutoFillLockUITests: XCTestCase {
         seedLockFixtures(idleMinutes: 1)
         performRealHostUnlock(idleMinutes: 1)
 
-        let filled1 = driveLockFormFill()
-        XCTAssertEqual(filled1, Self.expectedPassword, "First extension-only fill should still succeed.")
-
-        // Past the ORIGINAL 60s idle window measured from the unlock above -- only the
-        // extension's own refresh (fired by the fill just above) can be keeping this alive.
-        Thread.sleep(forTimeInterval: 65)
-
-        let filled2 = driveLockFormFill()
-        XCTAssertEqual(
-            filled2, Self.expectedPassword,
-            "Second extension-only fill, past the original 60s idle window, must still succeed -- " +
-                "activity in the extension alone must keep the session alive (ACC-07)."
-        )
-        print("PVUITEST|E41-7-ACC07|fill1-ok=\(filled1 == Self.expectedPassword) fill2-ok=\(filled2 == Self.expectedPassword)")
+        var results: [Bool] = []
+        for hop in 1...3 {
+            let filled = driveLockFormFill()
+            let ok = filled == Self.expectedPassword
+            results.append(ok)
+            XCTAssertTrue(ok, "Extension-only fill #\(hop) should still succeed (got \"\(filled)\").")
+            if hop < 3 {
+                Thread.sleep(forTimeInterval: 25) // comfortably under the 60s window on its own
+            }
+        }
+        print("PVUITEST|E41-7-ACC07|hops-ok=\(results)")
 
         // Re-launch the host app (never unlocking it -- `PasskeyVaultApp.init()`'s own
         // unconditional `PVLOCK|stage=host-launch-read` line fires on EVERY launch, before any
@@ -221,6 +224,20 @@ final class AutoFillLockUITests: XCTestCase {
         // Settle margin for the real biometric ceremony (the driving script's own parallel
         // `pearl.match` poster needs a moment to land) + `handleUnlocked`'s own Keychain writes.
         sleep(5)
+
+        // Plan 41-07, Task 1's OWN "host-foreground" entry point (`ContentView`'s `scenePhase`
+        // handler, only reachable once `.unlocked` -- SwiftUI's `.onChange` fires on a genuine
+        // TRANSITION, never on a route change alone, so this needs an ACTUAL background/foreground
+        // round trip): press Home, settle, reactivate WITHOUT a fresh `.launch()` (which would
+        // reset app state and lose the `.unlocked` route this is trying to exercise), settle
+        // again. Exercised on every real unlock in this file so the entry-point COUNT this task's
+        // own acceptance criterion demands ("one line per entry point... a count is required, not
+        // a spot check") is observable across every live run in this suite, not a one-off.
+        XCUIDevice.shared.press(.home)
+        sleep(1)
+        hostApp.activate()
+        sleep(1)
+
         hostApp.terminate() // "do not open the host app again" (E41-4's own action text)
     }
 
