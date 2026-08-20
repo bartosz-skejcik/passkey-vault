@@ -2426,6 +2426,18 @@ assert_e41_4() {
     failed=1
   fi
 
+  # WR-08 (41-REVIEW.md): `run2_kind` above classifies run 2 by its FIRST matching branch line
+  # only -- a run 2 that refuses on the silent entry point and then FILLS on the interactive
+  # fallback still yields `run2_kind = ...locked` (the first, silent-entry-point line), passes the
+  # inequality test above, and this log-side assertion would report green even though a fill
+  # actually happened somewhere in the expired run. This is the missing NEGATIVE assertion: scan
+  # the WHOLE run-2 section (not just its first matching line) for ANY successful fill, on ANY
+  # entry point.
+  if printf '%s\n' "$run2_section" | grep -qE 'entry=(silent|interactive) stage=fill status=ok'; then
+    echo "FAIL: e41-4 -- the EXPIRED run recorded a successful fill on some entry point" >&2
+    failed=1
+  fi
+
   if grep -qE 'stage=fill status=ok' "$target" && ! printf '%s\n' "$run1_kind" | grep -q 'stage=fill status=ok'; then
     echo "FAIL: e41-4 -- the unexpired run did not take the silent no-ceremony branch DR-41-A(b) predicts" >&2
     failed=1
