@@ -18,10 +18,20 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace
 
-  # WR-06 (41-REVIEW.md): 41-08-SUMMARY.md calls these two scripts "standing gates", but their
-  # only caller was `scripts/ios-autofill-e41.sh gates`, invoked BY HAND -- a gate nobody runs
-  # cannot catch the regression it exists for. Both scripts are pure bash + awk + grep over
-  # sources (no Xcode, no simulator), so they run on ubuntu-latest without any iOS toolchain.
+  # WR-06 (41-REVIEW.md iteration 1): 41-08-SUMMARY.md calls these two scripts "standing gates",
+  # but their only caller was `scripts/ios-autofill-e41.sh gates`, invoked BY HAND -- a gate nobody
+  # runs cannot catch the regression it exists for. Both scripts are pure bash + awk + grep + find
+  # + sed over sources (no `xcrun`, no BSD-only flags, no simulator, no Xcode), so they SHOULD run
+  # on ubuntu-latest without any iOS toolchain.
+  #
+  # CAVEAT (WR-11, 41-REVIEW.md iteration 2): "should run on ubuntu-latest" is, as of this commit,
+  # an UNTESTED claim -- both scripts were only ever executed on macOS during development (this
+  # worktree's own build host). GNU vs BSD `awk`/`grep` differences are unlikely to bite here given
+  # the deliberately portable toolset above, but this job has not yet been OBSERVED green on
+  # `ubuntu-latest`. The first push/PR that runs this workflow proves or disproves it for free --
+  # do not treat this job as verified before that first real run; if it fails on Linux specifically
+  # (not a genuine gate violation), the fix belongs in the two scripts' own awk/grep usage, not in
+  # this workflow file.
   ios-structural-gates:
     runs-on: ubuntu-latest
     steps:
