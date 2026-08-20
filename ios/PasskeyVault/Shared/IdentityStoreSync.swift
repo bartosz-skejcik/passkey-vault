@@ -344,7 +344,15 @@ enum IdentityStoreSync {
         for (sourceIndex, source) in sources.enumerated() {
             guard !source.username.isEmpty, !source.itemId.isEmpty else { continue }
             for url in source.urls {
-                guard let host = serviceHost(fromURLString: url) else { continue }
+                guard let host = serviceHost(fromURLString: url) else {
+                    // WR-09 (41-REVIEW.md): fails CLOSED (skip) rather than registering the raw,
+                    // un-parseable string as a permanent junk `.domain` entry -- see
+                    // `serviceHost(fromURLString:)`'s own header. Logged so a real user's item
+                    // with a genuinely unparseable URL is visible in diagnostics rather than
+                    // silently absent from QuickType with no trace.
+                    logger.log("PVFILL|E41-2|stage=build-identity status=skipped-unparseable-url")
+                    continue
+                }
                 let identity = ASPasswordCredentialIdentity(
                     serviceIdentifier: ASCredentialServiceIdentifier(identifier: host, type: .domain),
                     user: source.username,
