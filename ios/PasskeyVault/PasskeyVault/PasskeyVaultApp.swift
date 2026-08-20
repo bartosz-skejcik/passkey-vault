@@ -50,6 +50,16 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 41, Plan 41-04, Task 2 (E41-2): the receiver-side round trip plus both mandatory
+        // negative controls -- see `IdentityStoreSyncProbe.swift`'s own header for why this
+        // deviates from files_modified (Rule 2, documented in 41-04-SUMMARY.md). Compiled in only
+        // under `PV_PROBE_IDENTITYSTORE` -- inert for every other probe.
+        #if PV_PROBE_IDENTITYSTORE
+        Task {
+            await IdentityStoreSyncProbe.runIfMarked()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

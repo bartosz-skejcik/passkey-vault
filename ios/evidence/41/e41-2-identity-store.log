@@ -1,0 +1,25 @@
+## Run 1 -- positive round trip (write)
+2026-08-20 04:15:09.290189+0200 0x6ec1ca   Default     0x0                  61129  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=positive stage=precheck status=absent
+2026-08-20 04:15:09.315229+0200 0x6ec1ca   Default     0x0                  61129  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=false
+2026-08-20 04:15:09.348648+0200 0x6ec1ca   Default     0x0                  61129  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=full
+2026-08-20 04:15:09.348698+0200 0x6ec1ca   Default     0x0                  61129  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=positive stage=write status=ok
+2026-08-20 04:15:09.350446+0200 0x6ec1ca   Default     0x0                  61129  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=positive stage=api-readback status=empty (expected on this simulator -- L-34; QuickType is the real proof)
+
+## Run 1 -- positive round trip (Safari QuickType observation)
+PVUITEST|E41-2|quicktype-sheet-text=Sign in to “⁦127.0.0.1⁩” with your password for “e412-probe-83f1@pv.test” saved in “PasskeyVault”?
+
+## Run 2 -- first negative control (disabled store)
+2026-08-20 04:16:25.012662+0200 0x6ed2ae   Default     0x0                  61472  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=store-disabled
+2026-08-20 04:16:25.015850+0200 0x6ed2ae   Default     0x0                  61472  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=negative1 stage=write status=store-disabled
+
+## Run 3a -- second negative control, BEFORE the fix (write + Safari observation)
+2026-08-20 04:17:10.897208+0200 0x6edb87   Default     0x0                  61629  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=false
+2026-08-20 04:17:10.911789+0200 0x6edb87   Default     0x0                  61629  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=full
+2026-08-20 04:17:10.911842+0200 0x6edb87   Default     0x0                  61629  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=negative2 stage=bypass-mutate status=ok skippedChokePoint=true newUsername=e412-probe-83f1-MUTATED@pv.test
+PVUITEST|E41-2|quicktype-sheet-text=Sign in to “⁦127.0.0.1⁩” with your password for “e412-probe-83f1@pv.test” saved in “PasskeyVault”?
+
+## Run 3b -- second negative control, AFTER the fix (write + Safari observation)
+2026-08-20 04:17:41.259968+0200 0x6ee487   Default     0x0                  61807  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=true
+2026-08-20 04:17:41.301414+0200 0x6ee487   Default     0x0                  61807  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=incremental
+2026-08-20 04:17:41.301479+0200 0x6ee487   Default     0x0                  61807  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|run=negative2 stage=fix status=ok
+PVUITEST|E41-2|quicktype-sheet-text=Sign in to “⁦127.0.0.1⁩” with your password for “e412-probe-83f1-MUTATED@pv.test” saved in “PasskeyVault”?

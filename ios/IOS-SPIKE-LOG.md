@@ -3483,6 +3483,142 @@ invoking AutoFill has not tested a cold extension launch at all -- the `.appex` 
 warm, with the identity store and any in-memory state from a prior invocation intact. `simctl shutdown`
 + `boot`, with pid verification, is the only definition this phase accepts.
 
+### L-33 -- the identity-store overload trap is real, but NOT where the plan's own text (and 41-03's own header) assumed -- it needs the completion-handler call form, not array element type alone
+
+**Numbering note (same reason as L-12's/L-15's):** 41-04-PLAN.md's own text names this landmine "L-9".
+That ID was already claimed by an unrelated defect from an earlier phase (`ios/IOS-SPIKE-LOG.md:2615`,
+"a check that cannot fail" produced FOUR more instances in a single phase"). It is recorded here as
+**L-33**, the next free ID after L-32, rather than as a duplicate L-9 -- two landmines sharing one number
+breaks every future cross-reference by that number.
+
+**CORRECTION, not just a relabeling.** 41-04-PLAN.md's own text (and 41-03's `IdentityStoreSync.swift`
+header, written before this plan ran) asserted that a literal `[ASPasswordCredentialIdentity]` array
+"silently binds the DEPRECATED selector" of `saveCredentialIdentities`/`removeCredentialIdentities`
+regardless of call form. **This was tested live, this session, and is FALSE for the call form this
+codebase actually uses.** `ASCredentialIdentityStore.h` declares BOTH a current
+(`saveCredentialIdentityEntries:completion:` -> Swift `saveCredentialIdentities(_:completion:)`,
+`[any ASCredentialIdentity]`) and a deprecated (`saveCredentialIdentities:completion:`, ALSO imported as
+`saveCredentialIdentities(_:completion:)`, `[ASPasswordCredentialIdentity]`,
+`__attribute__((swift_attr("@_disfavoredOverload")))`) overload, sharing the identical Swift base name and
+argument labels -- that structural fact is real. But `@_disfavoredOverload` means Swift's overload solver
+EXCLUDES the deprecated candidate whenever ANY other candidate type-checks, including one requiring an
+implicit array-element upcast (`[ASPasswordCredentialIdentity]` -> `[any ASCredentialIdentity]`, which
+Swift performs automatically at a call site). Two throwaway `swiftc -typecheck` probes against this exact
+SDK confirmed it directly:
+
+```swift
+func f1(store: ASCredentialIdentityStore, ids: [ASPasswordCredentialIdentity]) async throws {
+    try await store.saveCredentialIdentities(ids)   // binds the CURRENT overload -- compiles clean
+}
+func f2(store: ASCredentialIdentityStore, ids: [ASPasswordCredentialIdentity]) {
+    store.saveCredentialIdentities(ids, completion: nil)   // binds the DEPRECATED overload -- warns
+}
+```
+
+`f1` -- the `try await` async-sugar form, which is the ONLY form `IdentityStoreSync.swift` (both 41-03's
+original and this plan's generalised version) ever writes -- compiled with ZERO deprecation warning even
+under `-Xfrontend -Werror -Xfrontend DeprecatedDeclaration`, REGARDLESS of the array's static element
+type. A live `xcodebuild` run against the actual project, with one call site in `IdentityStoreSync.swift`
+temporarily retyped to `[ASPasswordCredentialIdentity]` end-to-end (both the function parameter and its
+caller), under the SAME escalation flag, reproduced this: **exit 0, clean build** -- the retyped array
+alone does NOT reproduce the trap. `f2` -- the raw, non-`async` completion-handler form -- DOES bind the
+deprecated selector and DOES fail under escalation, confirmed live in the same probe session.
+
+**The corrected finding:** the trap is real, but its trigger is the CALL FORM (completion-handler vs.
+`async`/`await` sugar), not the array's element type in isolation. Since every real production call site
+in this codebase already uses `try await`, the disfavored-overload mechanism itself protects against an
+accidental deprecated bind via typing alone -- the danger is a FUTURE call site written in the older,
+completion-handler style (easy to reach for when copying an Objective-C-era code sample), which would
+silently bind the deprecated pair with no warning strong enough to catch by inspection.
+
+`replaceCredentialIdentities`'s deprecated sibling has a DIFFERENT ObjC selector
+(`replaceCredentialIdentitiesWithIdentities:completion:` vs. current
+`replaceCredentialIdentityEntries:completion:` -> Swift `replaceCredentialIdentities(_:completion:)`), so
+it was not independently probed -- `IdentityStoreSync.swift` types every array as
+`[any ASCredentialIdentity]` explicitly regardless, uniformly across all three methods, both for
+self-documentation and because the ACTUAL enforcement below does not depend on which method's names
+happen to collide.
+
+**Detection method, the one this phase's own `e41-2-build` subcommand
+(`scripts/ios-autofill-e41.sh`) makes a standing, falsifiable build gate rather than a one-time read:**
+`-Xfrontend -Werror -Xfrontend DeprecatedDeclaration` (Swift 6's diagnostic-group `-Werror`, confirmed
+live against this toolchain -- `swift-frontend -help-hidden` lists `-Werror <diagnostic_group>`, and the
+`f2` probe above confirmed the group name is exactly `DeprecatedDeclaration`, escalating the warning to a
+build error) turns EVERY deprecated-API binding, anywhere in either target -- including a future
+completion-handler-style call this landmine's own correction shows is the REAL risk -- into a build
+failure naming the file and line. Same shape L-1 and L-7 already belong to (an authoritative-looking
+artifact -- here, the plan's OWN prior text, inherited unverified from research -- being wrong about the
+thing that matters), now the fourth member of that family, and itself a live instance of the family's own
+lesson: verify against the actual compiler, not against what a prior plan asserted.
+
+**Consequence:** the escalated-warnings build remains the correct standing defense (it catches the REAL
+trigger, the completion-handler form, which this correction identifies), but the falsification originally
+specified by 41-04-PLAN.md's acceptance criteria ("retype one store call's array as the concrete
+password-identity element type... observe a non-zero exit") does not itself reproduce a failure under
+`try await` and was corrected in 41-04-SUMMARY.md's own deviation record to retype the CALL FORM instead
+(completion-handler, not just the array), which does.
+
+### L-34 -- `credentialIdentities(forService:credentialIdentityTypes:)` returns EMPTY on this simulator/toolchain regardless of a confirmed-durable prior write
+
+**Found 2026-08-20, Phase 41, Plan 41-04, Task 2 (E41-2), writing `AutoFillIdentityStoreUITests`'s
+own receiver-side proof.** This task's own must_haves name this exact API as the primary
+receiver-side proof: "The write is verified on the RECEIVER side:
+`credentialIdentities(forService:credentialIdentityTypes:)` is read back and the returned
+identity's `user` and `recordIdentifier` are compared character-for-character with what was
+written." Live, this session, that read consistently returned an EMPTY array, in every one of the
+following isolated variants:
+
+- Read from the HOST APP process, immediately after `saveCredentialIdentities`/`IdentityStoreSync
+  .republish` reported `.success` with no error.
+- Read from the EXTENSION process (`prepareInterfaceForExtensionConfiguration()`), after the SAME
+  host-side write.
+- `credentialIdentityTypes: .password` and `credentialIdentityTypes: []` (the Swift spelling for
+  "all types" -- `.all` is itself `@available(*, unavailable)` in Swift, `ASCredentialIdentityTypesAll
+  = 0` importing as an empty `OptionSet` rather than a named case; confirmed live via
+  `swiftc -typecheck`, `error: 'all' is unavailable: use [] to construct an empty option set`).
+- `forService: nil` and an EXPLICIT, matching `ASCredentialServiceIdentifier`.
+- A poll window of up to 15 seconds (30 attempts x 500ms), ruling out a simple propagation delay.
+- A MINIMAL reproduction that bypasses `IdentityStoreSync` entirely -- 41-03's own original,
+  proven-working `ASPasswordCredentialIdentity` construction, `[any ASCredentialIdentity]` typing,
+  `try await ...saveCredentialIdentities(identities)` call, inline, with nothing else in between --
+  ruling out anything `IdentityStoreSync`'s own generalisation introduced.
+
+**The write is independently proven durable and correct**, by the EXACT mechanism this task's own
+action text calls for as corroboration -- a REAL system QuickType sheet, driven via Safari on the
+same simulator, screenshotted twice with two different, newly-registered discriminator usernames:
+
+1. First check (not separately saved -- superseded by the second, cleaner one below): "Sign in to
+   '127.0.0.1' with your password for 'tracer41-03@pv.test' saved in 'PasskeyVault'?" -- an
+   identity written by Plan **41-03**, a DIFFERENT session, DAYS earlier, still durably present.
+2. `ios/evidence/41/e41-2-quicktype-fresh-write-proof.png`: the SAME check, immediately after
+   `ASCredentialIdentityStore.shared.removeAllCredentialIdentities()` followed by a fresh write of
+   a NEW discriminator username: "Sign in to '127.0.0.1' with your password for
+   'e412-rawminimal@pv.test' saved in 'PasskeyVault'?" -- proving the NEW write (not a cached
+   remnant of #1) reached the real store the system's own AutoFill daemon consults.
+
+**Conclusion:** this is a SIMULATOR-SPECIFIC limitation of the modern (iOS 17.4+,
+`NS_REFINED_FOR_SWIFT`) read API, not a defect in `IdentityStoreSync`'s write path, and not
+something any code in this phase can work around -- there is no alternative read API in
+`ASCredentialIdentityStore.h` (the ObjC-refined method is the only enumeration surface). The write
+APIs (`saveCredentialIdentities`/`removeCredentialIdentities`/`replaceCredentialIdentities`,
+`removeAllCredentialIdentities`) and the SYSTEM's own internal QuickType matching are unaffected --
+only the app-facing enumeration call is broken on THIS toolchain (iOS 26.5 Simulator, Xcode 26.6).
+Whether this also affects a real device is untested and unknown; `IdentityStoreSync`/
+`IdentityStoreSyncProbe` still attempt the read, logged best-effort (`stage=api-readback`), never
+gating pass/fail on it, so a real device where the API works correctly would simply show
+`status=ok` there without any code change.
+
+**Consequence for this task's own verification:** Task 2's receiver-side proof
+(`AutoFillIdentityStoreUITests`) asserts on Safari's OWN QuickType sheet TEXT (captured via the
+test process's own accessibility-tree read, printed to STDOUT under a `PVUITEST|E41-2|` marker and
+captured in `ios/evidence/41/e41-2-identity-store.log`) rather than the API read this task's own
+must_haves originally specified. The exact-equality claim is therefore scoped to the USERNAME (the
+one field the QuickType sheet exposes in human-readable text) rather than to BOTH `user` AND
+`recordIdentifier` independently -- `recordIdentifier`'s correctness is still exercised internally
+(only one `recordIdentifier` was ever written per test run) but not independently re-verified
+receiver-side, because no receiver-side surface on this harness can see it. Documented as a
+deviation in `41-04-SUMMARY.md`.
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens

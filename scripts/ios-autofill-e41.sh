@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -923,6 +923,274 @@ assert_e41_5() {
   return 0
 }
 
+# =============================================================================
+# e41-2-build -- the deprecation-as-error build gate (Task 1, 41-04)
+# =============================================================================
+#
+# Builds host app + extension with `-Xfrontend -Werror -Xfrontend DeprecatedDeclaration`
+# (Swift 6's diagnostic-group escalation, confirmed live against this toolchain -- L-33,
+# `ios/IOS-SPIKE-LOG.md`) on top of PV_PROBE_FILLTRACER/PV_PROBE_IDENTITYSTORE, so a deprecated
+# `ASCredentialIdentityStore` overload binding anywhere in either target stops the build. Asserts
+# on the CAPTURED FILE, never on a pipeline's exit status (landmine L-3, zsh's own `$pipestatus`
+# discipline this whole harness follows) -- the transcript's own recorded exit line is what
+# `assert_e41_2_build` checks.
+E41_2_BUILD_LOG="$EVIDENCE_DIR/e41-2-build.log"
+DEPRECATION_ESCALATION_FLAGS="-Xfrontend -Werror -Xfrontend DeprecatedDeclaration"
+
+assert_e41_2_build() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-2-build"; then
+    return 1
+  fi
+  local failed=0
+  if ! grep -q "BUILD-SUCCEEDED: PasskeyVault (host app target)" "$target"; then
+    echo "FAIL: e41-2-build -- no host-app build-succeeded marker in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "BUILD-SUCCEEDED: PasskeyVaultAutoFill (extension target)" "$target"; then
+    echo "FAIL: e41-2-build -- no extension build-succeeded marker in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "XCODEBUILD_EXIT_STATUS: 0" "$target"; then
+    echo "FAIL: e41-2-build -- transcript does not record a zero xcodebuild exit status" >&2
+    failed=1
+  fi
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+cmd_e41_2_build() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_2_build "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-2-build: pinned simulator UDID: $udid"
+
+  echo "==> e41-2-build: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  local build_log
+  build_log=$(mktemp)
+  run_e41_2_build_once() {
+    xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+      -scheme PasskeyVault -configuration Debug \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$DD_PATH" \
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER PV_PROBE_IDENTITYSTORE" \
+      OTHER_SWIFT_FLAGS="\$(inherited) $DEPRECATION_ESCALATION_FLAGS" \
+      build > "$build_log" 2>&1
+  }
+  local build_status=0
+  run_e41_2_build_once || build_status=$?
+  if [ "$build_status" -ne 0 ] && grep -qE 'uniffiEnsurePvFfiInitialized|cannot find .* in scope' "$build_log"; then
+    echo "==> HIT landmine L-10 (cold DerivedData mismatch) -- retrying once" >&2
+    build_status=0
+    run_e41_2_build_once || build_status=$?
+  fi
+
+  cp "$build_log" "$E41_2_BUILD_LOG"
+  rm -f "$build_log"
+
+  {
+    echo ""
+    echo "XCODEBUILD_EXIT_STATUS: $build_status"
+    if [ "$build_status" -eq 0 ] && [ -d "$PV_APP_PRODUCT" ]; then
+      echo "BUILD-SUCCEEDED: PasskeyVault (host app target)"
+    fi
+    if [ "$build_status" -eq 0 ] && [ -d "$PV_APPEX_PRODUCT" ]; then
+      echo "BUILD-SUCCEEDED: PasskeyVaultAutoFill (extension target)"
+    fi
+  } >> "$E41_2_BUILD_LOG"
+
+  if assert_e41_2_build "$E41_2_BUILD_LOG"; then
+    echo "PASS: e41-2-build -- see $E41_2_BUILD_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-2-build -- see $E41_2_BUILD_LOG" >&2
+    exit 1
+  fi
+}
+
+# =============================================================================
+# e41-2 -- receiver-side round trip + both negative controls (Task 2, 41-04)
+# =============================================================================
+#
+# landmine L-34 (`ios/IOS-SPIKE-LOG.md`): `credentialIdentities(forService:credentialIdentityTypes:)`
+# was found live, this session, to return empty on this simulator/toolchain regardless of a
+# confirmed-durable write. The receiver-side proof this subcommand actually gates on is therefore
+# Safari's OWN QuickType sheet text, captured by `AutoFillIdentityStoreUITests` (a DIFFERENT
+# process from the one that writes) -- never the `os_log`-side API readback line, which
+# `IdentityStoreSyncProbe` still emits best-effort but which this assertion does not require.
+E41_2_LOG="$EVIDENCE_DIR/e41-2-identity-store.log"
+
+assert_e41_2() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-2"; then
+    return 1
+  fi
+  local failed=0
+  if ! grep -qE 'PVUITEST\|E41-2\|quicktype-sheet-text=.*e412-probe-83f1@pv\.test' "$target"; then
+    echo "FAIL: e41-2 -- positive run's QuickType sheet did not name the discriminator username in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'PVFILL\|E41-2\|run=negative1 stage=write status=store-disabled' "$target"; then
+    echo "FAIL: e41-2 -- negative control 1 (disabled store) did not report store-disabled in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'PVFILL\|E41-2\|run=negative2 stage=bypass-mutate status=ok' "$target"; then
+    echo "FAIL: e41-2 -- negative control 2's bypass-mutate event missing in $target" >&2
+    failed=1
+  fi
+  if ! sed -n '/## Run 3a/,/## Run 3b/p' "$target" | grep -qE 'PVUITEST\|E41-2\|quicktype-sheet-text=.*e412-probe-83f1@pv\.test'; then
+    echo "FAIL: e41-2 -- negative control 2's BEFORE-fix QuickType observation (stale, original username) missing in $target" >&2
+    failed=1
+  fi
+  if ! sed -n '/## Run 3b/,$p' "$target" | grep -qE 'PVUITEST\|E41-2\|quicktype-sheet-text=.*e412-probe-83f1-MUTATED@pv\.test'; then
+    echo "FAIL: e41-2 -- negative control 2's AFTER-fix QuickType observation (corrected username) missing in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'PVFILL\|E41-2\|stage=state supportsIncrementalUpdates=' "$target"; then
+    echo "FAIL: e41-2 -- no runtime supportsIncrementalUpdates value logged in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE 'PVFILL\|E41-2\|run=positive stage=precheck status=absent' "$target"; then
+    echo "FAIL: e41-2 -- positive run's discriminator-absent precheck missing in $target" >&2
+    failed=1
+  fi
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+E41_2_APP_PRODUCT="$PV_APP_PRODUCT"
+
+# Writes via a fast, non-XCUITest `simctl launch` (the write itself needs no UI) -- terminates the
+# host afterward so the identity-store daemon's own persisted state (never a live host process) is
+# what the LATER Safari check sees, matching how QuickType consults the store for a real user.
+run_e41_2_write_stage() {
+  local udid="$1" group_dir="$2" marker_file="$3" wait_seconds="$4"
+  touch "$group_dir/$marker_file"
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  xcrun simctl launch "$udid" cloud.blonie.PasskeyVault > /dev/null 2>&1 || true
+  sleep "$wait_seconds"
+  xcrun simctl terminate "$udid" cloud.blonie.PasskeyVault > /dev/null 2>&1 || true
+  rm -f "$group_dir/$marker_file"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep 'PVFILL|E41-2|' >> "$E41_2_LOG" || true
+}
+
+run_e41_2_test_method() {
+  local udid="$1" method="$2" out_log="$3"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"PasskeyVaultUITests/AutoFillIdentityStoreUITests/$method" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_IDENTITYSTORE" \
+    test > "$out_log" 2>&1
+}
+
+cmd_e41_2() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_2 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-2: pinned simulator UDID: $udid"
+
+  echo "==> e41-2: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-2: building app+extension (PV_PROBE_IDENTITYSTORE)"
+  build_with_l10_retry "$udid" "PV_PROBE_IDENTITYSTORE" /tmp/pv-e41-2-build.log
+  xcrun simctl install "$udid" "$E41_2_APP_PRODUCT"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found for $udid" >&2
+    exit 1
+  fi
+  rm -f "$group_dir"/e41-2-run-*.marker 2>/dev/null || true
+
+  : > "$E41_2_LOG"
+
+  # --- Run 1: positive round trip -----------------------------------------
+  echo "## Run 1 -- positive round trip (write)" >> "$E41_2_LOG"
+  run_e41_2_write_stage "$udid" "$group_dir" "e41-2-run-positive.marker" 3
+  echo "" >> "$E41_2_LOG"
+  echo "## Run 1 -- positive round trip (Safari QuickType observation)" >> "$E41_2_LOG"
+  local run1_log
+  run1_log=$(mktemp)
+  run_e41_2_test_method "$udid" "testPositiveRoundTripSuggestion" "$run1_log" || true
+  grep 'PVUITEST|E41-2|' "$run1_log" >> "$E41_2_LOG" || true
+  rm -f "$run1_log"
+
+  # --- Run 2: first negative control (disabled store) ---------------------
+  echo "" >> "$E41_2_LOG"
+  echo "## Run 2 -- first negative control (disabled store)" >> "$E41_2_LOG"
+  ensure_provider_enabled "$udid"
+  local run2_toggle_off_log run2_toggle_on_log
+  run2_toggle_off_log=$(mktemp)
+  run_e41_2_test_method "$udid" "testToggleProviderOff" "$run2_toggle_off_log" || true
+  rm -f "$run2_toggle_off_log"
+  run_e41_2_write_stage "$udid" "$group_dir" "e41-2-run-negative1.marker" 2
+  run2_toggle_on_log=$(mktemp)
+  run_e41_2_test_method "$udid" "testToggleProviderOn" "$run2_toggle_on_log" || true
+  rm -f "$run2_toggle_on_log"
+
+  # --- Run 3: second negative control (stale-without-choke-point + fix) ---
+  echo "" >> "$E41_2_LOG"
+  echo "## Run 3a -- second negative control, BEFORE the fix (write + Safari observation)" >> "$E41_2_LOG"
+  run_e41_2_write_stage "$udid" "$group_dir" "e41-2-run-negative2-mutate.marker" 3
+  local run3a_log
+  run3a_log=$(mktemp)
+  run_e41_2_test_method "$udid" "testNegativeControlBeforeFix" "$run3a_log" || true
+  grep 'PVUITEST|E41-2|' "$run3a_log" >> "$E41_2_LOG" || true
+  rm -f "$run3a_log"
+
+  echo "" >> "$E41_2_LOG"
+  echo "## Run 3b -- second negative control, AFTER the fix (write + Safari observation)" >> "$E41_2_LOG"
+  run_e41_2_write_stage "$udid" "$group_dir" "e41-2-run-negative2-fix.marker" 3
+  local run3b_log
+  run3b_log=$(mktemp)
+  run_e41_2_test_method "$udid" "testNegativeControlAfterFix" "$run3b_log" || true
+  grep 'PVUITEST|E41-2|' "$run3b_log" >> "$E41_2_LOG" || true
+  rm -f "$run3b_log"
+
+  if assert_e41_2 "$E41_2_LOG"; then
+    echo "PASS: e41-2 -- see $E41_2_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-2 -- see $E41_2_LOG" >&2
+    exit 1
+  fi
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
@@ -948,5 +1216,7 @@ case "${1:-}" in
     fi
     cmd_e41_5
     ;;
+  e41-2-build) shift; cmd_e41_2_build "$@" ;;
+  e41-2) shift; cmd_e41_2 "$@" ;;
   *) usage ;;
 esac
