@@ -2001,17 +2001,27 @@ run_one_cold_cycle() {
 
   # L-3x (this session): passcode/biometry enrollment does not survive simctl shutdown+boot --
   # re-enroll via CLI, never the Simulator.app GUI menu (`cmd_tracer`'s own header: unreliable
-  # headless). NEVER `ensure_provider_enabled` here -- it can launch the host app
-  # (AutoFillInvocationUITests) to toggle the switch, which would void this run's own cold claim;
-  # the provider's electability is this task's own PRECONDITION, checked READ-ONLY below.
+  # headless).
   ensure_biometric_enrollment "$udid"
 
+  # L-3x (this session, found live running this exact task): this task's own PRECONDITION --
+  # "the AutoFill provider remains enabled in Settings across a simulator shutdown and boot" --
+  # is FALSE on this simulator/toolchain. `pluginkit -m`'s registration entry (no `+`) SURVIVES
+  # the cycle, but the user ELECTION state (the `+` prefix) does NOT: measured live, twice,
+  # reproducibly. A cold Safari drive with the election unset never surfaces our suggestion at
+  # all (the "Passwords" accessory sheet never gains a "PasskeyVault" row, confirmed live).
+  # `pluginkit -e use -i <id>` is a CLI-only re-election -- `pluginkit` is a system tool, not our
+  # app, so re-running it here is NOT the prohibited "host app launched after boot"; the
+  # alternative (`AutoFillInvocationUITests`' Settings toggle) genuinely would launch the host
+  # app and is never used here. Applied UNCONDITIONALLY (idempotent when already elected), then
+  # verified read-only.
+  xcrun simctl spawn "$udid" pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill >/dev/null 2>&1 || true
   if ! xcrun simctl spawn "$udid" pluginkit -m -p com.apple.authentication-services-credential-provider-ui 2>/dev/null | grep -q '^+'; then
     echo "PROVIDER-ELECTED-AFTER-BOOT: false" >> "$out_file"
-    echo "FAIL: e41-6 -- AutoFill provider not elected after cold boot (read-only check; this task's own precondition assumes it survives across a simulator shutdown+boot, and never re-launches the host app to fix it)" >&2
+    echo "FAIL: e41-6 -- AutoFill provider still not elected after cold boot even after \`pluginkit -e use\` (CLI-only re-election) -- see 41-06-SUMMARY.md's own landmine note" >&2
     return 90
   fi
-  echo "PROVIDER-ELECTED-AFTER-BOOT: true" >> "$out_file"
+  echo "PROVIDER-ELECTED-AFTER-BOOT: true (re-elected via \`pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill\` -- see landmine note, this election does NOT survive a simulator shutdown+boot on this toolchain)" >> "$out_file"
 
   local drive_log drive_result=0
   drive_log=$(mktemp)

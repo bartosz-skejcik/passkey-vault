@@ -1,0 +1,56 @@
+## Pre-shutdown seed (baseline)
+SEED-STATUS: ok
+PRE-SHUTDOWN-PLAINTEXT-DIGEST: daed03629542681fcf96f99899022601562aa0a32808b747d4f2bcc3db5be43b
+
+## Server-unreachable proof (baseline -- server DOWN, expected)
+SERVER-UNREACHABLE-CHECK: command=`curl -sS -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8620/healthz` http_status=000 exit_code=7
+SERVER-UNREACHABLE-CHECK-RESULT: PASS (curl failed as expected, exit=7)
+
+## Cold fill drive (baseline -- host app NEVER launched from this point on)
+SHUTDOWN-TIMESTAMP: 2026-08-20 07:24:48
+BOOT-TIMESTAMP: 2026-08-20 07:24:59
+PROVIDER-ELECTED-AFTER-BOOT: true (re-elected via `pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill` -- see landmine note, this election does NOT survive a simulator shutdown+boot on this toolchain)
+COLD-DRIVE-XCODEBUILD-EXIT: 0
+PVUITEST|E41-6|status=ok identity-survived=true field-value-equal=true filled-length=18
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-20 07:25:48.278669+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=lock-check status=unlocked
+2026-08-20 07:25:48.284476+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=diagnose-target identifier=127.0.0.1 type=ASCredentialServiceIdentifierType(rawValue: 0)
+2026-08-20 07:25:48.288955+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=cache-lookup status=ok
+2026-08-20 07:25:48.298816+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-read status=ok len=32
+2026-08-20 07:25:48.300179+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=sessionkey status=ok
+2026-08-20 07:25:48.300983+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=decrypt status=ok
+2026-08-20 07:25:48.301985+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=matcher status=accepted
+2026-08-20 07:25:48.302022+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=fill status=ok
+2026-08-20 07:25:48.522671+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=true
+2026-08-20 07:25:48.534401+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=incremental
+2026-08-20 07:25:48.534424+0200 0x76aaa3   Default     0x0                  31564  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=self-heal status=ok record=tracer-item-41-03
+EXTENSION-PID-AFTER-BOOT: 31564
+BASELINE-COLD-CYCLE-RESULT: 0
+
+## Falsification 1 -- cached record deleted before the SAME cold sequence (expect nothing to fill)
+CACHE-RECORD-DELETED: tracer-item-41-03
+
+## Cold fill drive (Falsification 1 -- cache record deleted)
+SHUTDOWN-TIMESTAMP: 2026-08-20 07:26:00
+BOOT-TIMESTAMP: 2026-08-20 07:26:14
+PROVIDER-ELECTED-AFTER-BOOT: true (re-elected via `pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill` -- see landmine note, this election does NOT survive a simulator shutdown+boot on this toolchain)
+COLD-DRIVE-XCODEBUILD-EXIT: 65
+PVUITEST|E41-6|status=ok identity-survived=true field-value-equal=false filled-length=6
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-20 07:26:57.435955+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=lock-check status=unlocked
+2026-08-20 07:26:57.440640+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=diagnose-target identifier=127.0.0.1 type=ASCredentialServiceIdentifierType(rawValue: 0)
+2026-08-20 07:26:57.443485+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=cache-lookup status=fail error=no cache item for recordIdentifier tracer-item-41-03
+2026-08-20 07:26:57.474943+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=interactive stage=lock-check status=unlocked
+2026-08-20 07:26:57.474965+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=interactive stage=diagnose-target identifier=127.0.0.1 type=ASCredentialServiceIdentifierType(rawValue: 0)
+2026-08-20 07:26:57.475473+0200 0x76c4d4   Default     0x0                  32344  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=interactive stage=cache-lookup status=fail error=no cache item for recordIdentifier tracer-item-41-03
+EXTENSION-PID-AFTER-BOOT: 32344
+FALSIFICATION-1 PASS: the fill correctly FAILED with the cached record deleted (drive exit 65)
+
+## Falsification 2 -- server genuinely UP (expect the unreachability check to report FAIL)
+SERVER-UNREACHABLE-CHECK: command=`curl -sS -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8620/healthz` http_status=200 exit_code=0
+SERVER-UNREACHABLE-CHECK-RESULT: FAIL (curl succeeded -- server is reachable)
+SERVER-UP-FALSIFICATION: PASS (with the server genuinely UP, the unreachability check correctly reported FAIL)
+SERVER-UNREACHABLE-CHECK: command=`curl -sS -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:8620/healthz` http_status=000 exit_code=7
+SERVER-UNREACHABLE-CHECK-RESULT: PASS (curl failed as expected, exit=7)
