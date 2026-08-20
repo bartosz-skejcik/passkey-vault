@@ -84,6 +84,27 @@ enum SessionLifecycle {
             case .indeterminate: return "indeterminate"
             }
         }
+
+        /// REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): the UI ROUTING contract.
+        /// Before this fix, `checkAndExpireIfNeeded` collapsed this whole enum to a `Bool` at its
+        /// own return statement (`state == .unlocked`), so EVERY caller -- including
+        /// `ContentView.swift`'s `.onChange(of: scenePhase)` handler -- saw `.expired` and
+        /// `.indeterminate` as the identical `false`, and routed BOTH to `performLock()`. That is
+        /// exactly the mistake WR-03 (41-REVIEW.md) already named and fixed for the Keychain
+        /// DELETE decision ("failing CLOSED on an unreadable marker ... is correct; DELETING the
+        /// key artifact on an inconclusive read is not") -- this property applies the SAME
+        /// reasoning to the SEPARATE question of what the visible UI does. Only a genuine,
+        /// EVALUATED `.expired` verdict may drive a relock; `.indeterminate` ("cannot determine
+        /// -- the marker could not be read at all") must never be treated as a reason to lock an
+        /// already-unlocked app, on pain of exactly the infinite Face ID loop this record
+        /// investigates (a wrong relock remounts `LockView`, which auto-prompts again, which
+        /// unlocks again, which -- with the SAME unreadable marker -- wrongly relocks again).
+        /// `.unlocked` obviously never locks either. A single, named, directly-testable boolean
+        /// rather than each call site re-deriving `== .expired` and risking a silent drift back
+        /// to "treat any non-`.unlocked` verdict as lock-worthy".
+        var mustRelock: Bool {
+            self == .expired
+        }
     }
 
     /// The lazy expiry check (ACC-06). MUST run before every key read, in both processes, at
@@ -92,8 +113,18 @@ enum SessionLifecycle {
     /// EXPLICITLY deletes the key artifact via `deleteKeyArtifact` and clears the marker --
     /// ACC-06's own requirement IS deletion, never a mere refusal to read. On an INDETERMINATE
     /// read (the marker could not be read at all), refuses the read but never destroys a session
-    /// that could not be evaluated (WR-03). Returns `true` only when the session is genuinely
-    /// still valid.
+    /// that could not be evaluated (WR-03).
+    ///
+    /// REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): returns the full `LockState`
+    /// tri-state directly -- this function used to collapse it to `Bool` (`state == .unlocked`)
+    /// at this exact return statement, which is what let `ContentView`'s ROUTING decision treat
+    /// `.indeterminate` (an App-Group-unresolvable device, observed live) identically to a
+    /// genuine `.expired`, producing an infinite Face-ID relock loop. Callers that only ever
+    /// cared about "is the key readable right now" (the AutoFill extension's own read-gating
+    /// call sites, `CredentialProviderViewController.swift`) compare the result against
+    /// `.unlocked` explicitly -- their behaviour is UNCHANGED (an unreadable-vs-expired
+    /// distinction was never meaningful for "may I read the key this instant", only for "should
+    /// I destroy the user's visible session state", which is `ContentView`'s own question).
     /// WR-12 (41-REVIEW.md): `defaults` is injectable, the SAME discipline
     /// `configuredIdleWindowSeconds(defaults:)` already established -- production call sites never
     /// pass an override (resolving to the real App Group container exactly as before); tests inject
@@ -102,7 +133,7 @@ enum SessionLifecycle {
     @discardableResult
     static func checkAndExpireIfNeeded(
         entryPoint: String, deleteKeyArtifact: () -> Bool, defaults: UserDefaults? = nil
-    ) -> Bool {
+    ) -> LockState {
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
         // real elapsed time (fail-open) across a device sleep.
@@ -155,8 +186,10 @@ enum SessionLifecycle {
             }
             LockMarker.clear(defaults: defaults)
         case .indeterminate:
-            // WR-02: the marker could not be read at all -- refuse the session (already the
-            // default via `state == .unlocked` below), but do NOT treat this as "nothing to do"
+            // WR-02: the marker could not be read at all -- refuse the session (this function's
+            // own return below reports `.indeterminate` verbatim, never collapsed to a Bool
+            // `false` that would look identical to `.expired` -- REQUIRED FIX #1), but do NOT
+            // treat this as "nothing to do"
             // when there is independent evidence an artifact may still be owed a deletion: either
             // a PRIOR `.expired` delete that failed (`isDeleteOwed`), or a pre-`.v2` marker still
             // sitting in the container (`legacyMarkerKeyHasData` -- the mid-upgrade scenario
@@ -175,7 +208,10 @@ enum SessionLifecycle {
             break
         }
         logger.log("PVLOCK|entry=\(entryPoint, privacy: .public) stage=lazy-check status=\(state.description, privacy: .public)")
-        return state == .unlocked
+        // REQUIRED FIX #1: returns `state` itself, never `state == .unlocked` -- see this
+        // function's own doc comment and `LockState.mustRelock`'s own header for why collapsing
+        // this to a `Bool` here was the routing half of the infinite Face-ID-loop defect.
+        return state
     }
 
     /// ACC-07's activity refresh -- called after a successful fill in the extension, and after a

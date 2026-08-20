@@ -463,6 +463,16 @@ struct LockView: View {
 
         guard currentAvailability.isAvailable, !didAutoPromptBiometrics else { return }
         didAutoPromptBiometrics = true
+        // REQUIRED FIX #2 (`.planning/debug/faceid-unlock-loop.md`): `didAutoPromptBiometrics`
+        // immediately above is a per-VIEW `@State` -- it resets to `false` every time
+        // `ContentView` mounts a FRESH `LockView` (every `performLock()` cycle produces one), so
+        // on its own it cannot stop a WRONG relock from re-triggering an auto-prompt, forever.
+        // `BiometricAutoPromptGuard` is process-lifetime `static` state, independent of THIS
+        // view's own identity -- see its own header for the full mechanism and the 3s window's
+        // justification. Gates ONLY this automatic path; the manual "Unlock with Face ID" button
+        // (`biometricPrimaryButton`'s own action) calls `attemptBiometricUnlock` directly and is
+        // never affected by this guard.
+        guard BiometricAutoPromptGuard.shouldAutoPrompt() else { return }
         // Phase 42-era correction (root-caused live,
         // `.planning/debug/ios-cold-launch-blank-offline.md`, REQUIRED FIX #4): `onAppear` fires
         // once this view is added to the hierarchy, but BEFORE UIKit has necessarily committed the

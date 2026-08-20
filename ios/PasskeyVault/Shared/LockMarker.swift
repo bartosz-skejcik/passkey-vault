@@ -42,6 +42,7 @@
 //
 
 import Foundation
+import os
 
 public struct LockMarker: Codable, Equatable {
     /// `kern.bootsessionuuid` at WRITE time -- a UUID that changes every boot. A mismatch against
@@ -117,15 +118,71 @@ public struct LockMarker: Codable, Equatable {
     /// refusal") degrading to "one best-effort attempt, then never again".
     private static let deleteOwedKey = "cloud.blonie.PasskeyVault.lockMarker.deleteOwed"
 
+    private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
+    /// TEST-ONLY (REQUIRED FIX #3, `.planning/debug/faceid-unlock-loop.md`): forces
+    /// `resolveDefaults`'s own shared-container resolution to behave as if
+    /// `UserDefaults(suiteName:)` returned `nil` -- the real symptom observed live on Bartek's
+    /// device (`application-groups` capability absent from the issued provisioning profiles) --
+    /// so `LockMarkerTests` can exercise the FALLBACK path below deterministically without an
+    /// actually-unentitled build. `false` (the default) means "behave normally". Only takes
+    /// effect when NO explicit `override` is supplied (mirrors a real production call site, which
+    /// never passes one -- WR-12's own discipline). Never reachable outside DEBUG builds;
+    /// production code never sets this.
+    #if DEBUG
+    static var forceSharedContainerUnresolvableForTesting = false
+    #endif
+
     /// WR-12 (41-REVIEW.md): resolves the CALLER-supplied `UserDefaults` override if present,
     /// otherwise the real App Group container -- the SAME injectable-suite discipline
     /// `SessionLifecycle.configuredIdleWindowSeconds(defaults:)` already established, extended
     /// here to the marker read/write/clear surface so `SessionLifecycle`'s own tests can exercise
     /// the real production code paths (`checkAndExpireIfNeeded`/`refreshActivity`/`lock`) without
     /// touching the real device's App Group container. Production call sites never pass an
-    /// override, so this resolves to the real container exactly as before this fix.
+    /// override, so this resolves to the real container exactly as before this fix -- UNLESS the
+    /// App Group container itself cannot be resolved (see the fallback below, REQUIRED FIX #3).
     private static func resolveDefaults(_ override: UserDefaults?) -> UserDefaults? {
-        override ?? UserDefaults(suiteName: suiteName)
+        if let override { return override }
+        #if DEBUG
+        if forceSharedContainerUnresolvableForTesting {
+            return fallbackToStandardDefaults(forced: true)
+        }
+        #endif
+        if let shared = UserDefaults(suiteName: suiteName) {
+            return shared
+        }
+        return fallbackToStandardDefaults(forced: false)
+    }
+
+    /// REQUIRED FIX #3 (`.planning/debug/faceid-unlock-loop.md`): before this fix, an
+    /// unresolvable App Group container made `resolveDefaults` return `nil`, which made every
+    /// `LockMarker.read()` return `nil` FOREVER on that device (App Group unresolvable is a
+    /// per-process configuration fact, not a transient blip) -- `.indeterminate`, never
+    /// `.unlocked`, on every single `checkAndExpireIfNeeded` call, including the host app
+    /// foregrounding ITSELF with no extension, no second process, nothing cross-process to
+    /// protect at all. `.standard` is per-process, matching `AutoLockPolicy.sharedDefaults`'s own
+    /// already-established fallback (`AutoLockPolicy.swift`'s own header: "Falls back to
+    /// `.standard` only if the App Group container cannot be resolved at all ... never crashes,
+    /// degrades to the OLD per-process behaviour rather than losing the read/write entirely") --
+    /// this extends the SAME precedent to `LockMarker`, which previously had none at all.
+    ///
+    /// Correct for a marker that will only ever be read back by the SAME process that wrote it
+    /// (the ordinary case this fallback exists for: a host app running with no usable App Group,
+    /// tracking its OWN single-process session) -- but it is NOT the App Group container, so a
+    /// marker written here by the host is INVISIBLE to the AutoFill extension and vice versa:
+    /// ACC-06/ACC-07's cross-process guarantees (this file's own header) do NOT hold under this
+    /// fallback. That is an accepted, EXPLICITLY LOGGED degradation, not a silent one -- and it
+    /// does not make AutoFill any MORE broken than it already is in this configuration: the
+    /// extension's own Secret C storage (`SessionKeyStore`/`SessionKeyReader`) depends on a
+    /// SEPARATE `keychain-access-groups` entitlement, not `application-groups`, so an AutoFill
+    /// extension that could otherwise read Secret C still cannot see a marker written under this
+    /// fallback -- AutoFill is unusable in this configuration regardless of this fallback's own
+    /// behaviour (see `ios/IOS-SPIKE-LOG.md` §3b's 2026-08-20 amendment for the full account).
+    private static func fallbackToStandardDefaults(forced: Bool) -> UserDefaults {
+        logger.log(
+            "PVLOCK|stage=app-group-unresolvable fallback=standard-defaults forced=\(forced, privacy: .public)"
+        )
+        return .standard
     }
 
     /// Reads the marker, or `nil` if none has ever been written, the App Group container could

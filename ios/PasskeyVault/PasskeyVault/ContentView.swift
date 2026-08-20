@@ -410,10 +410,30 @@ struct ContentView: View {
                 // signal for the host's ACC-07 refresh too -- both calls share this one
                 // transition rather than being wired into every individual `VaultStore` mutation
                 // (documented choice, 41-07-SUMMARY.md).
-                if SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "host-foreground", deleteKeyArtifact: SessionKeyStore.delete) {
+                // REQUIRED FIX #1 (root-caused live, `.planning/debug/faceid-unlock-loop.md`): this
+                // used to be `if checkAndExpireIfNeeded(...) { refreshActivity } else { performLock() }`
+                // -- `checkAndExpireIfNeeded` collapsed its own tri-state `LockState` to a `Bool` at
+                // its return statement, so `.indeterminate` (the marker could not be read AT ALL --
+                // App Group container unresolvable, observed live on a device whose provisioning
+                // profile is missing the `application-groups` capability) and a genuine `.expired`
+                // both hit this `else` and called `performLock()` identically. That single wrong
+                // relock is what produced the infinite Face-ID loop (LockView.swift's own
+                // `didAutoPromptBiometrics` doc comment traces the rest of the mechanism): a fresh
+                // `LockView` auto-prompts, the user authenticates, unlocks, this SAME handler fires
+                // again on the very next foreground transition, the SAME unreadable marker reads
+                // `.indeterminate` again, and the cycle repeats forever. `LockState.mustRelock`
+                // applies WR-03's own already-accepted reasoning (the Keychain delete must never
+                // fire on an inconclusive read) to this SEPARATE question -- what the visible UI
+                // does -- so only a genuine, evaluated `.expired` verdict may lock an already-open
+                // vault; `.indeterminate` does nothing here, on purpose, and the NEXT foreground
+                // transition gets another chance to read a (hopefully by then resolvable) marker.
+                switch SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "host-foreground", deleteKeyArtifact: SessionKeyStore.delete) {
+                case .unlocked:
                     SessionLifecycle.refreshActivity(writer: "host")
-                } else {
+                case .expired:
                     performLock()
+                case .indeterminate:
+                    break
                 }
                 syncCoordinator?.handleScenePhaseBecameActive()
             }

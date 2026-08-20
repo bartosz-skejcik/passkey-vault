@@ -17,6 +17,22 @@ struct PasskeyVaultApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        #if DEBUG
+        // Reproduction hook (`.planning/debug/faceid-unlock-loop.md`): forces `LockMarker`'s own
+        // shared-container resolution to behave exactly as it does on Bartek's real device -- the
+        // `application-groups` capability absent from the issued provisioning profile, so
+        // `UserDefaults(suiteName:)` never resolves and `LockMarker.read()` returns `nil` on
+        // EVERY call. MUST run before the very first `LockMarker.read()` two lines below, so even
+        // the launch-time diagnostic log itself observes the forced-unresolvable path -- the
+        // whole point is a repeatable, scriptable simulator reproduction of a symptom that
+        // otherwise only reproduces on unentitled real hardware. Same `PV_UITEST_*` hook
+        // convention as every other DEBUG-only test toggle in this file; a no-op unless a driving
+        // script sets it.
+        if ProcessInfo.processInfo.environment["PV_UITEST_FORCE_APP_GROUP_UNRESOLVABLE"] != nil {
+            LockMarker.forceSharedContainerUnresolvableForTesting = true
+        }
+        #endif
+
         // Phase 41, Plan 41-07, Task 3 (E41-7's ACC-07 leg): PRODUCTION diagnostic, unconditional
         // and cheap (one UserDefaults read, no Keychain, no side effect) -- logs whichever
         // process most recently wrote the lock marker, on EVERY host-app launch. This is the

@@ -157,11 +157,11 @@ struct LockMarkerTests {
             ),
             defaults: defaults
         )
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "wr09-test", deleteKeyArtifact: { true }, defaults: defaults
         )
         #expect(
-            !unlocked,
+            state == .expired,
             "120s elapsed against a 1-minute injected idle window must read as expired -- if this silently fell back to the REAL container's own configured window (WR-09's own bug), this could spuriously read as still-unlocked"
         )
     }
@@ -250,10 +250,10 @@ struct LockMarkerTests {
             ),
             defaults: defaults
         )
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { deletes += 1; return true }, defaults: defaults
         )
-        #expect(!unlocked)
+        #expect(state == .expired)
         #expect(deletes == 1)
     }
 
@@ -271,10 +271,10 @@ struct LockMarkerTests {
         )
         #expect(!LockMarker.isDeleteOwed(defaults: defaults))
 
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { false }, defaults: defaults
         )
-        #expect(!unlocked)
+        #expect(state == .expired)
         #expect(
             LockMarker.isDeleteOwed(defaults: defaults),
             "a delete closure that FAILS must leave an owed-deletion obligation, not silently drop it -- WR-02"
@@ -289,10 +289,10 @@ struct LockMarkerTests {
         LockMarker.markDeleteOwed(true, defaults: defaults)
         var deleteAttempts = 0
 
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
         )
-        #expect(!unlocked, "an indeterminate read must still refuse the session")
+        #expect(state == .indeterminate, "an indeterminate read must still refuse the session, and must be reported AS indeterminate, never collapsed to the same signal as a genuine expiry -- REQUIRED FIX #1")
         #expect(deleteAttempts == 1, "an owed deletion must be RETRIED on the next check, even though the read itself is indeterminate -- WR-02")
         #expect(!LockMarker.isDeleteOwed(defaults: defaults), "a successful retry must clear the owed flag")
     }
@@ -301,10 +301,10 @@ struct LockMarkerTests {
     func anIndeterminateReadWithNoOwedDeletionAndNoLegacyMarkerNeverInvokesTheDeleteClosure() {
         let defaults = Self.freshDefaults()
         var deleteAttempts = 0
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
         )
-        #expect(!unlocked)
+        #expect(state == .indeterminate)
         #expect(deleteAttempts == 0, "an indeterminate read with nothing owed must never invoke the delete closure -- WR-03's own invariant, unchanged by WR-02")
     }
 
@@ -319,10 +319,10 @@ struct LockMarkerTests {
         #expect(LockMarker.legacyMarkerKeyHasData(defaults: defaults))
         var deleteAttempts = 0
 
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { deleteAttempts += 1; return true }, defaults: defaults
         )
-        #expect(!unlocked)
+        #expect(state == .indeterminate)
         #expect(
             deleteAttempts == 1,
             "a pre-v2 marker still present must trigger a retried delete on the very next (indeterminate) check -- WR-02, closing the gap CR-04's own `.v2` comment claimed was already closed"
@@ -337,10 +337,10 @@ struct LockMarkerTests {
         // session it could not evaluate.
         let defaults = Self.freshDefaults()
         var deletes = 0
-        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
             entryPoint: "test", deleteKeyArtifact: { deletes += 1; return true }, defaults: defaults
         )
-        #expect(!unlocked)
+        #expect(state == .indeterminate)
         #expect(deletes == 0, "an indeterminate (unreadable) marker must never trigger a delete -- WR-03")
     }
 
@@ -355,5 +355,62 @@ struct LockMarkerTests {
         }, defaults: defaults)
         #expect(markerStillPresentAtDeleteTime, "the key artifact must be deleted BEFORE the marker is cleared")
         #expect(LockMarker.read(defaults: defaults) == nil)
+    }
+
+    // MARK: - REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): `LockState.mustRelock`
+    // is the whole UI-routing contract this fix rests on -- a regression here (mustRelock
+    // becoming true for `.indeterminate`, the pre-fix bug's own shape) is exactly what would
+    // reopen the infinite Face-ID loop, so it gets its own direct, named tests rather than
+    // being covered only indirectly through `checkAndExpireIfNeeded`'s own state assertions
+    // above.
+
+    @Test
+    func onlyExpiredMustRelockIndeterminateAndUnlockedMustNot() {
+        #expect(SessionLifecycle.LockState.expired.mustRelock, "a genuine, evaluated expiry must still relock -- this fix must never weaken ACC-06 itself")
+        #expect(!SessionLifecycle.LockState.indeterminate.mustRelock, "an indeterminate (unreadable) marker must NEVER relock an already-unlocked session -- REQUIRED FIX #1, the routing half of the infinite Face-ID-loop root cause")
+        #expect(!SessionLifecycle.LockState.unlocked.mustRelock, "an unlocked session must never relock")
+    }
+
+    // MARK: - REQUIRED FIX #3 (`.planning/debug/faceid-unlock-loop.md`): when the shared App
+    // Group container cannot be resolved at all, the HOST must still track a correct
+    // single-process session via a `.standard` `UserDefaults` fallback -- mirroring
+    // `AutoLockPolicy.sharedDefaults`'s own already-established precedent, which `LockMarker`
+    // previously had no equivalent of. `LockMarker.forceSharedContainerUnresolvableForTesting`
+    // is the DEBUG-only hook that makes this deterministically reproducible without an actually
+    // unentitled build (see that property's own header).
+
+    @Test
+    func whenTheSharedContainerIsUnresolvableTheHostFallsBackToStandardDefaultsAndStillTracksASession() {
+        // No `defaults:` override anywhere in this test -- the whole point is exercising the
+        // REAL fallback `resolveDefaults` takes when given no override and an unresolvable
+        // shared suite, which every other test in this file deliberately avoids (WR-12's own
+        // isolation discipline). Cleans up its own residue in `.standard` afterwards.
+        let legacyV2Key = "cloud.blonie.PasskeyVault.lockMarker.v2"
+        LockMarker.forceSharedContainerUnresolvableForTesting = true
+        defer {
+            LockMarker.forceSharedContainerUnresolvableForTesting = false
+            UserDefaults.standard.removeObject(forKey: legacyV2Key)
+        }
+
+        SessionLifecycle.recordHostUnlock()
+        let state = SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "fallback-test", deleteKeyArtifact: { true })
+        #expect(
+            state == .unlocked,
+            "a single-process session must still be trackable via the .standard fallback when the App Group container cannot be resolved -- before this fix, an unresolvable container made every read return nil forever (.indeterminate), which REQUIRED FIX #1 alone would have left permanently unable to confirm a session even for a healthy single-process host"
+        )
+    }
+
+    @Test
+    func theUnresolvableContainerFallbackNeverTouchesAnExplicitOverride() {
+        // Regression guard for a plausible refactor mistake: the fallback must only ever engage
+        // when NO override is supplied (production call sites never pass one) -- an explicit
+        // test-isolation suite must keep working identically regardless of
+        // `forceSharedContainerUnresolvableForTesting`'s value.
+        let defaults = Self.freshDefaults()
+        LockMarker.forceSharedContainerUnresolvableForTesting = true
+        defer { LockMarker.forceSharedContainerUnresolvableForTesting = false }
+
+        LockMarker.write(Self.marker(), defaults: defaults)
+        #expect(LockMarker.read(defaults: defaults) == Self.marker(), "an explicit override must never be diverted through the shared-container fallback")
     }
 }

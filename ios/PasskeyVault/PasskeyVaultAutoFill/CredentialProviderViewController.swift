@@ -50,6 +50,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         // happens" -- a future picker UI must inherit this call already in place, and the count
         // this task's own acceptance criterion demands (one line per entry point, in a live run)
         // requires it be observably present now. Never gates this method's own cancel behaviour.
+        // REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): `checkAndExpireIfNeeded` now
+        // returns the full `LockState` tri-state -- this call site never branched on the result
+        // (this method reads no key material yet), so it stays a bare, discarded call, unchanged.
         SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "list", deleteKeyArtifact: SessionKeyReader.delete)
 
         // Phase 41, Plan 41-05, Task 2 (DR-41-B): this VC never builds a picker UI in this
@@ -163,7 +166,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// through `os_log` with this phase's `PVFILL|` marker -- NEVER the password, the key bytes,
     /// or the marker value (T-41-12/T-41-15).
     private func fillOrCancel(for request: any ASCredentialRequest, entryPoint: String) {
-        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) else {
+        // REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): `checkAndExpireIfNeeded` now
+        // returns `LockState` rather than `Bool` -- this read-gating call site still wants a
+        // simple "may I read the key right now" answer, so it compares against `.unlocked`
+        // explicitly. Behaviour is UNCHANGED: `.expired` and `.indeterminate` both refused a read
+        // before this fix and both still do -- the unreadable-vs-expired distinction only matters
+        // for `ContentView`'s own, SEPARATE question ("should I destroy the visible session"),
+        // never for this extension's "is there a key to read".
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) == .unlocked else {
             Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
             extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
             return
@@ -366,7 +376,11 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         }
 
-        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "rebuild", deleteKeyArtifact: SessionKeyReader.delete) else {
+        // REQUIRED FIX #1 (`.planning/debug/faceid-unlock-loop.md`): `checkAndExpireIfNeeded` now
+        // returns `LockState`, not `Bool` -- same read-gating "may I read the key right now"
+        // question as `fillOrCancel`'s own updated call site above; compared against `.unlocked`
+        // explicitly, behaviour unchanged.
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "rebuild", deleteKeyArtifact: SessionKeyReader.delete) == .unlocked else {
             fillLogger.log("PVFILL|E41-2|stage=rebuild status=locked-skip")
             return
         }
