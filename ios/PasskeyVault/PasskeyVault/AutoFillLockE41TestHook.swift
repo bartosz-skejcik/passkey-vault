@@ -61,7 +61,12 @@ enum AutoFillLockE41TestHook {
             let bootSessionId = LockMarker.currentBootSessionId()
         else { return }
 
-        let mutatedUptime = max(0, ProcessInfo.processInfo.systemUptime + offsetSeconds)
+        // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, matching the clock
+        // `SessionLifecycle`/`LockMarker` now use for every real marker read/write -- offsetting
+        // `ProcessInfo.processInfo.systemUptime` here while production reads `monotonicNow()`
+        // would mix two different clock domains and make the offset's real-world magnitude
+        // meaningless.
+        let mutatedUptime = max(0, LockMarker.monotonicNow() + offsetSeconds)
         LockMarker.write(LockMarker(
             bootSessionId: bootSessionId,
             systemUptimeAtUnlock: mutatedUptime,

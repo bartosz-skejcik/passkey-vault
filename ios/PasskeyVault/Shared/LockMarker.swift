@@ -75,7 +75,15 @@ public struct LockMarker: Codable, Equatable {
     // MARK: - Storage (DR-41-C: the App Group container, `UserDefaults(suiteName:)`)
 
     private static let suiteName = "group.cloud.blonie.PasskeyVault"
-    private static let defaultsKey = "cloud.blonie.PasskeyVault.lockMarker"
+    // CR-04 (41-REVIEW.md): bumped `.v2` -- the field values now mean something DIFFERENT
+    // (`monotonicNow()`'s sleep-inclusive clock, not `ProcessInfo.systemUptime`'s sleep-excluding
+    // one). A marker written by a build predating this fix must be treated as invalid rather than
+    // silently compared against a different clock -- reading the OLD key back would either always
+    // look expired (safe) or, worse, mix an old-clock anchor with a new-clock `now` and produce an
+    // arithmetically meaningless `elapsed`. The key bump makes a mid-upgrade marker expire CLOSED
+    // (unreadable under the new key -> `LockMarker.read()` returns `nil` -> treated as expired)
+    // rather than silently comparing two different clocks.
+    private static let defaultsKey = "cloud.blonie.PasskeyVault.lockMarker.v2"
 
     /// Reads the marker, or `nil` if none has ever been written, the App Group container could
     /// not be resolved, or the stored value is undecodable.
@@ -101,6 +109,34 @@ public struct LockMarker: Codable, Equatable {
     public static func clear() {
         guard let defaults = UserDefaults(suiteName: suiteName) else { return }
         defaults.removeObject(forKey: defaultsKey)
+    }
+
+    // MARK: - Clock: the sleep-inclusive monotonic "now" (CR-04, 41-REVIEW.md)
+
+    /// CR-04 (41-REVIEW.md): DR-41-C's original clock pair paired `bootSessionId` with
+    /// `ProcessInfo.processInfo.systemUptime` -- Apple documents that value as "the amount of time
+    /// the system has been AWAKE since the last time it was restarted", backed by
+    /// `mach_absolute_time()`, which does NOT accrue while the device sleeps. Both `idleElapsed`
+    /// and `ceilingElapsed` (`isUnlockedLazily` below) therefore under-counted real elapsed time by
+    /// however long the device slept -- the fail-OPEN direction, on the artifact that lets a
+    /// second process read the User Key with no biometric challenge.
+    ///
+    /// `clock_gettime_nsec_np(CLOCK_MONOTONIC)` is backed by `mach_continuous_time()` on Darwin,
+    /// documented (xnu `bsd/sys/time.h`) as incrementing monotonically "including when the system
+    /// is asleep" -- unlike `CLOCK_MONOTONIC_RAW`/`CLOCK_UPTIME_RAW`, which are `mach_absolute_time`-
+    /// backed and explicitly documented as excluding sleep (the same family `ProcessInfo
+    /// .systemUptime` belongs to). Still monotonic and NOT user-rewindable (unlike `Date()`), so
+    /// DR-41-C's own rewound-clock guard (T-41-35) is unaffected.
+    ///
+    /// This determination is DOCUMENTED, not empirically re-verified against a real device-sleep
+    /// cycle in this fix session -- doing so would require suspending the host Mac mid-session,
+    /// which is unsafe to automate unattended. It rests on Apple's own xnu header documentation for
+    /// the `CLOCK_MONOTONIC` family, which is the same basis this file's own original DR-41-C
+    /// record already used to distinguish `systemUptime` from `mach_continuous_time`. See
+    /// `SessionLifecycle.swift`'s own call sites (the ONLY production readers of "now" for this
+    /// marker) for where `ProcessInfo.processInfo.systemUptime` was replaced by this function.
+    public static func monotonicNow() -> TimeInterval {
+        TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC)) / 1_000_000_000
     }
 
     // MARK: - Clock: the CURRENT boot's session identifier

@@ -70,7 +70,10 @@ enum SessionLifecycle {
     /// mere refusal to read. Returns `true` only when the session is genuinely still valid.
     @discardableResult
     static func checkAndExpireIfNeeded(entryPoint: String, deleteKeyArtifact: () -> Void) -> Bool {
-        let now = ProcessInfo.processInfo.systemUptime
+        // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
+        // .systemUptime` -- see that function's own header for why the old clock under-counted
+        // real elapsed time (fail-open) across a device sleep.
+        let now = LockMarker.monotonicNow()
         let unlocked: Bool
         if
             let marker = LockMarker.read(),
@@ -102,7 +105,9 @@ enum SessionLifecycle {
         guard let current = LockMarker.read() else { return }
         LockMarker.write(LockMarker(
             bootSessionId: current.bootSessionId,
-            systemUptimeAtUnlock: ProcessInfo.processInfo.systemUptime,
+            // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, not `ProcessInfo.processInfo
+            // .systemUptime` -- see that function's own header.
+            systemUptimeAtUnlock: LockMarker.monotonicNow(),
             hostUnlockUptime: current.hostUnlockUptime,
             writer: writer
         ))
@@ -115,7 +120,10 @@ enum SessionLifecycle {
     /// absolute ceiling forward.
     static func recordHostUnlock() {
         let bootSessionId = LockMarker.currentBootSessionId() ?? "unknown-boot-session"
-        let now = ProcessInfo.processInfo.systemUptime
+        // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
+        // .systemUptime` -- see that function's own header for why the old clock under-counted
+        // real elapsed time (fail-open) across a device sleep.
+        let now = LockMarker.monotonicNow()
         LockMarker.write(LockMarker(
             bootSessionId: bootSessionId, systemUptimeAtUnlock: now, hostUnlockUptime: now, writer: "host"
         ))

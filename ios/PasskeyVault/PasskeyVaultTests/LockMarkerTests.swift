@@ -151,4 +151,29 @@ struct LockMarkerTests {
             "a tampered stored interval must fall back to the default, never widen the window"
         )
     }
+
+    // MARK: - CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()` -- the sleep-inclusive clock
+
+    /// A genuine device-sleep regression (reverting to `ProcessInfo.processInfo.systemUptime`)
+    /// cannot be caught by a pure unit test without actually suspending the host -- this test's
+    /// own header records that limitation honestly rather than claiming coverage it does not have
+    /// (this file's own top note: "do not cite a PASS here as evidence for any claim beyond the
+    /// boundary math"). What IS cheaply, genuinely testable without a process/sleep dependency:
+    /// `monotonicNow()` is a real, monotonically NON-DECREASING clock (never goes backward between
+    /// two calls in the same process) and returns a plausible, positive "seconds since some
+    /// reference point" magnitude -- a regression that made it return zero, a constant, or a wildly
+    /// wrong unit (e.g. forgetting the `/ 1_000_000_000` divide, which would report values roughly
+    /// 1e9x too large) fails this test immediately.
+    @Test
+    func monotonicNowIsMonotonicallyNonDecreasingAndPlausiblyScaled() {
+        let first = LockMarker.monotonicNow()
+        let second = LockMarker.monotonicNow()
+        #expect(second >= first, "monotonicNow() must never go backward between two calls")
+        // A real Mac/simulator has been up for at least a few seconds by the time tests run, and
+        // uptime measured in seconds is nowhere near `TimeInterval.greatestFiniteMagnitude` or a
+        // raw nanosecond count (which would be ~1e9x larger) -- this bound would trip on either a
+        // missing unit conversion or a clock that never advances from zero.
+        #expect(first > 0, "monotonicNow() must report a real, positive uptime, not zero/uninitialized")
+        #expect(first < 1_000_000_000, "monotonicNow() must be seconds, not raw nanoseconds (missing / 1_000_000_000)")
+    }
 }
