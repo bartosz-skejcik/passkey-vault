@@ -3736,6 +3736,49 @@ one field the QuickType sheet exposes in human-readable text) rather than to BOT
 receiver-side, because no receiver-side surface on this harness can see it. Documented as a
 deviation in `41-04-SUMMARY.md`.
 
+### L-35 -- the AutoFill provider's pluginkit USER ELECTION does not survive `simctl shutdown`+`boot`, even though REGISTRATION does; `kern.bootsessionuuid` never changes on this toolchain either
+
+**Found 2026-08-20, Phase 41, Plan 41-06, Task 2 (E41-6), building the cold/offline fill.** Two
+separate, load-bearing simulator-honesty findings, both measured directly rather than assumed:
+
+**1. `pluginkit -m -p com.apple.authentication-services-credential-provider-ui` shows the provider
+REGISTERED (`cloud.blonie.PasskeyVault.AutoFill(1.0)`, no prefix) but NOT ELECTED (no leading `+`)
+immediately after a real `xcrun simctl shutdown` + `boot` cycle, even though the provider was
+elected (Settings toggle ON) before the shutdown.** Consequence, confirmed live twice,
+reproducibly: a cold Safari drive against the username field never surfaces our suggestion at all
+-- the "Passwords" keyboard-accessory action sheet opens once, contains no "PasskeyVault" row, and
+on a SECOND retry the "Passwords" button itself has vanished from the accessibility tree
+(`AutoFillColdOfflineUITests`'s own `forceTap` throwing "No matches found for Descendants matching
+type Button", reproduced twice at the identical line). This is not a UI-timing flake in the test
+code -- the identical retry/fallback shape already works reliably in `AutoFillFillUITests`
+(41-03), whose host app is always freshly, warmly launched moments earlier; the difference here is
+the underlying election state, not the driving code.
+
+**Fix: `xcrun simctl spawn <udid> pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill`** --
+`pluginkit`'s own `-e election` flag ("Perform a matching operation and apply the given user
+election setting... Elections can be 'use', 'ignore', and 'default'"), run CLI-only, immediately
+after every `simctl boot` this task's own `run_one_cold_cycle` performs. This is NOT the
+prohibited "host app launched after boot": `pluginkit` is a system tool, never
+`cloud.blonie.PasskeyVault` itself, and the alternative fix (re-running
+`AutoFillInvocationUITests`'s Settings toggle) genuinely WOULD launch the host app and void the
+cold claim -- exactly the class of CLI-only substitute L-32's own biometric-enrollment fix already
+established for a different piece of state lost across the same cycle.
+
+**2. `kern.bootsessionuuid` -- DR-41-C's own chosen boot-identity key (`ios/IOS-SPIKE-LOG.md` §1i)
+-- is the HOST MAC's boot session, not a per-simulator-boot value, and does NOT change across
+`simctl shutdown`+`boot`.** Measured directly: `xcrun simctl spawn <udid> sysctl
+kern.bootsessionuuid` (full path required -- `simctl spawn <udid> sysctl ...` alone reports "No
+such file or directory", a separate minor landmine) returned the IDENTICAL UUID before and after a
+real shutdown+boot cycle, matching the plain host-side `sysctl kern.bootsessionuuid` exactly. The
+unified log stream's own `bootUUID` field (`log show --style ndjson`) confirms the same value.
+**This is why `LockMarker`'s pre-shutdown-written marker reads as still valid after this task's
+own cold boot** (`bootSessionId` equality holds, `systemUptimeAtUnlock`'s elapsed delta stays
+inside the idle window) -- it is NOT evidence that DR-41-C's own stated premise ("a reboot should
+end the session anyway") holds on a real device, where a genuine kernel reboot DOES change this
+value. 41-06-SUMMARY.md records this honestly rather than letting E41-6's PASS be read as proof of
+DR-41-C's cross-reboot design; Plan 41-07's own clock legs (already flagged `[ASSUMED]`/UNVERIFIED
+in `ios/IOS-SPIKE-LOG.md` §1i) are the section that must carry this caveat forward, not this one.
+
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
 **Written after Bartek looked at the running app and said, twice, that the screens
