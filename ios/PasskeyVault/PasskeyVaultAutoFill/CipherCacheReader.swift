@@ -94,26 +94,53 @@ enum CipherCacheReader {
 
     /// The happy path: the SAME production, account/server/schema-scoped accessor the freshness
     /// surface already uses.
+    ///
+    /// CR-05 (41-REVIEW.md): the fallback to `lookupRaw` is narrowed to the case it actually
+    /// documents -- "a genuinely malformed cache, one record missing itemId/revision, or simply no
+    /// current-account marker yet written". Before this fix, ANY failure of the strict decode chain
+    /// (including a row that decoded FINE but was scoped OUT by D-19/WR-07/WR-09's own account/
+    /// schema/server rejections) fell through to `lookupRaw`, which reads the raw JSON with no
+    /// scoping at all -- silently bypassing exactly the checks `readCurrentSnapshot` exists to
+    /// enforce. Now: no marker, or the whole-snapshot decode itself failing, are the ONLY cases
+    /// that fall through (genuinely "cannot determine provenance yet" / "cache unreadable"); a
+    /// snapshot that decoded successfully but does not contain this record is reported by name
+    /// (`.itemNotFound`), never silently re-read unscoped.
     static func lookup(recordIdentifier: String) -> Swift.Result<CachedItem, CipherCacheReaderError> {
         let store = AppGroupCiphertextCacheStore()
-        if let marker = store.currentAccountMarker(),
-           let snapshot = store.readCurrentSnapshot(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL),
-           let row = snapshot.items.first(where: { $0.id == recordIdentifier })
-        {
-            guard let encKey = decodeWireKey(row.encKey, field: "encKey") else {
-                return .failure(.malformedWireKey(field: "encKey"))
-            }
-            guard let encData = decodeWireKey(row.encData, field: "encData") else {
-                return .failure(.malformedWireKey(field: "encData"))
-            }
-            return .success(CachedItem(
-                itemId: row.id,
-                revision: UInt32(row.revision),
-                encKey: encKey,
-                encData: encData
-            ))
+        guard let marker = store.currentAccountMarker() else {
+            return lookupRaw(recordIdentifier: recordIdentifier)
         }
-        return lookupRaw(recordIdentifier: recordIdentifier)
+        guard let snapshot = store.readCurrentSnapshot(accountId: marker.accountId, serverBaseURL: marker.serverBaseURL) else {
+            // The strict whole-blob decode itself failed (malformed cache, or missing itemId/
+            // revision on SOME row) -- diagnose by name via the raw scan, exactly as documented.
+            return lookupRaw(recordIdentifier: recordIdentifier)
+        }
+        guard let row = snapshot.items.first(where: { $0.id == recordIdentifier }) else {
+            // The scoped snapshot decoded fine: this row is genuinely not ours (wrong account,
+            // wrong server, or simply absent) -- NEVER fall through to the unscoped raw scan here,
+            // which would silently bypass D-19/WR-07/WR-09's own rejections.
+            return .failure(.itemNotFound(recordIdentifier))
+        }
+        guard let encKey = decodeWireKey(row.encKey, field: "encKey") else {
+            return .failure(.malformedWireKey(field: "encKey"))
+        }
+        guard let encData = decodeWireKey(row.encData, field: "encData") else {
+            return .failure(.malformedWireKey(field: "encData"))
+        }
+        // CR-05 (41-REVIEW.md): the CHECKED conversion, matching the rebuild path
+        // (`CredentialProviderViewController.runIdentityRebuildIfPending`'s own `UInt32(exactly:)`)
+        // -- the trapping initializer used here before aborted the extension mid-fill on a
+        // negative or out-of-range `revision` (a corrupted App-Group blob, or a server field this
+        // client never range-checked).
+        guard let revision32 = UInt32(exactly: row.revision) else {
+            return .failure(.missingRevision)
+        }
+        return .success(CachedItem(
+            itemId: row.id,
+            revision: revision32,
+            encKey: encKey,
+            encData: encData
+        ))
     }
 
     /// Independent raw-JSON scan, used ONLY when the strict whole-snapshot decode above did not
@@ -140,6 +167,14 @@ enum CipherCacheReader {
         guard let revisionNumber = row["revision"] as? NSNumber else {
             return .failure(.missingRevision)
         }
+        // CR-05 (41-REVIEW.md): `UInt32(exactly:)`, never `UInt32(truncating:)` -- a truncated
+        // revision silently produces the WRONG AAD, which `decrypt_item` then rejects as if the
+        // ciphertext itself were corrupted (an unexplainable, misdiagnosed decrypt failure). A
+        // revision that does not fit `UInt32` exactly is reported BY NAME instead, matching the
+        // strict path's own `.missingRevision` case.
+        guard let revision32 = UInt32(exactly: revisionNumber.int64Value) else {
+            return .failure(.missingRevision)
+        }
         guard let encKeyJson = row["encKey"] as? String,
               let encKey = decodeWireKey(encKeyJson, field: "encKey")
         else {
@@ -152,7 +187,7 @@ enum CipherCacheReader {
         }
         return .success(CachedItem(
             itemId: itemId,
-            revision: UInt32(truncating: revisionNumber),
+            revision: revision32,
             encKey: encKey,
             encData: encData
         ))
