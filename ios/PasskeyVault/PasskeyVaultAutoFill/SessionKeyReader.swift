@@ -112,12 +112,20 @@ enum SessionKeyReader {
     /// `SessionLifecycle.swift`'s own header for why this is duplicated per-target rather than
     /// shared. Idempotent: deleting an already-absent item is not an error, matching
     /// `SessionKeyStore.delete()`'s own precondition.
+    /// CR-03 (41-REVIEW.md): NEVER `precondition()` on an external API's status -- this closure is
+    /// `SessionLifecycle.checkAndExpireIfNeeded`'s `deleteKeyArtifact` at all three extension entry
+    /// points, so it fires on every expiry detection. `precondition` is active in `-O` release
+    /// builds; an unexpected-but-real `OSStatus` (`errSecInteractionNotAllowed` when the device is
+    /// locked, `errSecMissingEntitlement` on access-group drift) would hard-abort the extension
+    /// process mid-fill -- the worst possible time to crash, over an error path whose correct
+    /// behaviour (fail closed, log loudly, continue) is already obvious. Reports and continues
+    /// instead; the caller (`SessionLifecycle`) already treats the marker as cleared regardless.
     static func delete() {
         let status = SecItemDelete(baseQuery as CFDictionary)
-        precondition(
-            status == errSecSuccess || status == errSecItemNotFound,
-            "SessionKeyReader.delete unexpected status \(status)"
-        )
-        logger.log("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public)")
+        if status != errSecSuccess && status != errSecItemNotFound {
+            logger.error("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public) unexpected")
+        } else {
+            logger.log("PVFILL|stage=sessionkey-delete status=\(status, privacy: .public)")
+        }
     }
 }

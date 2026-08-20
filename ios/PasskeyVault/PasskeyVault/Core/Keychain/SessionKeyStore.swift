@@ -35,6 +35,7 @@
 
 import Foundation
 import Security
+import os
 
 /// Owns Secret C. Every operation runs with NO `LAContext` at all -- writing never requires
 /// authentication (the accessibility class alone gates read access, and there is no ACL to
@@ -42,6 +43,8 @@ import Security
 /// query rather than imported -- separate build targets, no shared framework
 /// (`SessionKeyProbe.swift`'s own established discipline).
 enum SessionKeyStore {
+    private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
     static let service = "cloud.blonie.PasskeyVault.session-key"
 
     private static var baseQuery: [String: Any] {
@@ -78,11 +81,19 @@ enum SessionKeyStore {
 
     /// Idempotent. ACC-06's explicit-delete-on-expiry primitive -- Plan 41-07 wires the trigger
     /// (the lazy check observing expiry); this is the mechanism it will call.
+    ///
+    /// CR-03 (41-REVIEW.md): NEVER `precondition()` on an external API's status -- this closure is
+    /// `SessionLifecycle.lock`'s `deleteKeyArtifact` for BOTH "Lock now" and sign-out
+    /// (`ContentView.performLock()`/`performSignOut()`). `precondition` is active in `-O` release
+    /// builds; a host-app crash the moment the user taps "Lock now" is the worst possible time to
+    /// abort, over an error path whose correct behaviour (fail closed, log loudly, continue) is
+    /// already obvious. Reports and continues instead.
     static func delete() {
         let status = SecItemDelete(baseQuery as CFDictionary)
-        precondition(
-            status == errSecSuccess || status == errSecItemNotFound,
-            "SessionKeyStore.delete unexpected status \(status)"
-        )
+        if status != errSecSuccess && status != errSecItemNotFound {
+            logger.error("PVLOCK|stage=sessionkey-delete status=\(status, privacy: .public) unexpected")
+        } else {
+            logger.log("PVLOCK|stage=sessionkey-delete status=\(status, privacy: .public)")
+        }
     }
 }
