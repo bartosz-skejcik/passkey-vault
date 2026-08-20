@@ -183,6 +183,22 @@ for f in "${SWIFT_FILES[@]}"; do
       VIOLATIONS="${VIOLATIONS}${f}:${line} [deprecated store write: replaceCredentialIdentities(with:...) labelled form]"$'\n'
     done <<< "$MATCHES"
   fi
+
+  # (3b)/(4b) WR-05 (41-REVIEW.md): the TRAILING-CLOSURE spelling of the completion-handler form
+  # -- `store.saveCredentialIdentities(ids) { success, error in ... }` -- is the NATURAL Swift way
+  # to write a completion-handler API, and patterns (3)/(4) above only match a call where the
+  # literal label `completion:` appears before the closing `)`. No `completion:` label means no
+  # match, so the trailing-closure spelling of the exact same deprecated bind (L-33) was silently
+  # invisible to this gate. `\)[[:space:]]*\{` requires the call's own argument list to have
+  # closed before a `{` opens -- distinguishing a genuine trailing closure from an unrelated `{`
+  # appearing later on the same stripped line.
+  MATCHES=$(grep -nE '\.(save|remove)CredentialIdentities\([^)]*\)[[:space:]]*\{' "$STRIPPED" || true)
+  if [ -n "$MATCHES" ]; then
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      VIOLATIONS="${VIOLATIONS}${f}:${line} [deprecated store write: (save|remove)CredentialIdentities(...) { ... } trailing-closure completion-handler form -- L-33, WR-05]"$'\n'
+    done <<< "$MATCHES"
+  fi
 done
 
 if [ -n "$VIOLATIONS" ]; then
