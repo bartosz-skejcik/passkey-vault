@@ -45,7 +45,19 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
         #endif
-        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+        // Phase 41, Plan 41-03, Task 2 (E41-5): variant A -- this IS the current, request-typed
+        // overload. Logs on entry, unconditionally under this one gate, so
+        // `scripts/ios-autofill-e41.sh e41-5` can tell whether iOS 26.5 actually calls this
+        // overload (as opposed to the deprecated `ASPasswordCredentialIdentity`-typed sibling,
+        // which variant B's build temporarily overrides instead).
+        #if PV_PROBE_E41_5
+        Self.fillLogger.log("PVFILL|E41-5|variant=A stage=entry")
+        #endif
+        // Phase 41, Plan 41-03, Task 1 (the tracer): the real no-UI fill path -- NO UI IS
+        // PERMITTED HERE (`ASCredentialProviderViewController.h:100-134`). Under DR-41-A(b) this
+        // is the ONLY path a normal QuickType tap ever needs: Secret C carries no
+        // `SecAccessControl`, so the lock check and the key read below never require a ceremony.
+        fillOrCancel(for: credentialRequest, entryPoint: "silent")
     }
 
     override func prepareInterfaceToProvideCredential(for credentialRequest: any ASCredentialRequest) {
@@ -56,7 +68,106 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
         #endif
-        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+        // UI IS legal here. Under DR-41-A(b) the same sequence below never actually needs a
+        // ceremony (Secret C is non-biometric) -- this override exists so the system's own
+        // fallback invocation (after a `userInteractionRequired` cancel from the silent entry
+        // point above) still completes the fill rather than dead-ending.
+        fillOrCancel(for: credentialRequest, entryPoint: "interactive")
+    }
+
+    // MARK: - Phase 41, Plan 41-03, Task 1 -- the real fill path (FILL-02/FILL-05)
+
+    /// One decrypted item's login fields -- the only two members the fill needs. Deliberately NOT
+    /// the full `ItemFields`/`LoginFields` union (app-target only, `Vault/ItemFields.swift`) --
+    /// this extension target has no dependency on it, and `JSONDecoder` ignores the plaintext's
+    /// other keys (`type`/`name`/`tags`/...) by default, so this minimal shape decodes the SAME
+    /// real production login-item JSON without needing the app target's full model.
+    private struct TracerLoginPayload: Decodable {
+        let username: String
+        let password: String
+    }
+
+    private static let fillLogger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
+    /// Placeholder idle window for the tracer's own `LockMarker` check -- Plan 41-07 owns the
+    /// real, configured value and the 12h absolute ceiling (DR-41-C). 15 minutes is generous for
+    /// this task's own evidence run.
+    private static let tracerIdleWindowSeconds: TimeInterval = 15 * 60
+
+    /// Runs, in order: the `LockMarker` lazy check (ACC-06's inherited premise); the
+    /// `SessionKeyReader` read (Secret C, DR-41-A); the cache lookup keyed by
+    /// `request.credentialIdentity.recordIdentifier`; `importUserKeyFromSession`; `decryptItem`
+    /// with the cache record's OWN `itemId`/`revision` (its AAD binding); then
+    /// `completeRequest(withSelectedCredential:)`. Any failure before the fill exits through
+    /// `cancelRequest(withError:)` carrying `ASExtensionError.userInteractionRequired`. Logs the
+    /// branch taken and the terminal status through `os_log` with this phase's `PVFILL|` marker --
+    /// NEVER the password, the key bytes, or the marker value (T-41-12/T-41-15).
+    private func fillOrCancel(for request: any ASCredentialRequest, entryPoint: String) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard
+            let marker = LockMarker.read(),
+            let currentBootSessionId = LockMarker.currentBootSessionId(),
+            marker.bootSessionId == currentBootSessionId,
+            marker.isUnlockedLazily(now: now, idleWindow: Self.tracerIdleWindowSeconds)
+        else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        guard let recordIdentifier = request.credentialIdentity.recordIdentifier else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=no-record-identifier")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+
+        let cachedItem: CachedItem
+        switch CipherCacheReader.lookup(recordIdentifier: recordIdentifier) {
+        case let .success(item):
+            cachedItem = item
+        case let .failure(error):
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=fail error=\(String(describing: error), privacy: .public)")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=ok")
+
+        let userKey: FfiUserKey
+        switch SessionKeyReader.importUserKey() {
+        case let .success(uk):
+            userKey = uk
+        case .failure:
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=sessionkey status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=sessionkey status=ok")
+
+        let plaintext: String
+        do {
+            let item = FfiEncryptedItem(encKey: cachedItem.encKey, encData: cachedItem.encData)
+            plaintext = try decryptItem(
+                userKey: userKey, item: item, itemId: cachedItem.itemId, revision: cachedItem.revision
+            )
+        } catch {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=decrypt status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=decrypt status=ok")
+
+        guard let payload = try? JSONDecoder().decode(TracerLoginPayload.self, from: Data(plaintext.utf8)) else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=decode-plaintext status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=fill status=ok")
+        extensionContext.completeRequest(
+            withSelectedCredential: ASPasswordCredential(user: payload.username, password: payload.password),
+            completionHandler: nil
+        )
     }
 
     /// The entry point AutoFillInvocationUITests.swift's primary route

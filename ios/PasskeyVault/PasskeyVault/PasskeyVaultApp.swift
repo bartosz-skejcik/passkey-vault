@@ -37,6 +37,19 @@ struct PasskeyVaultApp: App {
         SessionKeyProbeSeeder.seed()
         #endif
 
+        // Phase 41, Plan 41-03, Task 1 (the tracer): seed Secret C, a real host-app unlock
+        // marker, ONE real encrypted login item in the Phase-39 cache, and ONE registered
+        // identity -- BEFORE the extension is ever invoked, same ordered host-then-extension
+        // sequence PV_PROBE_KEYCHAIN/PV_PROBE_SESSIONKEY's own seeds already established.
+        // Compiled in only under PV_PROBE_FILLTRACER -- inert for every other probe. See
+        // TracerFillSeeder.swift's own header for why this deviates from files_modified (Rule 2,
+        // deviation documented in 41-03-SUMMARY.md).
+        #if PV_PROBE_FILLTRACER
+        Task {
+            await TracerFillSeeder.seed()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

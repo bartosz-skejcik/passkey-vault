@@ -1,0 +1,6 @@
+## Variant A (current, request-typed overload)
+2026-08-20 03:10:21.924072+0200 0x6a3707   Default     0x0                  96760  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-5|variant=A stage=entry
+## Variant B (deprecated, identity-typed overload)
+2026-08-20 03:12:36.680435+0200 0x6a5f5c   Default     0x0                  98472  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-5|variant=B stage=entry
+
+VERDICT: both variants log -- the system falls back to the deprecated selector when it is the only one bound; the current overload's own template is merely stale, not actively harmful.

@@ -85,6 +85,11 @@
 			path = PvShared;
 			sourceTree = "<group>";
 		};
+		A1B2C3D4E5F641039C7D0F12 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 		F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PasskeyVault;
@@ -144,6 +149,7 @@
 				F4C1A4BC302B0A9C00C58DEB /* PasskeyVaultTests */,
 				F4C1A4C6302B0A9C00C58DEB /* PasskeyVaultUITests */,
 				B3D215715977AE7886AF8663 /* PvShared */,
+				A1B2C3D4E5F641039C7D0F12 /* Shared */,
 				F4C1A4D6302B0A9C00C58DEB /* PvFfi.xcframework */,
 				F4C1A4D9302B0A9C00C58DEB /* pv_ffi.swift */,
 				F4C1A4AD302B0A9A00C58DEB /* Products */,
@@ -179,6 +185,7 @@
 			fileSystemSynchronizedGroups = (
 				0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */,
 				B3D215715977AE7886AF8663 /* PvShared */,
+				A1B2C3D4E5F641039C7D0F12 /* Shared */,
 			);
 			name = PasskeyVaultAutoFill;
 			packageProductDependencies = (
@@ -204,6 +211,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				B3D215715977AE7886AF8663 /* PvShared */,
+				A1B2C3D4E5F641039C7D0F12 /* Shared */,
 				F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */,
 			);
 			name = PasskeyVault;

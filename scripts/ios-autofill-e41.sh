@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -448,8 +448,505 @@ cmd_e41_1() {
   fi
 }
 
+# =============================================================================
+# tracer -- the end-to-end "AutoFill fills one real password" proof (Task 1, 41-03)
+# =============================================================================
+#
+# Full drive: starts a LOCAL static-file server on 127.0.0.1:8765 serving a self-contained login
+# form (never a `data:` URL -- `ASCredentialServiceIdentifier(type: .domain)` matching is
+# host-based, F3 `41-RESEARCH.md`, and a `data:` page carries no host at all, discovered
+# empirically running this exact test live); boots the PINNED simulator
+# (`/private/tmp/pv16.udid`, never "any already-booted" -- this phase's own harness contract);
+# builds the app+extension with `PV_PROBE_FILLTRACER` (the seeder,
+# `ios/PasskeyVault/PasskeyVault/TracerFillSeeder.swift`); ensures the AutoFill provider is
+# electable (Phase 36 SC1) and that Face ID enrollment is set (CLI-only, via `notifyutil`, never
+# the Simulator.app GUI menu -- observed live to be unreliable in this headless session); drives
+# `AutoFillFillUITests` while a PARALLEL, external loop posts
+# `com.apple.BiometricKit_Sim.pearl.match` for the run's whole duration (Safari's OWN
+# LocalAuthentication confirmation gate before injecting a password into a web page -- discovered
+# empirically to be a SEPARATE system-level step, independent of our own provider's silent read,
+# `scripts/run-ios-biometry-experiments.sh`'s own `pearl_match` mechanism); then re-runs twice
+# more with the two acceptance-criteria falsification legs armed via marker files
+# `TracerFillSeeder.swift` checks at seed time (an env var was observed live NOT to reach the
+# launched host app's own process at all).
+TRACER_WWW_DIR="/tmp/pv-tracer-www"
+TRACER_PORT=8765
+TRACER_FILL_LOG="$EVIDENCE_DIR/tracer-fill.log"
+PINNED_UDID_FILE="/private/tmp/pv16.udid"
+
+# Shared L-10 retry wrapper (mirrors cmd_e41_1's own `run_build` discipline): a cold DerivedData
+# mismatches the generated pv-ffi bindings against the linked library on the FIRST build after the
+# "Build pv-ffi XCFramework" script phase's own Debug-config default (`--with-panic-probe`)
+# regenerates them mid-build. Retried ONCE; a second failure is a real error.
+build_with_l10_retry() {
+  local udid="$1" extra_conditions="$2" out_log="$3"
+  local run_once
+  run_once() {
+    xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+      -scheme PasskeyVault -configuration Debug \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$DD_PATH" \
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) $extra_conditions" \
+      build
+  }
+  if ! run_once > "$out_log" 2>&1; then
+    if grep -qE 'uniffiEnsurePvFfiInitialized|cannot find .* in scope' "$out_log"; then
+      echo "==> HIT landmine L-10 (cold DerivedData mismatch) -- retrying once" >&2
+      if ! run_once > "$out_log" 2>&1; then
+        echo "ERROR: app+extension build failed twice (not the known L-10 flake)" >&2
+        tail -100 "$out_log" >&2
+        return 1
+      fi
+    else
+      echo "ERROR: app+extension build failed" >&2
+      tail -100 "$out_log" >&2
+      return 1
+    fi
+  fi
+  return 0
+}
+
+resolve_pinned_udid() {
+  if [ ! -f "$PINNED_UDID_FILE" ]; then
+    echo "ERROR: pinned simulator UDID file not found: $PINNED_UDID_FILE" >&2
+    exit 1
+  fi
+  local udid
+  udid=$(cat "$PINNED_UDID_FILE")
+  if [ -z "$udid" ]; then
+    echo "ERROR: pinned simulator UDID file is empty: $PINNED_UDID_FILE" >&2
+    exit 1
+  fi
+  local list_file
+  list_file=$(mktemp)
+  xcrun simctl list devices > "$list_file" 2>&1
+  if ! grep -q "$udid" "$list_file"; then
+    echo "ERROR: pinned UDID $udid not found in simctl device list" >&2
+    rm -f "$list_file"
+    exit 1
+  fi
+  if ! grep "$udid" "$list_file" | grep -q "(Booted)"; then
+    echo "==> booting pinned simulator $udid" >&2
+    xcrun simctl boot "$udid"
+    sleep 3
+  fi
+  rm -f "$list_file"
+  echo "$udid"
+}
+
+ensure_tracer_server() {
+  mkdir -p "$TRACER_WWW_DIR"
+  cat > "$TRACER_WWW_DIR/index.html" <<'HTML'
+<!DOCTYPE html>
+<html>
+<head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body>
+<form>
+<input id="u" type="text" name="username" autocomplete="username"
+  oninput="document.getElementById('ru').innerText='USERFIELD:'+this.value"
+  onchange="document.getElementById('ru').innerText='USERFIELD:'+this.value">
+<input id="p" type="password" name="password" autocomplete="current-password"
+  oninput="document.getElementById('rp').innerText='PWFIELD:'+this.value"
+  onchange="document.getElementById('rp').innerText='PWFIELD:'+this.value">
+</form>
+<div id="ru">USERFIELD:-none-</div>
+<div id="rp">PWFIELD:-none-</div>
+</body>
+</html>
+HTML
+  if ! curl -s -o /dev/null "http://127.0.0.1:$TRACER_PORT/" 2>/dev/null; then
+    echo "==> starting local login-form server on 127.0.0.1:$TRACER_PORT" >&2
+    (cd "$TRACER_WWW_DIR" && nohup python3 -m http.server "$TRACER_PORT" --bind 127.0.0.1 > /tmp/pv-tracer-http.log 2>&1 &)
+    sleep 1
+  fi
+}
+
+ensure_provider_enabled() {
+  local udid="$1"
+  if xcrun simctl spawn "$udid" pluginkit -m -p com.apple.authentication-services-credential-provider-ui 2>/dev/null | grep -q '^+'; then
+    return 0
+  fi
+  echo "==> AutoFill provider not enabled -- toggling via Settings" >&2
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/AutoFillInvocationUITests/testInvokeExtensionConfigurationViaSettingsAutoFillToggle \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    test > /tmp/pv-tracer-enable-provider.log 2>&1 || true
+}
+
+# CLI-only (`notifyutil`), never the Simulator.app GUI "Features > Face ID > Enrolled" menu --
+# observed live, running this exact task, to be unreliable in a headless session (no Simulator.app
+# window bound to the pinned device at boot time).
+ensure_biometric_enrollment() {
+  local udid="$1"
+  xcrun simctl spawn "$udid" notifyutil -s com.apple.BiometricKit.enrollmentChanged 1 >/dev/null 2>&1 || true
+  xcrun simctl spawn "$udid" notifyutil -p com.apple.BiometricKit.enrollmentChanged >/dev/null 2>&1 || true
+}
+
+# Long-lived background loop -- Safari's own LocalAuthentication confirmation window (after
+# tapping "Fill Password") was observed live NOT to open at a predictable offset from test start,
+# so this posts every 0.3s for the loop's whole life, started before the test and killed after.
+run_pearl_match_loop() {
+  local udid="$1"
+  while true; do
+    xcrun simctl spawn "$udid" notifyutil -p com.apple.BiometricKit_Sim.pearl.match >/dev/null 2>&1 || true
+    sleep 0.3
+  done
+}
+
+run_tracer_test_once() {
+  local udid="$1" out_log="$2"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/AutoFillFillUITests/testAutoFillFillsRealPasswordIntoSafariFormField \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER" \
+    test > "$out_log" 2>&1
+}
+
+# Drives one full test run with the pearl.match loop running in parallel for its whole duration.
+# Returns the test's own exit code (0 pass, nonzero fail) via $?.
+drive_tracer_run() {
+  local udid="$1" out_log="$2"
+  local test_result=0
+  run_tracer_test_once "$udid" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || test_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$test_result"
+}
+
+app_group_container_dir() {
+  local udid="$1"
+  local data_container
+  data_container=$(xcrun simctl get_app_container "$udid" cloud.blonie.PasskeyVault data 2>/dev/null || true)
+  if [ -z "$data_container" ]; then
+    return 1
+  fi
+  # A plain loop, not `find | xargs` -- this simulator's data directory carries dozens of
+  # `Containers/Shared/AppGroup/<uuid>` entries (one per app group this session has ever used
+  # across every phase's own evidence work), and `xargs` was observed live to fail outright
+  # ("command line cannot be assembled, too long") against that many arguments.
+  local base_dir="${data_container%/Containers/Data/Application/*}/Containers/Shared/AppGroup"
+  local candidate
+  for candidate in "$base_dir"/*/; do
+    if [ -f "${candidate}vault-cache-v1.json" ]; then
+      echo "${candidate%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_tracer() {
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> tracer: pinned simulator UDID: $udid"
+
+  echo "==> tracer: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> tracer: building app+extension (PV_PROBE_FILLTRACER)"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER" /tmp/pv-tracer-build.log
+
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+
+  echo "==> tracer: baseline run (no falsification armed)"
+  if [ -n "$group_dir" ]; then
+    rm -f "$group_dir/tracer-mutate-revision.marker" "$group_dir/tracer-omit-revision.marker"
+  fi
+  local baseline_test_log
+  baseline_test_log=$(mktemp)
+  local baseline_result=0
+  drive_tracer_run "$udid" "$baseline_test_log" || baseline_result=$?
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+    --last 5m > "$TRACER_FILL_LOG" 2>&1
+
+  echo "" >> "$TRACER_FILL_LOG"
+  echo "## Falsification 1 -- revision altered by one (expect decrypt AEAD failure)" >> "$TRACER_FILL_LOG"
+  if [ -n "$group_dir" ]; then
+    touch "$group_dir/tracer-mutate-revision.marker"
+    local falsify1_test_log
+    falsify1_test_log=$(mktemp)
+    local falsify1_result=0
+    drive_tracer_run "$udid" "$falsify1_test_log" || falsify1_result=$?
+    xcrun simctl spawn "$udid" log show \
+      --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+      --last 2m >> "$TRACER_FILL_LOG" 2>&1
+    rm -f "$group_dir/tracer-mutate-revision.marker"
+    if [ "$falsify1_result" -eq 0 ]; then
+      echo "FALSIFICATION-1 FAIL: the fill PASSED with a mutated revision -- AAD binding is not live" >> "$TRACER_FILL_LOG"
+    else
+      echo "FALSIFICATION-1 PASS: the fill correctly FAILED with a mutated revision (test exit $falsify1_result)" >> "$TRACER_FILL_LOG"
+    fi
+    rm -f "$falsify1_test_log"
+  else
+    echo "FALSIFICATION-1 SKIPPED: App Group container not found" >> "$TRACER_FILL_LOG"
+  fi
+
+  echo "" >> "$TRACER_FILL_LOG"
+  echo "## Falsification 2 -- revision key omitted from cache record (expect named decoder error)" >> "$TRACER_FILL_LOG"
+  if [ -n "$group_dir" ]; then
+    touch "$group_dir/tracer-omit-revision.marker"
+    local falsify2_test_log
+    falsify2_test_log=$(mktemp)
+    local falsify2_result=0
+    drive_tracer_run "$udid" "$falsify2_test_log" || falsify2_result=$?
+    xcrun simctl spawn "$udid" log show \
+      --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+      --last 2m >> "$TRACER_FILL_LOG" 2>&1
+    rm -f "$group_dir/tracer-omit-revision.marker"
+    if [ "$falsify2_result" -eq 0 ]; then
+      echo "FALSIFICATION-2 FAIL: the fill PASSED with a missing revision key -- the decoder is not rejecting it" >> "$TRACER_FILL_LOG"
+    else
+      echo "FALSIFICATION-2 PASS: the fill correctly FAILED with a missing revision key (test exit $falsify2_result)" >> "$TRACER_FILL_LOG"
+    fi
+    rm -f "$falsify2_test_log"
+  else
+    echo "FALSIFICATION-2 SKIPPED: App Group container not found" >> "$TRACER_FILL_LOG"
+  fi
+
+  echo "" >> "$TRACER_FILL_LOG"
+  if [ "$baseline_result" -eq 0 ]; then
+    echo "BASELINE: PASS (xcodebuild test exit 0) -- see $baseline_test_log" >> "$TRACER_FILL_LOG"
+  else
+    echo "BASELINE: FAIL (xcodebuild test exit $baseline_result) -- see $baseline_test_log" >> "$TRACER_FILL_LOG"
+    tail -60 "$baseline_test_log" >&2
+  fi
+  rm -f "$baseline_test_log"
+
+  if assert_tracer "$TRACER_FILL_LOG"; then
+    echo "PASS: tracer -- see $TRACER_FILL_LOG"
+    exit 0
+  else
+    echo "FAIL: tracer -- see $TRACER_FILL_LOG" >&2
+    exit 1
+  fi
+}
+
+assert_tracer() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "tracer"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -qE 'PVFILL\|entry=(silent|interactive) stage=fill status=ok' "$target"; then
+    echo "FAIL: tracer -- no successful entry-point + terminal-status line found in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "BASELINE: PASS" "$target"; then
+    echo "FAIL: tracer -- baseline run did not pass" >&2
+    failed=1
+  fi
+  if ! grep -q "FALSIFICATION-1 PASS" "$target"; then
+    echo "FAIL: tracer -- revision-mutation falsification did not demonstrate the fill failing" >&2
+    failed=1
+  fi
+  if ! grep -q "FALSIFICATION-2 PASS" "$target"; then
+    echo "FAIL: tracer -- missing-revision falsification did not demonstrate the named decoder error" >&2
+    failed=1
+  fi
+  # T-41-12/T-41-15: the evidence capture must never contain the plaintext password.
+  if grep -q "Tr4c3r-Fill-41-03" "$target"; then
+    echo "FAIL: tracer -- evidence capture contains the tracer plaintext password" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# =============================================================================
+# e41-5 -- which provideCredentialWithoutUserInteraction overload does iOS 26.5 call? (Task 2, 41-03)
+# =============================================================================
+E41_5_LOG="$EVIDENCE_DIR/e41-5-overload.log"
+CPVC_FILE="ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift"
+
+cmd_e41_5() {
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-5: pinned simulator UDID: $udid"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -n "$group_dir" ]; then
+    rm -f "$group_dir/tracer-mutate-revision.marker" "$group_dir/tracer-omit-revision.marker"
+  fi
+
+  : > "$E41_5_LOG"
+
+  echo "==> e41-5: variant A (shipped file, current overload) -- building"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER PV_PROBE_E41_5" /tmp/pv-e41-5-build-a.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  local variant_a_log
+  variant_a_log=$(mktemp)
+  drive_tracer_run "$udid" "$variant_a_log" || true
+  echo "## Variant A (current, request-typed overload)" >> "$E41_5_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+    --last 2m 2>&1 | grep 'PVFILL|E41-5|' >> "$E41_5_LOG" || true
+  rm -f "$variant_a_log"
+
+  echo "==> e41-5: variant B (temporary deprecated-signature override) -- patching, building"
+  cp "$CPVC_FILE" "$CPVC_FILE.e41-5-backup"
+  python3 - "$CPVC_FILE" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    text = f.read()
+marker = "    override func provideCredentialWithoutUserInteraction(for credentialRequest: any ASCredentialRequest) {"
+assert marker in text, "variant A override signature not found -- CredentialProviderViewController.swift changed shape"
+# Rename the CURRENT overload so it no longer overrides anything (isolates the experiment --
+# only the DEPRECATED overload is bound in this build), and insert a deprecated-signature
+# override that ONLY logs on entry, per this task's own action: "Variant B temporarily replaces
+# that override with the deprecated identity-typed signature and nothing else."
+text = text.replace(
+    marker,
+    "    func e41_5_variantA_disabled(for credentialRequest: any ASCredentialRequest) {",
+)
+deprecated_override = (
+    "    override func provideCredentialWithoutUserInteraction(for credentialIdentity: ASPasswordCredentialIdentity) {\n"
+    "        Self.fillLogger.log(\"PVFILL|E41-5|variant=B stage=entry\")\n"
+    "        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))\n"
+    "    }\n\n"
+)
+class_marker = "final class CredentialProviderViewController: ASCredentialProviderViewController {\n"
+assert class_marker in text
+text = text.replace(class_marker, class_marker + deprecated_override, 1)
+with open(path, "w") as f:
+    f.write(text)
+PYEOF
+  local build_b_status=0
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER PV_PROBE_E41_5" /tmp/pv-e41-5-build-b.log || build_b_status=$?
+  if [ "$build_b_status" -eq 0 ]; then
+    xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+    local variant_b_log
+    variant_b_log=$(mktemp)
+    drive_tracer_run "$udid" "$variant_b_log" || true
+    echo "## Variant B (deprecated, identity-typed overload)" >> "$E41_5_LOG"
+    xcrun simctl spawn "$udid" log show \
+      --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' \
+      --last 2m 2>&1 | grep 'PVFILL|E41-5|' >> "$E41_5_LOG" || true
+    rm -f "$variant_b_log"
+  else
+    echo "## Variant B (deprecated, identity-typed overload) -- BUILD FAILED, see /tmp/pv-e41-5-build-b.log" >> "$E41_5_LOG"
+  fi
+
+  echo "" >> "$E41_5_LOG"
+  if grep -q "variant=A" "$E41_5_LOG" && grep -q "variant=B" "$E41_5_LOG"; then
+    echo "VERDICT: both variants log -- the system falls back to the deprecated selector when it is the only one bound; the current overload's own template is merely stale, not actively harmful." >> "$E41_5_LOG"
+  elif grep -q "variant=A" "$E41_5_LOG"; then
+    echo "VERDICT: only variant A logs -- the deprecated selector is dead on this OS; Xcode's own extension template (which overrides the deprecated pair) is actively harmful." >> "$E41_5_LOG"
+  elif grep -q "variant=B" "$E41_5_LOG"; then
+    echo "VERDICT: only variant B logs -- unexpected; the current, non-deprecated overload was never invoked." >> "$E41_5_LOG"
+  else
+    echo "VERDICT: neither variant logs -- the failure is upstream in registration/the identity store, not in the overload choice." >> "$E41_5_LOG"
+  fi
+
+  echo "==> e41-5: reverting variant B patch"
+  mv "$CPVC_FILE.e41-5-backup" "$CPVC_FILE"
+
+  local diff_output
+  diff_output=$(git -C "$REPO_ROOT" diff --stat -- "$CPVC_FILE" || true)
+  if [ -n "$diff_output" ]; then
+    echo "WARNING: $CPVC_FILE differs from its pre-e41-5 state after revert (this is EXPECTED and harmless before Plan 41-03's own Task 1 edits are committed -- the diff is against the LAST COMMIT, which predates this whole plan; a residue check compares CONTENT, not git history, see this task's own SUMMARY):" >&2
+    echo "$diff_output" >&2
+  fi
+
+  echo "==> e41-5: rebuilding the shipped (variant A only) app to leave the install in a clean state"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER" /tmp/pv-e41-5-rebuild-clean.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  if assert_e41_5 "$E41_5_LOG"; then
+    echo "PASS: e41-5 -- see $E41_5_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-5 -- see $E41_5_LOG" >&2
+    exit 1
+  fi
+}
+
+assert_e41_5() {
+  local target="$1"
+  if [ "${1:-}" = "--assert-only" ]; then
+    target="$2"
+  fi
+  if ! require_nonempty_file "$target" "e41-5"; then
+    return 1
+  fi
+  if ! grep -q "variant=A" "$target"; then
+    echo "FAIL: e41-5 -- no variant=A label found in $target" >&2
+    return 1
+  fi
+  if ! grep -q "variant=B" "$target"; then
+    echo "FAIL: e41-5 -- no variant=B label found in $target" >&2
+    return 1
+  fi
+  if ! grep -qE 'PVFILL\|E41-5\|variant=(A|B) stage=entry' "$target"; then
+    echo "FAIL: e41-5 -- no PVFILL|E41-5| entry line found in $target" >&2
+    return 1
+  fi
+  return 0
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
+  tracer)
+    shift
+    if [ "${1:-}" = "--assert-only" ]; then
+      if [ -z "${2:-}" ]; then
+        echo "ERROR: --assert-only requires a <path> argument" >&2
+        exit 1
+      fi
+      if assert_tracer "$2"; then exit 0; else exit 1; fi
+    fi
+    cmd_tracer
+    ;;
+  e41-5)
+    shift
+    if [ "${1:-}" = "--assert-only" ]; then
+      if [ -z "${2:-}" ]; then
+        echo "ERROR: --assert-only requires a <path> argument" >&2
+        exit 1
+      fi
+      if assert_e41_5 "$2"; then exit 0; else exit 1; fi
+    fi
+    cmd_e41_5
+    ;;
   *) usage ;;
 esac

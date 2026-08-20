@@ -143,19 +143,27 @@ inputs `decrypt_item` binds — and what encoding does it use?
 `(for: any ASCredentialRequest)` vs. deprecated `(for: ASPasswordCredentialIdentity)`) does the
 system actually invoke on this toolchain?
 
-**Verdict: UNRESOLVED — blocker: Phase 36 did not run E9.**
+**Verdict: RESOLVED (2026-08-20, Plan 41-03 Task 2/E41-5) — both overloads log; the deprecated
+selector is a fallback, not dead code.**
 
 - `41-RESEARCH.md` §B6 records E9 as "marked optional there" (in Phase 36) and states "If E9 was
   not run in Phase 36, Phase 41 must run it."
-- A full-text search of `ios/IOS-SPIKE-LOG.md` for `E9` / `E-9` returns zero matches — confirmed
-  this session (`grep -n 'E9\b\|E-9\b' ios/IOS-SPIKE-LOG.md`, no output). Phase 36's own status
-  table (`ios/IOS-SPIKE-LOG.md:22`) and closing-gates section
-  (`ios/IOS-SPIKE-LOG.md:2182-2225`) list SC1/SC4/SC5 and the E1-E8 family but never E9.
-- **Named blocker:** E9 has not been run by any prior phase. Per `41-RESEARCH.md` §"Experiment
-  Plans", E41-5 (owned by plan 41-03, per this phase's own source-coverage audit,
-  `41-01-PLAN.md`'s table row "RESEARCH | E41-1..E41-9 | 41-01 (E41-1), ... 41-03 (E41-5), ...")
-  is the plan that runs it. This row stays UNRESOLVED until 41-03 Task 2 records E41-5's result and
-  amends this file.
+- Two isolated builds (variant A: only the current, `any ASCredentialRequest`-typed override;
+  variant B: only the deprecated, `ASPasswordCredentialIdentity`-typed override) were each driven
+  through a real system AutoFill invocation (`scripts/ios-autofill-e41.sh e41-5`,
+  `ios/evidence/41/e41-5-overload.log`). BOTH logged their own `PVFILL|E41-5|variant=<A|B>
+  stage=entry` marker on entry: `variant=A` at `2026-08-20 03:10:21`, `variant=B` at
+  `2026-08-20 03:12:36`.
+- **Outcome, per `41-RESEARCH.md` §E41-5's own three-outcome taxonomy: "both log ⇒ the system
+  falls back; the template is merely stale."** iOS 26.5 invokes whichever
+  `provideCredentialWithoutUserInteraction` overload is actually present -- the current one when
+  it is bound (the shipped, production state, Plan 41-03's own Task 1), and the deprecated one
+  when THAT is the only one bound (variant B's isolated build). Neither selector is dead; the
+  deprecated pair is a genuine OS-level fallback, not an inert relic Xcode's template shipped by
+  mistake. No landmine entry is warranted (that only applies to the "only A logs" outcome).
+  Production code continues to override ONLY the current, non-deprecated pair (F2's own
+  prohibition, unaffected by this finding — a fallback existing does not make relying on it
+  correct).
 
 ## What a PASS in this phase can and cannot mean
 
