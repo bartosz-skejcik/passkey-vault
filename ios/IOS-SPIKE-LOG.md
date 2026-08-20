@@ -4406,3 +4406,25 @@ pv-wasm). Items still owed to a human:
    mid-flight reseal is timing-dependent and was not driven both ways in a live run.
 3. **Family-surface visual conformance sweep** vs ios/brand/screens-vault.html — incl. the
    singleton-family 409 alert (never rendered on a screenshot) and roster/invite screens.
+
+## 8c. Phase 41 — human-verify backlog (2026-08-20, orchestrator disposition)
+
+`41-VERIFICATION.md` closed 5/5 at HEAD d0c3916 (all four live legs re-driven post-fix). Owed to a
+human / later phases:
+
+1. **W-1 (pre-release only):** `IdentityStoreSync.readPublishedKeySet()` reads a LEGACY (pre-.v2)
+   published-keys blob as empty, so identities published before the format bump survive every
+   republish as un-removable QuickType entries until the container is cleared. Narrow, but the live
+   effect is an immortal stale suggestion — fix or wipe-on-migrate before any TestFlight build.
+2. **T-41-23 / WINDOWS #17:** fill-time origin equality for `.domain` identities is structurally a
+   data-integrity check (system API echoes the registered identity, never the visited page) —
+   unmitigated, recorded in DR-41-B's CORRECTED FINDING.
+3. **WINDOWS #18:** `prepareCredentialList`'s gate never observed firing live (standing capture wired).
+4. **CR-04 sleep-clock empiricism:** mach_continuous_time chosen on xnu-header analysis; a real
+   device sleep cycle has never exercised the idle window / 12h ceiling.
+5. **FILL-02's app half:** every proven fill is Safari `.domain`; filling into another APP's login
+   form was never exercised (no SUMMARY overclaims it).
+6. **39-evidence regression → Phase 42:** `SyncDecodeTests.decoding*Body()` are RED at HEAD because
+   Phase 40's 6701e61 overwrote `ios/evidence/39/01-server-contract.md`'s fenced JSON bodies (tests
+   parse an evidence file that live scripts rewrite — a coupling Phase 42's audit must break).
+7. §3b hardware block stands: all AutoFill proof is simulator-only until the paid membership.
