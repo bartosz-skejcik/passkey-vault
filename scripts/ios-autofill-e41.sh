@@ -2343,6 +2343,361 @@ cmd_lock_build() {
   fi
 }
 
+# =============================================================================
+# e41-4 -- host unlocks (real ACC-04), extension fills; the check shown able to
+# refuse when the marker is artificially expired (Task 2, 41-07)
+# =============================================================================
+#
+# TWO test methods, not one shared method switched by an environment variable -- found live,
+# this session: `TEST_RUNNER_<VAR>` (Xcode's documented env-var passthrough to the XCTest RUNNER
+# process, distinct from `XCUIApplication.launchEnvironment`, which only reaches the LAUNCHED APP
+# under test) did NOT actually reach `ProcessInfo.processInfo.environment` inside the test method
+# on this toolchain -- confirmed by an isolated run that unconditionally took the unexpired branch
+# regardless of the override. `AutoFillLockUITests.swift`'s own header records the same finding.
+# Run 1 (`testE41_4_UnexpiredHostUnlockThenExtensionFillsSilently`) -- real biometric unlock, then
+# an immediate silent fill. Run 2 (`testE41_4_ExpiredMarkerRefusesTheFill`) -- the IDENTICAL real
+# unlock sequence, with `e41-lock-marker-offset.marker` set to a NEGATIVE offset
+# (`AutoFillLockE41TestHook`, applied by the SAME real unlock's own production call site) --
+# proving the lazy check can refuse, never a second, hand-written "locked" simulation.
+E41_4_LOG="$EVIDENCE_DIR/e41-4-host-unlock-then-fill.log"
+E41_4_UNEXPIRED_TEST_ID="PasskeyVaultUITests/AutoFillLockUITests/testE41_4_UnexpiredHostUnlockThenExtensionFillsSilently"
+E41_4_EXPIRED_TEST_ID="PasskeyVaultUITests/AutoFillLockUITests/testE41_4_ExpiredMarkerRefusesTheFill"
+
+run_e41_4_scenario() {
+  local udid="$1" test_id="$2" out_log="$3"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"$test_id" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) PV_PROBE_E41_LOCK' \
+    test > "$out_log" 2>&1
+}
+
+drive_e41_4_scenario() {
+  local udid="$1" test_id="$2" out_log="$3"
+  local result=0
+  run_e41_4_scenario "$udid" "$test_id" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$result"
+}
+
+assert_e41_4() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-4"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -qE '^RUN1-XCODEBUILD-EXIT: 0$' "$target"; then
+    echo "FAIL: e41-4 -- unexpired run's own test method did not exit 0 in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE '^RUN2-XCODEBUILD-EXIT: 0$' "$target"; then
+    echo "FAIL: e41-4 -- expired run's own test method (asserting the field stays UNFILLED) did not exit 0 in $target" >&2
+    failed=1
+  fi
+
+  local run1_section run2_section run1_kind run2_kind
+  run1_section=$(awk '/^## Run 1/{f=1} f && /^## Run 2/{exit} f' "$target")
+  run2_section=$(awk '/^## Run 2/{f=1} f' "$target")
+
+  run1_kind=$(printf '%s\n' "$run1_section" | grep -oE 'entry=(silent|interactive) stage=(fill status=ok|lock-check status=locked)' | head -1)
+  run2_kind=$(printf '%s\n' "$run2_section" | grep -oE 'entry=(silent|interactive) stage=(fill status=ok|lock-check status=locked)' | head -1)
+
+  if [ -z "$run1_kind" ]; then
+    echo "FAIL: e41-4 -- no branch line found for the unexpired run in $target" >&2
+    failed=1
+  fi
+  if [ -z "$run2_kind" ]; then
+    echo "FAIL: e41-4 -- no branch line found for the expired run in $target" >&2
+    failed=1
+  fi
+  if [ -n "$run1_kind" ] && [ -n "$run2_kind" ] && [ "$run1_kind" = "$run2_kind" ]; then
+    echo "FAIL: e41-4 -- both runs took the SAME branch ($run1_kind) -- the lazy check is not wired" >&2
+    failed=1
+  fi
+
+  if grep -qE 'stage=fill status=ok' "$target" && ! printf '%s\n' "$run1_kind" | grep -q 'stage=fill status=ok'; then
+    echo "FAIL: e41-4 -- the unexpired run did not take the silent no-ceremony branch DR-41-A(b) predicts" >&2
+    failed=1
+  fi
+
+  # T-41-12/T-41-15/T-41-38: no plaintext in the capture.
+  if grep -q "E41-Lock-07-Fill!" "$target"; then
+    echo "FAIL: e41-4 -- evidence capture contains the E41-4 plaintext password" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+cmd_e41_4() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_4 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-4: pinned simulator UDID: $udid"
+
+  echo "==> e41-4: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-4: building app+extension (PV_PROBE_E41_LOCK)"
+  build_with_l10_retry "$udid" "PV_PROBE_E41_LOCK" /tmp/pv-e41-4-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: e41-4 -- App Group container not found" >&2
+    exit 1
+  fi
+  rm -f "$group_dir/e41-lock-marker-offset.marker"
+
+  : > "$E41_4_LOG"
+
+  # `--start "$ts"` per run, NEVER `--last Nm` -- a sliding lookback window was observed LIVE,
+  # this session, to overlap between two runs started less than N minutes apart, contaminating
+  # Run 2's own section with Run 1's leftover entries and making the branch-differentiation
+  # assertion below pick up the WRONG (earlier) line. `run_one_cold_cycle`'s own established
+  # `--start "$boot_ts"` precedent (cmd_e41_6) is the fix, applied here too.
+  echo "## Run 1 -- unexpired (real biometric unlock, immediate silent fill)" >> "$E41_4_LOG"
+  local run1_start run1_log run1_result=0
+  run1_start=$(date '+%Y-%m-%d %H:%M:%S')
+  run1_log=$(mktemp)
+  drive_e41_4_scenario "$udid" "$E41_4_UNEXPIRED_TEST_ID" "$run1_log" || run1_result=$?
+  echo "RUN1-XCODEBUILD-EXIT: $run1_result" >> "$E41_4_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run1_start" >> "$E41_4_LOG" 2>&1
+  echo "" >> "$E41_4_LOG"
+  rm -f "$run1_log"
+
+  echo "## Run 2 -- artificially expired (marker offset -10800s, applied by the same real unlock)" >> "$E41_4_LOG"
+  echo "-10800" > "$group_dir/e41-lock-marker-offset.marker"
+  local run2_start run2_log run2_result=0
+  run2_start=$(date '+%Y-%m-%d %H:%M:%S')
+  run2_log=$(mktemp)
+  drive_e41_4_scenario "$udid" "$E41_4_EXPIRED_TEST_ID" "$run2_log" || run2_result=$?
+  echo "RUN2-XCODEBUILD-EXIT: $run2_result" >> "$E41_4_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run2_start" >> "$E41_4_LOG" 2>&1
+  rm -f "$group_dir/e41-lock-marker-offset.marker" "$run2_log"
+
+  if assert_e41_4 "$E41_4_LOG"; then
+    echo "PASS: e41-4 -- see $E41_4_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-4 -- see $E41_4_LOG" >&2
+    exit 1
+  fi
+}
+
+# =============================================================================
+# e41-7 -- extension-only activity keeps the session alive (ACC-07), expiry
+# deletes the real Secret C and a fresh unlock recreates it (ACC-06), a
+# backward-clock model does not resurrect an expired session (Task 3, 41-07)
+# =============================================================================
+E41_7_LOG="$EVIDENCE_DIR/e41-7-lock.log"
+E41_7_ACC07_TEST_ID="PasskeyVaultUITests/AutoFillLockUITests/testE41_7_ACC07_ExtensionOnlyActivityKeepsHostSessionAlive"
+E41_7_ACC06_TEST_ID="PasskeyVaultUITests/AutoFillLockUITests/testE41_7_ACC06_ExpiryDeletesRealKeychainEntryAndFreshUnlockRecreatesIt"
+E41_7_BACKWARD_TEST_ID="PasskeyVaultUITests/AutoFillLockUITests/testE41_7_BackwardClockDoesNotResurrectAnExpiredSession"
+
+run_e41_7_test() {
+  local udid="$1" test_id="$2" out_log="$3"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"$test_id" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) PV_PROBE_E41_LOCK' \
+    test > "$out_log" 2>&1
+}
+
+drive_e41_7_test() {
+  local udid="$1" test_id="$2" out_log="$3"
+  local result=0
+  run_e41_7_test "$udid" "$test_id" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$result"
+}
+
+assert_e41_7() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-7"; then
+    return 1
+  fi
+  local failed=0
+
+  local acc07_section acc06_section backward_section
+  acc07_section=$(awk '/^## ACC-07/{f=1} f && /^## ACC-06/{exit} f' "$target")
+  acc06_section=$(awk '/^## ACC-06/{f=1} f && /^## Backward/{exit} f' "$target")
+  backward_section=$(awk '/^## Backward/{f=1} f' "$target")
+
+  if ! printf '%s\n' "$acc07_section" | grep -qE '^ACC07-XCODEBUILD-EXIT: 0$'; then
+    echo "FAIL: e41-7 -- ACC-07 leg's own test method did not exit 0 in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$acc07_section" | grep -q 'PVLOCK|'; then
+    echo "FAIL: e41-7 -- ACC-07 leg's marker line is missing in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$acc07_section" | grep -q 'stage=host-launch-read writer=extension'; then
+    echo "FAIL: e41-7 -- ACC-07 leg's host-launch-read never showed writer=extension (receiver-side match) in $target" >&2
+    failed=1
+  fi
+
+  if ! printf '%s\n' "$acc06_section" | grep -qE '^ACC06-XCODEBUILD-EXIT: 0$'; then
+    echo "FAIL: e41-7 -- ACC-06 leg's own test method did not exit 0 in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$acc06_section" | grep -q 'stage=sessionkey-delete'; then
+    echo "FAIL: e41-7 -- ACC-06 leg's explicit delete log line is missing in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$acc06_section" | grep -qE 'stage=lock-check status=locked'; then
+    echo "FAIL: e41-7 -- ACC-06 leg never observed the interaction-required branch in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$acc06_section" | grep -qE 'entry=(silent|interactive) stage=fill status=ok'; then
+    echo "FAIL: e41-7 -- ACC-06 leg's fresh-unlock recreate did not observe a successful fill in $target" >&2
+    failed=1
+  fi
+
+  if ! printf '%s\n' "$backward_section" | grep -qE '^BACKWARD-XCODEBUILD-EXIT: 0$'; then
+    echo "FAIL: e41-7 -- backward-clock leg's own test method did not exit 0 in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$backward_section" | grep -q 'PVLOCK|'; then
+    echo "FAIL: e41-7 -- backward-clock leg's marker line is missing in $target" >&2
+    failed=1
+  fi
+  if ! printf '%s\n' "$backward_section" | grep -qE 'stage=lock-check status=locked'; then
+    echo "FAIL: e41-7 -- backward-clock leg did not record a still-expired session in $target" >&2
+    failed=1
+  fi
+
+  if grep -q "E41-Lock-07-Fill!" "$target"; then
+    echo "FAIL: e41-7 -- evidence capture contains the E41-7 plaintext password" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+cmd_e41_7() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_7 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-7: pinned simulator UDID: $udid"
+
+  echo "==> e41-7: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-7: building app+extension (PV_PROBE_E41_LOCK)"
+  build_with_l10_retry "$udid" "PV_PROBE_E41_LOCK" /tmp/pv-e41-7-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: e41-7 -- App Group container not found" >&2
+    exit 1
+  fi
+  rm -f "$group_dir/e41-lock-marker-offset.marker"
+
+  : > "$E41_7_LOG"
+
+  # `--start "$ts"` per leg, NEVER `--last Nm` -- see e41-4's own note on the live overlap this
+  # caused (a sliding lookback window contaminating a later section with an earlier leg's lines).
+  echo "## ACC-07 -- extension-only activity keeps the host session alive" >> "$E41_7_LOG"
+  local acc07_start acc07_log acc07_result=0
+  acc07_start=$(date '+%Y-%m-%d %H:%M:%S')
+  acc07_log=$(mktemp)
+  drive_e41_7_test "$udid" "$E41_7_ACC07_TEST_ID" "$acc07_log" || acc07_result=$?
+  echo "ACC07-XCODEBUILD-EXIT: $acc07_result" >> "$E41_7_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$acc07_start" >> "$E41_7_LOG" 2>&1
+  echo "" >> "$E41_7_LOG"
+  rm -f "$acc07_log"
+
+  echo "## ACC-06 -- expiry deletes the real Keychain entry; fresh unlock recreates it (also this task's forward-clock leg: real elapsed time causing real expiry)" >> "$E41_7_LOG"
+  local acc06_start acc06_log acc06_result=0
+  acc06_start=$(date '+%Y-%m-%d %H:%M:%S')
+  acc06_log=$(mktemp)
+  drive_e41_7_test "$udid" "$E41_7_ACC06_TEST_ID" "$acc06_log" || acc06_result=$?
+  echo "ACC06-XCODEBUILD-EXIT: $acc06_result" >> "$E41_7_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$acc06_start" >> "$E41_7_LOG" 2>&1
+  echo "" >> "$E41_7_LOG"
+  rm -f "$acc06_log"
+
+  echo "## Backward-clock -- a future-dated marker (the rewound-clock model, see AutoFillLockE41TestHook.swift) must not resurrect a session" >> "$E41_7_LOG"
+  echo "3600" > "$group_dir/e41-lock-marker-offset.marker"
+  local backward_start backward_log backward_result=0
+  backward_start=$(date '+%Y-%m-%d %H:%M:%S')
+  backward_log=$(mktemp)
+  drive_e41_7_test "$udid" "$E41_7_BACKWARD_TEST_ID" "$backward_log" || backward_result=$?
+  echo "BACKWARD-XCODEBUILD-EXIT: $backward_result" >> "$E41_7_LOG"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$backward_start" >> "$E41_7_LOG" 2>&1
+  rm -f "$group_dir/e41-lock-marker-offset.marker" "$backward_log"
+
+  if assert_e41_7 "$E41_7_LOG"; then
+    echo "PASS: e41-7 -- see $E41_7_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-7 -- see $E41_7_LOG" >&2
+    exit 1
+  fi
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;

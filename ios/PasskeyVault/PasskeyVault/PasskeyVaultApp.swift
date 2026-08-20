@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import os
 
 @main
 struct PasskeyVaultApp: App {
@@ -16,6 +17,36 @@ struct PasskeyVaultApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     init() {
+        // Phase 41, Plan 41-07, Task 3 (E41-7's ACC-07 leg): PRODUCTION diagnostic, unconditional
+        // and cheap (one UserDefaults read, no Keychain, no side effect) -- logs whichever
+        // process most recently wrote the lock marker, on EVERY host-app launch. This is the
+        // "host app's next launch reads a marker value the EXTENSION wrote" receiver-side
+        // assertion target: the extension's own `SessionLifecycle.refreshActivity(writer:)` logs
+        // `PVLOCK|stage=activity-refresh writer=extension` when IT writes; this line is the
+        // matching read-side half, letting `scripts/ios-autofill-e41.sh e41-7` compare the two
+        // WITHOUT the host needing to run a full re-unlock/routing cycle to observe it. Never
+        // logs the marker's own numeric fields (T-41-38) -- only `writer` and whether the boot
+        // session still matches.
+        if let marker = LockMarker.read() {
+            let bootMatches = marker.bootSessionId == (LockMarker.currentBootSessionId() ?? "")
+            Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill").log(
+                "PVLOCK|stage=host-launch-read writer=\(marker.writer, privacy: .public) bootMatch=\(bootMatches, privacy: .public)"
+            )
+        } else {
+            Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill").log("PVLOCK|stage=host-launch-read writer=none")
+        }
+
+        #if DEBUG
+        // Phase 41, Plan 41-07, Task 3 (E41-7's own precondition: "the idle window can be
+        // configured to a short value for the test run"). Same `PV_UITEST_*` hook convention as
+        // every other DEBUG-only test toggle in this file. A no-op unless the driving script sets
+        // it; writes through the REAL `AutoLockPolicy.write` (its own whitelist validation still
+        // applies -- an out-of-whitelist value here is silently ignored, never persisted).
+        if let raw = ProcessInfo.processInfo.environment["PV_UITEST_E41_7_IDLE_MINUTES"], let minutes = Int(raw) {
+            AutoLockPolicy.write(minutes)
+        }
+        #endif
+
         // Phase 36, Plan 36-02, Task 2 (E3): seed the shared keychain item
         // BEFORE the extension is ever invoked, so a launch of this app is
         // always the first half of the ordered host-then-extension sequence
@@ -66,6 +97,24 @@ struct PasskeyVaultApp: App {
         #if PV_PROBE_IDENTITYSTORE
         Task {
             await IdentityStoreSyncProbe.runIfMarked()
+        }
+        #endif
+
+        // Phase 41, Plan 41-07, Tasks 2/3 (E41-4/E41-7): seeds Secret A + one real cache item +
+        // one identity -- see `LockE41Seeder.swift`'s own header for why Secret C/the lock
+        // marker are deliberately NOT seeded here (Task 2/3's own point is proving the REAL
+        // unlock path produces them). Compiled in only under `PV_PROBE_E41_LOCK` -- but gated a
+        // SECOND time behind a RUNTIME env var, `PV_UITEST_E41_LOCK_SEED`: this compile flag is
+        // baked into the binary for the WHOLE test run, so without a runtime toggle the seed
+        // would re-run (with a FRESH `FfiUserKey`, invalidating Secret A/the cache) on EVERY
+        // launch, including the second, "real unlock" launch this task's own tests deliberately
+        // keep separate from the seeding launch -- the exact race this env-var gate exists to
+        // prevent.
+        #if PV_PROBE_E41_LOCK
+        if ProcessInfo.processInfo.environment["PV_UITEST_E41_LOCK_SEED"] != nil {
+            Task {
+                await LockE41Seeder.seed()
+            }
         }
         #endif
 

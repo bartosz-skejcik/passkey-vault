@@ -1,0 +1,46 @@
+## Run 1 -- unexpired (real biometric unlock, immediate silent fill)
+RUN1-XCODEBUILD-EXIT: 0
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-20 09:40:37.373204+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-launch-read writer=extension bootMatch=true
+2026-08-20 09:40:38.129505+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=secretA digest=57d722dd4221d3d2a715176f89291071ee8115c02323eb1c11c641a8664c9f3e
+2026-08-20 09:40:38.148683+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=cache itemId=e41-lock-item-41-07
+2026-08-20 09:40:38.884085+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=true
+2026-08-20 09:40:38.974673+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=incremental
+2026-08-20 09:40:38.974786+0200 0x7a7e49   Default     0x0                  70845  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=identity
+2026-08-20 09:40:44.762232+0200 0x7a805a   Default     0x0                  70950  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-launch-read writer=extension bootMatch=true
+2026-08-20 09:40:45.194997+0200 0x7a805a   Default     0x0                  70950  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=host-unlock stage=lazy-check status=unlocked
+2026-08-20 09:40:45.682209+0200 0x7a805a   Default     0x0                  70950  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-unlock bootSessionId=73E495F0-1521-4620-8FEA-6D4063FA82CB
+2026-08-20 09:41:05.821161+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=silent stage=lazy-check status=unlocked
+2026-08-20 09:41:05.821194+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=lock-check status=unlocked
+2026-08-20 09:41:05.825819+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=diagnose-target identifier=127.0.0.1 type=ASCredentialServiceIdentifierType(rawValue: 0)
+2026-08-20 09:41:05.830126+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=cache-lookup status=ok
+2026-08-20 09:41:05.833665+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-read status=ok len=32
+2026-08-20 09:41:05.834758+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=sessionkey status=ok
+2026-08-20 09:41:05.835652+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=decrypt status=ok
+2026-08-20 09:41:05.836602+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=matcher status=accepted
+2026-08-20 09:41:05.836617+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=fill status=ok
+2026-08-20 09:41:05.837202+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=activity-refresh writer=extension
+2026-08-20 09:41:06.065625+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=true
+2026-08-20 09:41:06.081791+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=incremental
+2026-08-20 09:41:06.081812+0200 0x7a852f   Default     0x0                  71179  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=self-heal status=ok record=e41-lock-item-41-07
+
+## Run 2 -- artificially expired (marker offset -10800s, applied by the same real unlock)
+RUN2-XCODEBUILD-EXIT: 0
+getpwuid_r did not find a match for uid 501
+Timestamp                       Thread     Type        Activity             PID    TTL  
+2026-08-20 09:41:31.318367+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-launch-read writer=extension bootMatch=true
+2026-08-20 09:41:31.746690+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=secretA digest=84eb04441c777150e5d0ba91c01d906a30d41a654434aa2c1b2037aeefb105db
+2026-08-20 09:41:31.757009+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=cache itemId=e41-lock-item-41-07
+2026-08-20 09:41:32.097212+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=state supportsIncrementalUpdates=true
+2026-08-20 09:41:32.114968+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41-2|stage=republish status=ok count=1 mode=incremental
+2026-08-20 09:41:32.115057+0200 0x7a8eb5   Default     0x0                  71642  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E41LOCK|stage=seed status=ok step=identity
+2026-08-20 09:41:37.790142+0200 0x7a9089   Default     0x0                  71736  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-launch-read writer=extension bootMatch=true
+2026-08-20 09:41:38.214968+0200 0x7a9089   Default     0x0                  71736  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=host-unlock stage=lazy-check status=unlocked
+2026-08-20 09:41:38.699381+0200 0x7a9089   Default     0x0                  71736  0    PasskeyVault: (PasskeyVault.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=host-unlock bootSessionId=73E495F0-1521-4620-8FEA-6D4063FA82CB
+2026-08-20 09:41:58.829324+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-delete status=0
+2026-08-20 09:41:58.830061+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=silent stage=lazy-check status=expired
+2026-08-20 09:41:58.830074+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=silent stage=lock-check status=locked
+2026-08-20 09:41:58.861707+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-delete status=-25300
+2026-08-20 09:41:58.861731+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=interactive stage=lazy-check status=expired
+2026-08-20 09:41:58.861741+0200 0x7a95df   Default     0x0                  71987  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=interactive stage=lock-check status=locked

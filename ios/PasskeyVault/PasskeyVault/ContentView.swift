@@ -270,6 +270,13 @@ struct ContentView: View {
         defer { sessionBytes.resetBytes(in: 0..<sessionBytes.count) }
         try? SessionKeyStore.store(sessionBytes)
         SessionLifecycle.recordHostUnlock()
+        #if DEBUG
+        // Phase 41, Plan 41-07, Tasks 2/3 (E41-4's "prove the check can refuse" leg; E41-7's
+        // clock legs): immediately after the REAL unlock above just wrote a fresh, valid marker,
+        // OPTIONALLY overwrite it per an offset a marker FILE names -- see
+        // `AutoFillLockE41TestHook.swift`'s own header. A no-op on every normal launch.
+        AutoFillLockE41TestHook.applyMarkerOffsetIfRequested()
+        #endif
         route = .unlocked(session)
     }
 
