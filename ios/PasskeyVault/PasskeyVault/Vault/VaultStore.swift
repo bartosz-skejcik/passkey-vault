@@ -404,6 +404,10 @@ final class VaultStore {
             collectionId: nil,
             lastEditorEmail: nil
         )))
+        // Plan 41-04 (FILL-03): one of the phase's four required choke-point call sites --
+        // create. Republished with the CURRENT, COMPLETE item set (never a delta this call site
+        // computed itself, `IdentityStoreSync.republish`'s own header).
+        await IdentityStoreSync.republish(sources: Self.identitySources(from: items))
         return item
     }
 
@@ -515,6 +519,9 @@ final class VaultStore {
             collectionId: item.collectionId,
             lastEditorEmail: item.lastEditorEmail
         )))
+        // Plan 41-04 (FILL-03): choke-point call site -- edit (`update`). Same discipline as
+        // `create` above: the CURRENT, COMPLETE item set, after this edit's own mutation landed.
+        await IdentityStoreSync.republish(sources: Self.identitySources(from: items))
         return updated
     }
 
@@ -540,6 +547,10 @@ final class VaultStore {
         // never purged -- see `patchCacheAfterLocalMutation(_:)`'s own
         // header.
         patchCacheAfterLocalMutation(.remove(id: item.id))
+        // Plan 41-04 (FILL-03): choke-point call site -- delete. `items` no longer contains
+        // this row, so republishing the CURRENT set is what removes its identity/-ies from
+        // QuickType (T-41-17's own stale-identity threat -- this is its mitigation).
+        await IdentityStoreSync.republish(sources: Self.identitySources(from: items))
     }
 
     /// WR-04 (39-REVIEW.md): `create`/`update`/`delete` mutate the server
@@ -759,6 +770,26 @@ final class VaultStore {
         // these are separate endpoints with their own state, not covered
         // by the personal pull's up-to-date/snapshot split.
         await mergeSharedAndFamilyWideItems()
+
+        // Plan 41-04 (FILL-03): choke-point call site -- the sync-pull completion. Runs AFTER
+        // the shared/family-wide merge above, so the republished set reflects everything this
+        // refresh cycle actually settled on -- own items, direct shares and family-wide items
+        // alike -- never only the personal `/api/sync` arm.
+        await IdentityStoreSync.republish(sources: Self.identitySources(from: items))
+    }
+
+    /// Plan 41-04 (FILL-03): the one place `[VaultItemViewModel]` -> `[VaultIdentitySource]`
+    /// happens, shared by all four choke-point call sites above so the mapping itself cannot
+    /// drift between them. Only `.login` rows carry identity-relevant data (`LoginFields.username`/
+    /// `.urls`); every other content case (five other item types, `.undecryptable`,
+    /// `.pendingFamilyKey`) contributes nothing -- `IdentityStoreSync.buildIdentities` also skips
+    /// an empty username/url set, but filtering the content case here keeps that skip visible at
+    /// the call site rather than buried inside the writer.
+    private static func identitySources(from items: [VaultItemViewModel]) -> [VaultIdentitySource] {
+        items.compactMap { item in
+            guard case let .fields(.login(login)) = item.content else { return nil }
+            return VaultIdentitySource(itemId: item.id, username: login.username, urls: login.urls)
+        }
     }
 
     /// CR-04 item 4 (40-REVIEW.md): the raw `enc_key` a `ShareItemView`

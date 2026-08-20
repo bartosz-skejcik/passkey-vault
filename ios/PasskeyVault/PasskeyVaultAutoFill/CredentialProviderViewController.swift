@@ -168,6 +168,145 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             withSelectedCredential: ASPasswordCredential(user: payload.username, password: payload.password),
             completionHandler: nil
         )
+
+        // Plan 41-04 (FILL-03): the post-fill self-heal write. A cold fill just proved this ONE
+        // item is reachable end-to-end (lock check, session key, cache lookup, decrypt) -- that
+        // is exactly the information needed to repair ITS OWN identity-store entry if a prior
+        // choke-point write for this item was ever dropped (a busy write that exhausted its
+        // retries, a disabled-store window that predates the config-screen rebuild below ever
+        // running). Fire-and-forget, AFTER `completeRequest` -- never delays the fill the user is
+        // waiting on (mirrors `VaultStore.touch(itemId:)`'s own fire-and-forget discipline,
+        // `VaultStore.swift`'s header). Cheap: ONE item, not a full rebuild.
+        let selfHealRecordIdentifier = recordIdentifier
+        let selfHealUsername = payload.username
+        let selfHealServiceIdentifier = request.credentialIdentity.serviceIdentifier.identifier
+        Task {
+            let result = await IdentityStoreSync.republish(sources: [
+                VaultIdentitySource(itemId: selfHealRecordIdentifier, username: selfHealUsername, urls: [selfHealServiceIdentifier]),
+            ])
+            switch result {
+            case .success:
+                Self.fillLogger.log("PVFILL|E41-2|stage=self-heal status=ok record=\(selfHealRecordIdentifier, privacy: .public)")
+            case let .failure(error):
+                Self.fillLogger.log("PVFILL|E41-2|stage=self-heal status=fail error=\(error.description, privacy: .public)")
+            }
+        }
+    }
+
+    // MARK: - Plan 41-04 (FILL-03) -- the full-rebuild recovery path
+
+    /// One cached item's minimal identity-relevant plaintext shape. Deliberately NOT
+    /// `LoginFields` (`Vault/ItemFields.swift`, HOST-ONLY -- see `IdentityStoreSync.swift`'s own
+    /// header for why the extension has no dependency on that file). `JSONDecoder` ignores every
+    /// other key by default, so this decodes the SAME real production plaintext without needing
+    /// the host target's full model (same discipline `TracerLoginPayload` above already
+    /// established). `urls`/`url` are BOTH optional and read independently -- a legacy item may
+    /// carry the single-`url` shape `ItemNormalize.swift` (host-only) migrates on read; this
+    /// rebuild path has no access to that migration, so it reads either shape directly rather
+    /// than silently dropping every legacy row.
+    private struct RebuildLoginPayload: Decodable {
+        let type: String?
+        let username: String?
+        let urls: [String]?
+        let url: String?
+    }
+
+    /// Mirrors `CipherCacheReader`'s own private wire-key decode (`CipherCacheReader.swift`) --
+    /// duplicated rather than shared for the same reason `SessionKeyReader.swift`'s own header
+    /// gives ("separate build targets, no shared framework between them"); this one additionally
+    /// needs every ROW in the snapshot, not one row by `recordIdentifier`, which
+    /// `CipherCacheReader.lookup` does not expose.
+    private struct RebuildWireWrappedKey: Decodable {
+        let nonce: [UInt8]
+        let ciphertext: [UInt8]
+    }
+
+    private static func decodeRebuildWireKey(_ json: String) -> FfiWrappedKey? {
+        guard let wire = try? JSONDecoder().decode(RebuildWireWrappedKey.self, from: Data(json.utf8)) else {
+            return nil
+        }
+        return FfiWrappedKey(nonce: Data(wire.nonce), ciphertext: Data(wire.ciphertext))
+    }
+
+    /// The recovery path registered on `prepareInterfaceForExtensionConfiguration()` (must_have:
+    /// "a disabled store is recorded and the write is queued for a rebuild"). A no-op, cheap
+    /// (one `UserDefaults` read) unless `IdentityStoreSync.isRebuildPending()` is true -- this is
+    /// NOT a "re-verify everything on every config-screen open" sweep.
+    ///
+    /// When a rebuild IS pending, this needs the SAME two things the fill path needs (the lock
+    /// check, the session key) -- if the vault is currently locked, there is genuinely nothing
+    /// this can decrypt, and the pending flag is left set for the NEXT opportunity (a live host
+    /// mutation, or a later config-screen open after the user unlocks). This is the honest
+    /// limit T-41-20's mitigation plan accepts: a store disabled WHILE the vault is also locked
+    /// cannot self-heal without user interaction, and no code path in this phase claims otherwise.
+    private static func runIdentityRebuildIfPending() async {
+        guard IdentityStoreSync.isRebuildPending() else {
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=not-pending")
+            return
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        guard
+            let marker = LockMarker.read(),
+            let currentBootSessionId = LockMarker.currentBootSessionId(),
+            marker.bootSessionId == currentBootSessionId,
+            marker.isUnlockedLazily(now: now, idleWindow: 15 * 60)
+        else {
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=locked-skip")
+            return
+        }
+
+        let userKey: FfiUserKey
+        switch SessionKeyReader.importUserKey() {
+        case let .success(uk):
+            userKey = uk
+        case .failure:
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=sessionkey-fail")
+            return
+        }
+
+        let store = AppGroupCiphertextCacheStore()
+        guard
+            let accountMarker = store.currentAccountMarker(),
+            let snapshot = store.readCurrentSnapshot(accountId: accountMarker.accountId, serverBaseURL: accountMarker.serverBaseURL)
+        else {
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=no-cache")
+            return
+        }
+
+        var sources: [VaultIdentitySource] = []
+        var decodeFailures = 0
+        for row in snapshot.items {
+            guard
+                let encKey = decodeRebuildWireKey(row.encKey),
+                let encData = decodeRebuildWireKey(row.encData),
+                let revision32 = UInt32(exactly: row.revision)
+            else {
+                decodeFailures += 1
+                continue
+            }
+            let item = FfiEncryptedItem(encKey: encKey, encData: encData)
+            guard let plaintext = try? decryptItem(userKey: userKey, item: item, itemId: row.id, revision: revision32) else {
+                decodeFailures += 1
+                continue
+            }
+            guard
+                let payload = try? JSONDecoder().decode(RebuildLoginPayload.self, from: Data(plaintext.utf8)),
+                let username = payload.username, !username.isEmpty
+            else {
+                continue // not a login row (or one with no username) -- not a failure, just skipped
+            }
+            let urls = payload.urls ?? payload.url.map { [$0] } ?? []
+            sources.append(VaultIdentitySource(itemId: row.id, username: username, urls: urls))
+        }
+
+        let result = await IdentityStoreSync.republish(sources: sources)
+        switch result {
+        case .success:
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=ok count=\(sources.count, privacy: .public) decodeFailures=\(decodeFailures, privacy: .public)")
+        case let .failure(error):
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=fail error=\(error.description, privacy: .public)")
+        }
     }
 
     /// The entry point AutoFillInvocationUITests.swift's primary route
@@ -192,6 +331,16 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         // time, not only during an evidence run. See `renderFreshnessSurface()`'s
         // own header for why this is production behaviour, not a probe.
         renderFreshnessSurface()
+        // Plan 41-04 (FILL-03): the full-rebuild recovery path. UNCONDITIONAL, same discipline as
+        // `renderFreshnessSurface()` above -- a real user's config screen is exactly the moment a
+        // rebuild an earlier disabled-store write marked pending (`IdentityStoreSync
+        // .isRebuildPending()`) gets a chance to run. Cheap when nothing is pending (one
+        // `UserDefaults` read, no decrypt); fire-and-forget so it never blocks this screen's own
+        // rendering. See `runIdentityRebuildIfPending()`'s own header for what it can and cannot
+        // do when the vault is locked.
+        Task {
+            await Self.runIdentityRebuildIfPending()
+        }
         // Phase 39, Plan 39-07, Task 1/2 (SYNC-02/SYNC-04): the cold-read
         // proof sequence -- gated, diagnostic-only, driven exclusively by
         // `scripts/ios-cold-read-proof.sh`.

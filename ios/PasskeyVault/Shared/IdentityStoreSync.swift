@@ -1,0 +1,324 @@
+//
+//  IdentityStoreSync.swift
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
+//
+//  Phase 41 (autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami), plan 41-03 wrote this file's
+//  first version -- ONE hardcoded tracer identity, host-app-only. Plan 41-04 generalizes it into
+//  FILL-03: the ONE function every vault mutation (create/edit/delete/sync-pull, all host-app,
+//  `VaultStore.swift`) and every extension-side recovery path
+//  (`CredentialProviderViewController.swift`) reaches `ASCredentialIdentityStore` through. Moved
+//  from `PasskeyVault/PasskeyVault/` into `Shared/` (this task) -- the established cross-target
+//  folder (`LockMarker.swift` already lives here for the identical need) -- so the extension's own
+//  rebuild/self-heal call sites can reach the SAME writer rather than a second, divergent one.
+//
+//  landmine L-33 (`ios/IOS-SPIKE-LOG.md` §3 -- named "L-9" by 41-04-PLAN.md's own text, but that ID
+//  was already taken; see L-33's own numbering note): `saveCredentialIdentities`/`removeCredentialIdentities`
+//  share a Swift base name and IDENTICAL argument labels between the CURRENT,
+//  `[any ASCredentialIdentity]`-typed overload and the DEPRECATED `[ASPasswordCredentialIdentity]`-
+//  typed one (`ASCredentialIdentityStore.h`). CORRECTED FINDING (verified live against this
+//  toolchain, `swiftc -typecheck` probes -- see L-33's own entry): the array's element type alone
+//  does NOT silently rebind the modern `try await store.saveCredentialIdentities(ids)` call this
+//  file uses everywhere -- `@_disfavoredOverload` on the deprecated pair means the CURRENT
+//  overload wins via an implicit array upcast even when `ids` is concretely
+//  `[ASPasswordCredentialIdentity]`. The trap is real ONLY for the raw, non-`async`
+//  completion-handler call form (`store.saveCredentialIdentities(ids, completion: ...)`), which
+//  this file never writes. Every call site below still types its array as
+//  `[any ASCredentialIdentity]` explicitly anyway -- defense in depth, and it is what makes the
+//  code self-documenting about which selector it means to reach -- but the ACTUAL enforcement is
+//  `e41-2-build`'s `-Xfrontend -Werror -Xfrontend DeprecatedDeclaration` build gate, which fails
+//  the build the moment ANY call site (present or future, this file or elsewhere) reaches for the
+//  completion-handler form instead.
+//
+//  `state()` is checked FIRST on every call; a disabled store is a RECORDED CONDITION
+//  (`.storeDisabled`), marked as an owed rebuild (`markRebuildPending`), never a swallowed error.
+//  A busy write is retried with a bounded backoff (`isBusy`/`saveWithRetry` et al.) -- a dropped
+//  busy write is a PERMANENTLY missing QuickType entry until the next mutation happens to touch
+//  that same item again, which for an item nobody edits again is never.
+//
+//  `supportsIncrementalUpdates` selects the write shape: TRUE takes the incremental
+//  save-then-remove path (diffed against the LAST successfully published set, persisted below);
+//  FALSE takes `replaceCredentialIdentities(with:)`, a full replacement of the whole store. Both
+//  branches receive the SAME desired set -- the CURRENT, COMPLETE vault item set -- never a delta
+//  a caller computed itself; the diff against "what was last published" happens INSIDE this file.
+//
+
+import AuthenticationServices
+import Foundation
+import os
+
+/// One item's identity-relevant data, decoupled from `VaultItemViewModel`
+/// (`PasskeyVault/Vault/ItemFields.swift`, HOST-ONLY -- the extension has no dependency on that
+/// file or its target). The host builds this from a decrypted `LoginFields`; the extension's own
+/// recovery path (`CredentialProviderViewController.swift`) builds it from its own minimal
+/// plaintext decode, the same shape the fill path already uses.
+struct VaultIdentitySource: Equatable {
+    let itemId: String
+    let username: String
+    /// Multiple URLs per login (`LoginFields.urls`) -- ONE `ASPasswordCredentialIdentity` is
+    /// registered per URL, all sharing the same `user`/`recordIdentifier`.
+    let urls: [String]
+}
+
+enum IdentityStoreSyncError: Swift.Error, CustomStringConvertible {
+    case storeDisabled
+    case saveFailed(Swift.Error)
+    case removeFailed(Swift.Error)
+    case replaceFailed(Swift.Error)
+
+    var description: String {
+        switch self {
+        case .storeDisabled: return "ASCredentialIdentityStore is disabled"
+        case let .saveFailed(error): return "saveCredentialIdentities failed: \(error)"
+        case let .removeFailed(error): return "removeCredentialIdentities failed: \(error)"
+        case let .replaceFailed(error): return "replaceCredentialIdentities failed: \(error)"
+        }
+    }
+}
+
+enum IdentityStoreSync {
+    private static let logger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
+    // MARK: - App Group storage (this task's own state, distinct from the ciphertext cache/lock
+    // marker -- never re-uses either's key namespace)
+
+    private static let suiteName = "group.cloud.blonie.PasskeyVault"
+    private static let rebuildPendingKey = "cloud.blonie.PasskeyVault.identityRebuildPending"
+    private static let publishedKeysKey = "cloud.blonie.PasskeyVault.identityPublishedKeys"
+
+    /// The whole identity of an `ASPasswordCredentialIdentity` as far as diffing/removal cares
+    /// (`rank` is cosmetic ordering, never part of identity). Persisted so an incremental-mode
+    /// republish can compute "what changed since last time" without re-deriving it from the store
+    /// itself (`getCredentialIdentitiesForService:` returns opaque `id <ASCredentialIdentity>`
+    /// values with no stable way to diff them against a NEW desired set without re-parsing every
+    /// one -- this persisted set is our own source of truth for "what we last told the store").
+    private struct PublishedKey: Codable, Hashable {
+        let serviceIdentifier: String
+        let user: String
+        let recordIdentifier: String
+
+        init(serviceIdentifier: String, user: String, recordIdentifier: String) {
+            self.serviceIdentifier = serviceIdentifier
+            self.user = user
+            self.recordIdentifier = recordIdentifier
+        }
+
+        init(identity: ASPasswordCredentialIdentity) {
+            serviceIdentifier = identity.serviceIdentifier.identifier
+            user = identity.user
+            recordIdentifier = identity.recordIdentifier ?? ""
+        }
+    }
+
+    // MARK: - The single entry point (FILL-03's one choke point)
+
+    /// Republishes identities for the CURRENT, COMPLETE vault item set. Every caller -- host
+    /// `VaultStore.create`/`update`/`delete`/the sync-pull completion, and the extension's own
+    /// recovery paths -- hands over "here is everything that exists right now"; this function
+    /// computes what changed against the last successfully published set itself.
+    @discardableResult
+    static func republish(sources: [VaultIdentitySource]) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let state = await ASCredentialIdentityStore.shared.state()
+        guard state.isEnabled else {
+            logger.log("PVFILL|E41-2|stage=republish status=store-disabled")
+            markRebuildPending(true)
+            return .failure(.storeDisabled)
+        }
+        logger.log(
+            "PVFILL|E41-2|stage=state supportsIncrementalUpdates=\(state.supportsIncrementalUpdates, privacy: .public)"
+        )
+
+        let desired = buildIdentities(from: sources)
+        let desiredKeys = Set(desired.map(PublishedKey.init(identity:)))
+
+        let writeResult: Swift.Result<Void, IdentityStoreSyncError>
+        if state.supportsIncrementalUpdates {
+            writeResult = await republishIncremental(desired: desired, desiredKeys: desiredKeys)
+        } else {
+            writeResult = await republishFullReplacement(desired: desired)
+        }
+
+        switch writeResult {
+        case .success:
+            persistPublishedKeys(desiredKeys)
+            markRebuildPending(false)
+            logger.log(
+                "PVFILL|E41-2|stage=republish status=ok count=\(desired.count, privacy: .public) mode=\(state.supportsIncrementalUpdates ? "incremental" : "full", privacy: .public)"
+            )
+        case let .failure(error):
+            logger.error("PVFILL|E41-2|stage=republish status=fail error=\(error.description, privacy: .public)")
+        }
+        return writeResult
+    }
+
+    /// Receiver-side verification (QA-03): reads the store back and confirms an identity matching
+    /// `user`/`recordIdentifier` is present -- never "no error was thrown". Used both by 41-03's
+    /// original tracer call sites and by this plan's own evidence probe.
+    static func verifyIdentity(user: String, recordIdentifier: String) async -> Bool {
+        let identities = await ASCredentialIdentityStore.shared.credentialIdentities(
+            forService: nil, credentialIdentityTypes: .password
+        )
+        return identities.contains { identity in
+            guard let password = identity as? ASPasswordCredentialIdentity else { return false }
+            return password.user == user && password.recordIdentifier == recordIdentifier
+        }
+    }
+
+    static func isRebuildPending() -> Bool {
+        UserDefaults(suiteName: suiteName)?.bool(forKey: rebuildPendingKey) ?? false
+    }
+
+    // MARK: - Incremental (save + remove) vs full replacement
+
+    private static func republishIncremental(
+        desired: [ASPasswordCredentialIdentity], desiredKeys: Set<PublishedKey>
+    ) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let previousKeys = readPublishedKeys()
+        let removedKeys = previousKeys.subtracting(desiredKeys)
+        if !removedKeys.isEmpty {
+            let removals: [any ASCredentialIdentity] = removedKeys.map { key in
+                ASPasswordCredentialIdentity(
+                    serviceIdentifier: ASCredentialServiceIdentifier(identifier: key.serviceIdentifier, type: .domain),
+                    user: key.user,
+                    recordIdentifier: key.recordIdentifier
+                )
+            }
+            if case let .failure(error) = await removeWithRetry(removals) {
+                return .failure(error)
+            }
+        }
+        guard !desired.isEmpty else { return .success(()) }
+        let saves: [any ASCredentialIdentity] = desired
+        return await saveWithRetry(saves)
+    }
+
+    private static func republishFullReplacement(
+        desired: [ASPasswordCredentialIdentity]
+    ) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let replacements: [any ASCredentialIdentity] = desired
+        return await replaceWithRetry(replacements)
+    }
+
+    // MARK: - Store writes, each with the busy-retry discipline (T-41-20)
+
+    private static let maxBusyRetries = 3
+    private static let busyRetryBaseDelayNanoseconds: UInt64 = 200_000_000
+
+    private static func saveWithRetry(_ identities: [any ASCredentialIdentity]) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        var attempt = 0
+        while true {
+            do {
+                // The CURRENT, `[any ASCredentialIdentity]`-typed overload -- L-33.
+                try await ASCredentialIdentityStore.shared.saveCredentialIdentities(identities)
+                return .success(())
+            } catch {
+                if isBusy(error), attempt < maxBusyRetries {
+                    logger.log("PVFILL|E41-2|stage=save status=busy attempt=\(attempt, privacy: .public)")
+                    try? await Task.sleep(nanoseconds: busyRetryBaseDelayNanoseconds << attempt)
+                    attempt += 1
+                    continue
+                }
+                return .failure(.saveFailed(error))
+            }
+        }
+    }
+
+    private static func removeWithRetry(_ identities: [any ASCredentialIdentity]) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        var attempt = 0
+        while true {
+            do {
+                // The CURRENT, `[any ASCredentialIdentity]`-typed overload -- L-33.
+                try await ASCredentialIdentityStore.shared.removeCredentialIdentities(identities)
+                return .success(())
+            } catch {
+                if isBusy(error), attempt < maxBusyRetries {
+                    logger.log("PVFILL|E41-2|stage=remove status=busy attempt=\(attempt, privacy: .public)")
+                    try? await Task.sleep(nanoseconds: busyRetryBaseDelayNanoseconds << attempt)
+                    attempt += 1
+                    continue
+                }
+                return .failure(.removeFailed(error))
+            }
+        }
+    }
+
+    private static func replaceWithRetry(_ identities: [any ASCredentialIdentity]) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        var attempt = 0
+        while true {
+            do {
+                // The CURRENT, `[any ASCredentialIdentity]`-typed overload -- L-33.
+                try await ASCredentialIdentityStore.shared.replaceCredentialIdentities(identities)
+                return .success(())
+            } catch {
+                if isBusy(error), attempt < maxBusyRetries {
+                    logger.log("PVFILL|E41-2|stage=replace status=busy attempt=\(attempt, privacy: .public)")
+                    try? await Task.sleep(nanoseconds: busyRetryBaseDelayNanoseconds << attempt)
+                    attempt += 1
+                    continue
+                }
+                return .failure(.replaceFailed(error))
+            }
+        }
+    }
+
+    private static func isBusy(_ error: Swift.Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == ASCredentialIdentityStoreErrorDomain
+            && nsError.code == ASCredentialIdentityStoreError.Code.storeBusy.rawValue
+    }
+
+    // MARK: - Building identities from sources
+
+    private static func buildIdentities(from sources: [VaultIdentitySource]) -> [ASPasswordCredentialIdentity] {
+        var identities: [ASPasswordCredentialIdentity] = []
+        for (sourceIndex, source) in sources.enumerated() {
+            guard !source.username.isEmpty, !source.itemId.isEmpty else { continue }
+            for url in source.urls {
+                guard let host = serviceHost(fromURLString: url) else { continue }
+                let identity = ASPasswordCredentialIdentity(
+                    serviceIdentifier: ASCredentialServiceIdentifier(identifier: host, type: .domain),
+                    user: source.username,
+                    recordIdentifier: source.itemId
+                )
+                identity.rank = sourceIndex
+                identities.append(identity)
+            }
+        }
+        return identities
+    }
+
+    /// `ASCredentialServiceIdentifier(type: .domain)` matching is host-based (F3,
+    /// `41-RESEARCH.md`) -- QuickType matches by the CURRENT PAGE'S host, never by the raw string
+    /// an item happened to store. Handles both a bare host ("example.com") and a full URL
+    /// ("https://example.com/login") the same way an item may legitimately carry either.
+    private static func serviceHost(fromURLString raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let url = URL(string: trimmed), let host = url.host, !host.isEmpty {
+            return host
+        }
+        if let url = URL(string: "https://\(trimmed)"), let host = url.host, !host.isEmpty {
+            return host
+        }
+        return trimmed
+    }
+
+    // MARK: - Rebuild-pending / published-set persistence
+
+    private static func markRebuildPending(_ pending: Bool) {
+        UserDefaults(suiteName: suiteName)?.set(pending, forKey: rebuildPendingKey)
+    }
+
+    private static func readPublishedKeys() -> Set<PublishedKey> {
+        guard let defaults = UserDefaults(suiteName: suiteName),
+              let data = defaults.data(forKey: publishedKeysKey),
+              let keys = try? JSONDecoder().decode([PublishedKey].self, from: data)
+        else { return [] }
+        return Set(keys)
+    }
+
+    private static func persistPublishedKeys(_ keys: Set<PublishedKey>) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+        guard let data = try? JSONEncoder().encode(Array(keys)) else { return }
+        defaults.set(data, forKey: publishedKeysKey)
+    }
+}

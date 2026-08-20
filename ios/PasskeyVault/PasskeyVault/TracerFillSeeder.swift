@@ -11,7 +11,9 @@
 //  same one the real sync pipeline receives from the server), `exportUserKeyForSession` (the real
 //  session-export function), `SessionKeyStore.store`/`LockMarker.write` (this task's own real
 //  writers), `AppGroupCiphertextCacheStore().write` (Phase 39's real cache writer), and
-//  `IdentityStoreSync.registerTracerIdentity` (this task's own real identity writer). Only the
+//  `IdentityStoreSync.republish` (plan 41-04 generalized this task's own identity writer into the
+//  whole phase's single choke point -- this seeder now calls the SAME entry point every real
+//  mutation path uses). Only the
 //  DATA is synthetic (a throwaway `FfiUserKey`, a literal tracer password) -- the SAME
 //  "real writer, synthetic content" discipline `SessionKeyProbeSeeder`/`ProbeSeeder` already
 //  established for Phase 36/41-01's own evidence.
@@ -209,11 +211,12 @@ enum TracerFillSeeder {
             // `revision` key from the one item row -- the exact malformed-record shape
             // `CipherCacheReader.lookupRaw`'s own `.missingRevision` case exists to name.
             writeCacheWithRevisionKeyOmitted(encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson)
-            let registerResult = await IdentityStoreSync.registerTracerIdentity(
-                serviceIdentifier: tracerServiceIdentifier,
-                user: tracerUsername,
-                recordIdentifier: tracerItemId
-            )
+            let registerResult = await IdentityStoreSync.republish(sources: [
+                VaultIdentitySource(
+                    itemId: tracerItemId, username: tracerUsername,
+                    urls: ["http://\(tracerServiceIdentifier):8765"]
+                ),
+            ])
             switch registerResult {
             case .success:
                 writeStatusMarker(status: "ok", step: "complete")
@@ -252,11 +255,12 @@ enum TracerFillSeeder {
             return
         }
 
-        let registerResult = await IdentityStoreSync.registerTracerIdentity(
-            serviceIdentifier: tracerServiceIdentifier,
-            user: tracerUsername,
-            recordIdentifier: tracerItemId
-        )
+        let registerResult = await IdentityStoreSync.republish(sources: [
+            VaultIdentitySource(
+                itemId: tracerItemId, username: tracerUsername,
+                urls: ["http://\(tracerServiceIdentifier):8765"]
+            ),
+        ])
         switch registerResult {
         case .success:
             logger.log("PVFILL|stage=seed status=ok step=identity")
