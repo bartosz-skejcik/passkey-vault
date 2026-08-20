@@ -47,6 +47,15 @@ struct PasskeyVaultApp: App {
         #if PV_PROBE_FILLTRACER
         Task {
             await TracerFillSeeder.seed()
+            // Phase 41, Plan 41-06, Task 1 (F5's fourth boundary): the host-side half of the
+            // encoding proof, dispatched INSIDE this same Task, after seed()'s own await --
+            // never a separately-scheduled Task, which would race the cache write this probe
+            // reads back. See CacheEncodingProbe.swift's own header for why this deviates from
+            // files_modified (Rule 2, documented in 41-06-SUMMARY.md). Compiled in only under
+            // PV_PROBE_CACHE_ENCODING -- inert for every other probe.
+            #if PV_PROBE_CACHE_ENCODING
+            CacheEncodingProbe.run()
+            #endif
         }
         #endif
 

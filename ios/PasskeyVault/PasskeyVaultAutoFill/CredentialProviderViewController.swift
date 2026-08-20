@@ -436,6 +436,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_SESSIONKEY
         SessionKeyProbe.run()
         #endif
+        // Phase 41, Plan 41-06, Task 1 (F5's fourth boundary): the read-side half of the
+        // host-writes-then-extension-reads encoding proof -- six read digests plus two
+        // named-rejection proofs (wrong encoding, missing revision). See
+        // `CipherCacheReader.logEncodingProofDigests()`'s own header. Driven exclusively by
+        // `scripts/ios-autofill-e41.sh e41-6-encoding`.
+        #if PV_PROBE_CACHE_ENCODING
+        CipherCacheReader.logEncodingProofDigests()
+        #endif
         // Plan 36-03, Task 1 (E5.a/E5.b): sampler thread proven inside a
         // real extension process, plus the one-shot, never-a-gate
         // os_proc_available_memory() finding (D-13).

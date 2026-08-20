@@ -28,6 +28,7 @@
 //  prevents").
 //
 
+import CryptoKit
 import Foundation
 import os
 
@@ -155,5 +156,56 @@ enum CipherCacheReader {
             encKey: encKey,
             encData: encData
         ))
+    }
+
+    // MARK: - Phase 41, Plan 41-06, Task 1 -- the read-side half of the encoding proof (F5)
+
+    /// DUPLICATED from `CacheEncodingProbe.swift` (host app target) -- see this file's own
+    /// header ("separate build targets, no shared framework between them", the same discipline
+    /// `SessionKeyProbe`/`SessionKeyReader` already established) and
+    /// `TracerFillSeeder.tracerItemId` (host app target). Mutating any ONE of these three
+    /// literals without its sibling is exactly what this task's own falsification (a deliberate
+    /// mismatch) exists to catch.
+    private static let tracerItemId = "tracer-item-41-03"
+    private static let wrongShapeItemId = "encoding-probe-wrong-shape-41-06"
+    private static let missingRevisionItemId = "encoding-probe-missing-revision-41-06"
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Entry point, dispatched from `CredentialProviderViewController
+    /// .prepareInterfaceForExtensionConfiguration()` under `PV_PROBE_CACHE_ENCODING` -- the
+    /// receiver side of `CacheEncodingProbe.swift`'s own write-side digests, PLUS the two
+    /// negative-encoding proofs (T-41-28): a wrong-shape record rejected by name, and 41-03's
+    /// own missing-`revision` rejection re-verified live now that this task hardens the read
+    /// path alongside it. NEVER logs raw bytes (T-41-01) -- only digests and named error
+    /// descriptions.
+    static func logEncodingProofDigests() {
+        switch lookup(recordIdentifier: tracerItemId) {
+        case let .success(item):
+            logger.log("PVFILL|E41-6|stage=read-digest field=encKey.nonce digest=\(sha256Hex(item.encKey.nonce), privacy: .public)")
+            logger.log("PVFILL|E41-6|stage=read-digest field=encKey.ciphertext digest=\(sha256Hex(item.encKey.ciphertext), privacy: .public)")
+            logger.log("PVFILL|E41-6|stage=read-digest field=encData.nonce digest=\(sha256Hex(item.encData.nonce), privacy: .public)")
+            logger.log("PVFILL|E41-6|stage=read-digest field=encData.ciphertext digest=\(sha256Hex(item.encData.ciphertext), privacy: .public)")
+            logger.log("PVFILL|E41-6|stage=read-digest field=itemId digest=\(sha256Hex(Data(item.itemId.utf8)), privacy: .public)")
+            logger.log("PVFILL|E41-6|stage=read-digest field=revision digest=\(sha256Hex(Data(String(item.revision).utf8)), privacy: .public)")
+        case let .failure(error):
+            logger.error("PVFILL|E41-6|stage=read-digest status=fail error=\(String(describing: error), privacy: .public)")
+        }
+
+        switch lookup(recordIdentifier: wrongShapeItemId) {
+        case .success:
+            logger.error("PVFILL|E41-6|stage=wrong-encoding-rejection status=unexpected-success")
+        case let .failure(error):
+            logger.log("PVFILL|E41-6|stage=wrong-encoding-rejection status=rejected error=\(String(describing: error), privacy: .public)")
+        }
+
+        switch lookup(recordIdentifier: missingRevisionItemId) {
+        case .success:
+            logger.error("PVFILL|E41-6|stage=missing-revision-rejection status=unexpected-success")
+        case let .failure(error):
+            logger.log("PVFILL|E41-6|stage=missing-revision-rejection status=rejected error=\(String(describing: error), privacy: .public)")
+        }
     }
 }

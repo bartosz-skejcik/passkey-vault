@@ -23,7 +23,7 @@ EVIDENCE_DIR="ios/evidence/41"
 BRANCH_STATE_FILE="$EVIDENCE_DIR/branch-state.md"
 
 usage() {
-  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy} [--assert-only <path>]" >&2
+  echo "Usage: $0 {branch-state|e41-1|tracer|e41-5|e41-2-build|e41-2|e41-3|e41-3-policy|e41-6-encoding|e41-6} [--assert-only <path>]" >&2
   exit 1
 }
 
@@ -1682,6 +1682,533 @@ assert_e41_3_policy() {
   return 0
 }
 
+# =============================================================================
+# e41-6-encoding -- the host-writes-then-extension-reads encoding proof (Task 1, 41-06)
+# =============================================================================
+#
+# Six write/read digest pairs (encKey.nonce, encKey.ciphertext, encData.nonce,
+# encData.ciphertext, itemId, revision) PLUS two named-rejection proofs (wrong encoding, missing
+# revision) -- see `CacheEncodingProbe.swift` (host)/`CipherCacheReader.logEncodingProofDigests()`
+# (extension) for the write/read halves. Drives the SAME `AutoFillInvocationUITests` primary route
+# e41-1 uses (host launch -> Settings AutoFill toggle -> `prepareInterfaceForExtensionConfiguration()`)
+# -- the one entry point that reaches BOTH the host-side seed (`PV_PROBE_FILLTRACER`) and the
+# extension-side read probe (`PV_PROBE_CACHE_ENCODING`) in one ordered run.
+E41_6_ENCODING_LOG="$EVIDENCE_DIR/e41-6-encoding.log"
+
+cmd_e41_6_encoding() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_6_encoding "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-6-encoding: pinned simulator UDID: $udid"
+
+  echo "==> e41-6-encoding: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-6-encoding: building app+extension (PV_PROBE_FILLTRACER PV_PROBE_CACHE_ENCODING)"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER PV_PROBE_CACHE_ENCODING" /tmp/pv-e41-6-encoding-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+
+  run_e41_6_encoding_test() {
+    xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+      -scheme PasskeyVault -configuration Debug \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$DD_PATH" \
+      -only-testing:PasskeyVaultUITests/AutoFillInvocationUITests/testInvokeExtensionConfigurationViaSettingsAutoFillToggle \
+      -skip-testing:PasskeyVaultTests \
+      -parallel-testing-enabled NO \
+      -maximum-concurrent-test-simulator-destinations 1 \
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER PV_PROBE_CACHE_ENCODING" \
+      test
+  }
+  local MAX_ATTEMPTS=5 ATTEMPT=1 TEST_LOG
+  TEST_LOG=$(mktemp)
+  while ! run_e41_6_encoding_test > "$TEST_LOG" 2>&1; do
+    if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then
+      echo "ERROR: e41-6-encoding drive failed after $ATTEMPT attempts" >&2
+      tail -150 "$TEST_LOG" >&2
+      rm -f "$TEST_LOG"
+      exit 1
+    fi
+    if grep -qE 'uniffiEnsurePvFfiInitialized|cannot find .* in scope' "$TEST_LOG"; then
+      echo "==> HIT landmine L-10 -- retrying (attempt $((ATTEMPT + 1))/$MAX_ATTEMPTS)"
+    else
+      echo "ERROR: e41-6-encoding drive failed (not a known flake signature)" >&2
+      tail -150 "$TEST_LOG" >&2
+      rm -f "$TEST_LOG"
+      exit 1
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+  done
+  rm -f "$TEST_LOG"
+
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    > "$E41_6_ENCODING_LOG" 2>&1
+
+  if assert_e41_6_encoding "$E41_6_ENCODING_LOG"; then
+    echo "PASS: e41-6-encoding -- see $E41_6_ENCODING_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-6-encoding -- see $E41_6_ENCODING_LOG" >&2
+    exit 1
+  fi
+}
+
+# Fails, naming what is missing/mismatched, on: a missing/unreadable/empty file; any of the six
+# write/read digest field pairs absent or unequal; the wrong-encoding rejection reporting
+# `unexpected-success` (or absent entirely); the missing-revision rejection reporting the same; OR
+# a raw plaintext leak (T-41-01) -- searches the capture for the known tracer plaintext and fails
+# if found (this subcommand's own build never decrypts anything, so this should never fire; it is
+# a backstop, not the primary mechanism).
+E41_6_ENCODING_FIELDS="encKey.nonce encKey.ciphertext encData.nonce encData.ciphertext itemId revision"
+
+assert_e41_6_encoding() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-6-encoding"; then
+    return 1
+  fi
+  local failed=0
+  local field write_digest read_digest
+  for field in $E41_6_ENCODING_FIELDS; do
+    write_digest=$(grep -E "PVFILL\|E41-6\|stage=write-digest field=${field} " "$target" | grep -oE 'digest=[0-9a-f]+' | tail -1 | cut -d= -f2 || true)
+    read_digest=$(grep -E "PVFILL\|E41-6\|stage=read-digest field=${field} " "$target" | grep -oE 'digest=[0-9a-f]+' | tail -1 | cut -d= -f2 || true)
+    if [ -z "$write_digest" ] || [ -z "$read_digest" ]; then
+      echo "FAIL: e41-6-encoding -- missing write and/or read digest for field=$field in $target" >&2
+      failed=1
+    elif [ "$write_digest" != "$read_digest" ]; then
+      echo "FAIL: e41-6-encoding -- digest mismatch for field=$field: write=$write_digest read=$read_digest in $target" >&2
+      failed=1
+    fi
+  done
+
+  if ! grep -qE 'PVFILL\|E41-6\|stage=wrong-encoding-rejection status=rejected' "$target"; then
+    echo "FAIL: e41-6-encoding -- wrong-encoding-rejection did not report status=rejected in $target" >&2
+    failed=1
+  fi
+  if grep -qE 'PVFILL\|E41-6\|stage=wrong-encoding-rejection status=unexpected-success' "$target"; then
+    echo "FAIL: e41-6-encoding -- wrong-encoding-rejection reported unexpected-success (the decoder accepted the opposite encoding) in $target" >&2
+    failed=1
+  fi
+
+  if ! grep -qE 'PVFILL\|E41-6\|stage=missing-revision-rejection status=rejected' "$target"; then
+    echo "FAIL: e41-6-encoding -- missing-revision-rejection did not report status=rejected in $target" >&2
+    failed=1
+  fi
+  if grep -qE 'PVFILL\|E41-6\|stage=missing-revision-rejection status=unexpected-success' "$target"; then
+    echo "FAIL: e41-6-encoding -- missing-revision-rejection reported unexpected-success in $target" >&2
+    failed=1
+  fi
+
+  if grep -q "Tr4c3r-Fill-41-03!" "$target"; then
+    echo "FAIL: e41-6-encoding -- capture contains the tracer plaintext password (T-41-01)" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
+# =============================================================================
+# e41-6 -- cold, offline, cache-only fill (Task 2, 41-06, FILL-05)
+# =============================================================================
+#
+# Full sequence: build once; seed the tracer item via a plain `xcrun simctl launch` (NEVER an
+# XCUITest launch -- this happens BEFORE the shutdown this task's own cold definition pivots on,
+# so it is not the prohibited "host app launched after boot"); make pv-server provably
+# unreachable (stop it, curl against its default port, record the command + exit code); `simctl
+# shutdown` + `boot`; re-enroll biometry (does not survive the cycle -- L-3x, this session);
+# read-only-check the provider is still elected (NEVER re-toggle it here -- that would need a host
+# app launch); drive `AutoFillColdOfflineUITests` (no host-app launch anywhere in its own code) via
+# Safari; capture the extension pid observed strictly after the boot timestamp. Then two more
+# structural falsifications: a live second cold cycle with the cached record deleted (expect
+# FAIL), and a live server-UP check (expect the unreachability assertion to report FAIL) -- plus
+# three evidence-mutation falsifications (missing pid line, injected post-boot host-launch line,
+# flipped field-value-equal) proving `assert_e41_6` itself can fail.
+E41_6_LOG="$EVIDENCE_DIR/e41-6-cold-offline.log"
+E41_6_COLD_TEST_ID="PasskeyVaultUITests/AutoFillColdOfflineUITests/testColdOfflineFillFromCacheOnly"
+E41_6_TRACER_ITEM_ID="tracer-item-41-03"
+PV_SERVER_DEFAULT_PORT=8620
+PV_SERVER_HEALTH_URL="http://127.0.0.1:${PV_SERVER_DEFAULT_PORT}/healthz"
+
+stop_pv_server_if_running() {
+  local pids
+  pids=$(lsof -tiTCP:"${PV_SERVER_DEFAULT_PORT}" -sTCP:LISTEN 2>/dev/null || true)
+  if [ -n "$pids" ]; then
+    echo "==> e41-6: stopping pv-server process(es) on :${PV_SERVER_DEFAULT_PORT}: $pids" >&2
+    kill $pids >/dev/null 2>&1 || true
+    sleep 1
+  fi
+}
+
+# Records ONE command + its exit code + interpretation into $2 (appended). Returns curl's OWN
+# exit code -- 0 means the server answered (reachable), non-zero means it did not (unreachable,
+# the expected outcome for this task's baseline).
+record_server_unreachable_check() {
+  local out_file="$1"
+  local http_status curl_exit
+  set +e
+  http_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$PV_SERVER_HEALTH_URL" 2>/dev/null)
+  curl_exit=$?
+  set -e
+  echo "SERVER-UNREACHABLE-CHECK: command=\`curl -sS -o /dev/null -w '%{http_code}' --max-time 2 $PV_SERVER_HEALTH_URL\` http_status=${http_status:-000} exit_code=$curl_exit" >> "$out_file"
+  if [ "$curl_exit" -eq 0 ]; then
+    echo "SERVER-UNREACHABLE-CHECK-RESULT: FAIL (curl succeeded -- server is reachable)" >> "$out_file"
+  else
+    echo "SERVER-UNREACHABLE-CHECK-RESULT: PASS (curl failed as expected, exit=$curl_exit)" >> "$out_file"
+  fi
+  return "$curl_exit"
+}
+
+# Briefly starts the REAL pv-server binary (never modified -- HARD RULES) on the default port
+# against a throwaway `mktemp -d` database (never data/pv.db, D-23's own discipline,
+# `scripts/ios-live-server.sh`'s own precedent), for exactly long enough to demonstrate
+# `record_server_unreachable_check`'s own assertion reporting FAIL when the server genuinely IS
+# reachable -- the falsification leg for the offline claim (Pitfall 3).
+run_server_up_falsification() {
+  local out_file="$1"
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "SERVER-UP-FALSIFICATION: SKIPPED (no pv-server binary at target/release or target/debug)" >> "$out_file"
+    return 0
+  fi
+  local db_dir server_pid
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e41-6-falsify.XXXXXX")
+  PV_ADDR="127.0.0.1:${PV_SERVER_DEFAULT_PORT}" PV_DB_URL="sqlite://${db_dir}/pv.db?mode=rwc" RUST_LOG=warn \
+    "$server_bin" > "${db_dir}/pv-server.log" 2>&1 &
+  server_pid=$!
+  local healthy=0 i
+  for i in $(seq 1 30); do
+    if curl -fsS "$PV_SERVER_HEALTH_URL" >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "SERVER-UP-FALSIFICATION: SKIPPED (pv-server did not become healthy in time)" >> "$out_file"
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" 2>/dev/null || true
+    rm -rf "$db_dir"
+    return 0
+  fi
+  local falsify_result=0
+  if record_server_unreachable_check "$out_file"; then
+    # curl succeeded (exit 0) -- the EXPECTED outcome of this falsification (server genuinely up).
+    falsify_result=0
+  fi
+  local last_line
+  last_line=$(grep "^SERVER-UNREACHABLE-CHECK-RESULT:" "$out_file" | tail -1)
+  kill "$server_pid" >/dev/null 2>&1 || true
+  wait "$server_pid" 2>/dev/null || true
+  rm -rf "$db_dir"
+  if printf '%s' "$last_line" | grep -q "FAIL (curl succeeded"; then
+    echo "SERVER-UP-FALSIFICATION: PASS (with the server genuinely UP, the unreachability check correctly reported FAIL)" >> "$out_file"
+  else
+    echo "SERVER-UP-FALSIFICATION: FAIL (with the server genuinely UP, the unreachability check did NOT report FAIL -- the check proves nothing)" >> "$out_file"
+    return 1
+  fi
+  return 0
+}
+
+extension_pid_after() {
+  local udid="$1" start="$2"
+  xcrun simctl spawn "$udid" log show --style ndjson --start "$start" \
+    --predicate 'processImagePath CONTAINS "PasskeyVaultAutoFill"' 2>/dev/null \
+    | jq -r '.processID' 2>/dev/null | sort -un | tail -1
+}
+
+# Seeds the tracer item via a plain `xcrun simctl launch` -- NEVER an XCUITest launch, and NEVER
+# after the shutdown this task pivots its whole cold definition on. Waits for
+# `TracerFillSeeder`'s own completion marker (`tracer-seed-status.json`, App Group container)
+# rather than a blind sleep.
+seed_before_shutdown() {
+  local udid="$1" group_dir="$2"
+  rm -f "$group_dir/tracer-seed-status.json" "$group_dir/tracer-mutate-revision.marker" \
+    "$group_dir/tracer-omit-revision.marker" "$group_dir/tracer-mismatch-stored-url.marker"
+  xcrun simctl launch "$udid" cloud.blonie.PasskeyVault >/dev/null 2>&1 || true
+  local waited=0
+  while [ "$waited" -lt 20 ]; do
+    if [ -f "$group_dir/tracer-seed-status.json" ] && grep -q '"status":"ok"' "$group_dir/tracer-seed-status.json"; then
+      xcrun simctl terminate "$udid" cloud.blonie.PasskeyVault >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  xcrun simctl terminate "$udid" cloud.blonie.PasskeyVault >/dev/null 2>&1 || true
+  return 1
+}
+
+run_e41_6_cold_test_once() {
+  local udid="$1" out_log="$2"
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:"$E41_6_COLD_TEST_ID" \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_FILLTRACER" \
+    test > "$out_log" 2>&1
+}
+
+drive_e41_6_cold_test() {
+  local udid="$1" out_log="$2"
+  local test_result=0
+  run_e41_6_cold_test_once "$udid" "$out_log" &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || test_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  return "$test_result"
+}
+
+# One full "shutdown -> boot -> re-enroll -> drive" cycle, appended to $3. Returns the drive's own
+# xcodebuild exit code (0 = fill succeeded).
+run_one_cold_cycle() {
+  local udid="$1" section_label="$2" out_file="$3"
+  echo "" >> "$out_file"
+  echo "## $section_label" >> "$out_file"
+  local shutdown_ts boot_ts
+  shutdown_ts=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "SHUTDOWN-TIMESTAMP: $shutdown_ts" >> "$out_file"
+  xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
+  xcrun simctl boot "$udid"
+  xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
+  boot_ts=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "BOOT-TIMESTAMP: $boot_ts" >> "$out_file"
+  sleep 2
+
+  # L-3x (this session): passcode/biometry enrollment does not survive simctl shutdown+boot --
+  # re-enroll via CLI, never the Simulator.app GUI menu (`cmd_tracer`'s own header: unreliable
+  # headless). NEVER `ensure_provider_enabled` here -- it can launch the host app
+  # (AutoFillInvocationUITests) to toggle the switch, which would void this run's own cold claim;
+  # the provider's electability is this task's own PRECONDITION, checked READ-ONLY below.
+  ensure_biometric_enrollment "$udid"
+
+  if ! xcrun simctl spawn "$udid" pluginkit -m -p com.apple.authentication-services-credential-provider-ui 2>/dev/null | grep -q '^+'; then
+    echo "PROVIDER-ELECTED-AFTER-BOOT: false" >> "$out_file"
+    echo "FAIL: e41-6 -- AutoFill provider not elected after cold boot (read-only check; this task's own precondition assumes it survives across a simulator shutdown+boot, and never re-launches the host app to fix it)" >&2
+    return 90
+  fi
+  echo "PROVIDER-ELECTED-AFTER-BOOT: true" >> "$out_file"
+
+  local drive_log drive_result=0
+  drive_log=$(mktemp)
+  drive_e41_6_cold_test "$udid" "$drive_log" || drive_result=$?
+  echo "COLD-DRIVE-XCODEBUILD-EXIT: $drive_result" >> "$out_file"
+  grep 'PVUITEST|E41-6|' "$drive_log" >> "$out_file" || true
+  rm -f "$drive_log"
+
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$boot_ts" \
+    >> "$out_file" 2>&1
+
+  local ext_pid
+  ext_pid=$(extension_pid_after "$udid" "$boot_ts")
+  if [ -n "$ext_pid" ]; then
+    echo "EXTENSION-PID-AFTER-BOOT: $ext_pid" >> "$out_file"
+  else
+    echo "EXTENSION-PID-AFTER-BOOT: none-observed" >> "$out_file"
+  fi
+
+  return "$drive_result"
+}
+
+cmd_e41_6() {
+  if [ "${1:-}" = "--assert-only" ]; then
+    if [ -z "${2:-}" ]; then
+      echo "ERROR: --assert-only requires a <path> argument" >&2
+      exit 1
+    fi
+    if assert_e41_6 "$2"; then exit 0; else exit 1; fi
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+  ensure_tracer_server
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> e41-6: pinned simulator UDID: $udid"
+
+  echo "==> e41-6: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> e41-6: building app+extension (PV_PROBE_FILLTRACER)"
+  build_with_l10_retry "$udid" "PV_PROBE_FILLTRACER" /tmp/pv-e41-6-build.log
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+
+  ensure_provider_enabled "$udid"
+
+  local group_dir
+  group_dir=$(app_group_container_dir "$udid" || true)
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: e41-6 -- App Group container not found" >&2
+    exit 1
+  fi
+
+  : > "$E41_6_LOG"
+
+  echo "## Pre-shutdown seed (baseline)" >> "$E41_6_LOG"
+  if ! seed_before_shutdown "$udid" "$group_dir"; then
+    echo "SEED-STATUS: fail" >> "$E41_6_LOG"
+    cat "$group_dir/tracer-seed-status.json" 2>/dev/null >> "$E41_6_LOG" || echo "STATUS-MARKER-MISSING" >> "$E41_6_LOG"
+    echo "FAIL: e41-6 -- pre-shutdown seed did not complete -- see $E41_6_LOG" >&2
+    exit 1
+  fi
+  echo "SEED-STATUS: ok" >> "$E41_6_LOG"
+
+  local expected_digest
+  expected_digest=$(printf '%s' "Tr4c3r-Fill-41-03!" | shasum -a 256 | awk '{print $1}')
+  echo "PRE-SHUTDOWN-PLAINTEXT-DIGEST: $expected_digest" >> "$E41_6_LOG"
+
+  echo "" >> "$E41_6_LOG"
+  echo "## Server-unreachable proof (baseline -- server DOWN, expected)" >> "$E41_6_LOG"
+  stop_pv_server_if_running
+  record_server_unreachable_check "$E41_6_LOG" || true
+
+  local baseline_result=0
+  run_one_cold_cycle "$udid" "Cold fill drive (baseline -- host app NEVER launched from this point on)" "$E41_6_LOG" || baseline_result=$?
+  echo "BASELINE-COLD-CYCLE-RESULT: $baseline_result" >> "$E41_6_LOG"
+
+  # --- Falsification 1 (live, aimed at the claim): delete the cached record for that item, ------
+  # re-run the WHOLE cold sequence, and observe the fill fail with nothing to fill -- proving the
+  # baseline fill above came from the cache and not from anywhere else.
+  echo "" >> "$E41_6_LOG"
+  echo "## Falsification 1 -- cached record deleted before the SAME cold sequence (expect nothing to fill)" >> "$E41_6_LOG"
+  if ! seed_before_shutdown "$udid" "$group_dir"; then
+    echo "FALSIFICATION-1: SKIPPED (reseed did not complete)" >> "$E41_6_LOG"
+  else
+    local cache_file="$group_dir/vault-cache-v1.json"
+    if [ -f "$cache_file" ]; then
+      local tmp_cache
+      tmp_cache=$(mktemp)
+      jq --arg id "$E41_6_TRACER_ITEM_ID" '.items |= map(select(.id != $id))' "$cache_file" > "$tmp_cache"
+      mv "$tmp_cache" "$cache_file"
+      echo "CACHE-RECORD-DELETED: $E41_6_TRACER_ITEM_ID" >> "$E41_6_LOG"
+    else
+      echo "FALSIFICATION-1: SKIPPED (cache file not found at $cache_file)" >> "$E41_6_LOG"
+    fi
+    local falsify1_result=0
+    run_one_cold_cycle "$udid" "Cold fill drive (Falsification 1 -- cache record deleted)" "$E41_6_LOG" || falsify1_result=$?
+    if [ "$falsify1_result" -ne 0 ]; then
+      echo "FALSIFICATION-1 PASS: the fill correctly FAILED with the cached record deleted (drive exit $falsify1_result)" >> "$E41_6_LOG"
+    else
+      echo "FALSIFICATION-1 FAIL: the fill PASSED even with the cached record deleted -- the fill is not actually cache-sourced" >> "$E41_6_LOG"
+    fi
+  fi
+
+  # --- Falsification 2 (live, cheap): the server genuinely UP must flip the unreachability check.
+  echo "" >> "$E41_6_LOG"
+  echo "## Falsification 2 -- server genuinely UP (expect the unreachability check to report FAIL)" >> "$E41_6_LOG"
+  run_server_up_falsification "$E41_6_LOG" || true
+  # Restore the baseline's own real proof as the LAST server-unreachable-check lines in the file
+  # -- re-confirm the server is down again after the falsification above.
+  stop_pv_server_if_running
+  record_server_unreachable_check "$E41_6_LOG" || true
+
+  if assert_e41_6 "$E41_6_LOG"; then
+    echo "PASS: e41-6 -- see $E41_6_LOG"
+    exit 0
+  else
+    echo "FAIL: e41-6 -- see $E41_6_LOG" >&2
+    exit 1
+  fi
+}
+
+# Fails, naming what is missing, on: a missing/unreadable/empty file; SHUTDOWN-TIMESTAMP or
+# BOOT-TIMESTAMP absent; no EXTENSION-PID-AFTER-BOOT line (or it reports none-observed); no
+# SERVER-UNREACHABLE-CHECK command+exit-code line, or the RESULT line does not read PASS; the
+# provider not confirmed elected after boot; a `PVFILL|stage=seed` line anywhere in the capture
+# (the host app was launched -- this task's own hard prohibition); no PVUITEST|E41-6| success line
+# with field-value-equal=true; the cache-deletion falsification not reporting PASS; the
+# server-up falsification not reporting PASS.
+assert_e41_6() {
+  local target="$1"
+  if ! require_nonempty_file "$target" "e41-6"; then
+    return 1
+  fi
+  local failed=0
+
+  if ! grep -q "SHUTDOWN-TIMESTAMP:" "$target"; then
+    echo "FAIL: e41-6 -- no SHUTDOWN-TIMESTAMP line in $target" >&2
+    failed=1
+  fi
+  if ! grep -q "BOOT-TIMESTAMP:" "$target"; then
+    echo "FAIL: e41-6 -- no BOOT-TIMESTAMP line in $target" >&2
+    failed=1
+  fi
+
+  local pid_line
+  pid_line=$(grep -E "^EXTENSION-PID-AFTER-BOOT: " "$target" | head -1 || true)
+  if [ -z "$pid_line" ]; then
+    echo "FAIL: e41-6 -- no EXTENSION-PID-AFTER-BOOT line in $target" >&2
+    failed=1
+  elif printf '%s' "$pid_line" | grep -q "none-observed"; then
+    echo "FAIL: e41-6 -- EXTENSION-PID-AFTER-BOOT reports no pid observed in $target" >&2
+    failed=1
+  fi
+
+  if ! grep -qE '^SERVER-UNREACHABLE-CHECK: command=' "$target"; then
+    echo "FAIL: e41-6 -- no recorded server-unreachable command+exit-code line in $target" >&2
+    failed=1
+  fi
+  if ! grep -qE '^SERVER-UNREACHABLE-CHECK-RESULT: PASS' "$target"; then
+    echo "FAIL: e41-6 -- no SERVER-UNREACHABLE-CHECK-RESULT: PASS line in $target" >&2
+    failed=1
+  fi
+
+  if ! grep -qE '^PROVIDER-ELECTED-AFTER-BOOT: true' "$target"; then
+    echo "FAIL: e41-6 -- provider not confirmed elected after a cold boot in $target" >&2
+    failed=1
+  fi
+
+  if grep -qE 'PVFILL\|stage=seed ' "$target"; then
+    echo "FAIL: e41-6 -- capture contains a host-app seed line -- the host app was launched after a boot, voiding the cold claim (this task's own hard prohibition)" >&2
+    failed=1
+  fi
+
+  if ! grep -qE 'PVUITEST\|E41-6\|status=ok identity-survived=true field-value-equal=true' "$target"; then
+    echo "FAIL: e41-6 -- no PVUITEST|E41-6| success line with field-value-equal=true in $target" >&2
+    failed=1
+  fi
+
+  if ! grep -q "FALSIFICATION-1 PASS" "$target"; then
+    echo "FAIL: e41-6 -- cache-deletion falsification (Falsification 1) did not report PASS in $target" >&2
+    failed=1
+  fi
+
+  if ! grep -q "SERVER-UP-FALSIFICATION: PASS" "$target"; then
+    echo "FAIL: e41-6 -- server-up falsification (Falsification 2) did not report PASS in $target" >&2
+    failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+  return 0
+}
+
 case "${1:-}" in
   branch-state) shift; cmd_branch_state "$@" ;;
   e41-1) shift; cmd_e41_1 "$@" ;;
@@ -1711,5 +2238,7 @@ case "${1:-}" in
   e41-2) shift; cmd_e41_2 "$@" ;;
   e41-3) shift; cmd_e41_3 "$@" ;;
   e41-3-policy) shift; cmd_e41_3_policy "$@" ;;
+  e41-6-encoding) shift; cmd_e41_6_encoding "$@" ;;
+  e41-6) shift; cmd_e41_6 "$@" ;;
   *) usage ;;
 esac
