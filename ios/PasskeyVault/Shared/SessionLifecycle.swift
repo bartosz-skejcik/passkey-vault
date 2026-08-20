@@ -113,7 +113,15 @@ enum SessionLifecycle {
                 let currentBootSessionId = LockMarker.currentBootSessionId(),
                 marker.isValid(
                     currentBootSessionId: currentBootSessionId, now: now,
-                    idleWindow: configuredIdleWindowSeconds(), absoluteCeiling: absoluteCeilingSeconds
+                    // WR-09 (41-REVIEW.md iteration 2): thread the SAME injected `defaults`
+                    // override through to the idle-window read too -- before this fix, only the
+                    // MARKER read/write/clear calls in this function honored `defaults`;
+                    // `configuredIdleWindowSeconds()` (no argument) always resolved
+                    // `AutoLockPolicy.sharedDefaults`, the REAL App Group container, so a test
+                    // that forced expiry via a bogus `bootSessionId` never actually proved the
+                    // idle-window arithmetic itself was reading from the injected suite.
+                    idleWindow: configuredIdleWindowSeconds(defaults: defaults ?? AutoLockPolicy.sharedDefaults),
+                    absoluteCeiling: absoluteCeilingSeconds
                 )
             {
                 state = .unlocked

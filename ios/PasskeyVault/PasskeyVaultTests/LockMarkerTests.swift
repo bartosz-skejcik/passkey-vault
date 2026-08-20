@@ -127,6 +127,45 @@ struct LockMarkerTests {
         #expect(seconds == TimeInterval(AutoLockPolicy.defaultMinutes) * 60)
     }
 
+    // MARK: - WR-09 (41-REVIEW.md iteration 2): `checkAndExpireIfNeeded` itself -- not merely
+    // `configuredIdleWindowSeconds` in isolation -- must read the idle window from the INJECTED
+    // suite, never the real device's App Group container.
+
+    /// Before this fix, `checkAndExpireIfNeeded` threaded `defaults` into `LockMarker.read/clear`
+    /// but called `configuredIdleWindowSeconds()` with NO argument, silently resolving
+    /// `AutoLockPolicy.sharedDefaults` (the real container) regardless of what was injected. Every
+    /// OTHER test in this file only ever forced expiry via a mismatched `bootSessionId` (which
+    /// short-circuits `isValid` before the idle-window comparison is ever reached), so none of them
+    /// could have caught this. This test instead sets up a marker that is genuinely EXPIRED only
+    /// because of a real idle-window comparison (matching `bootSessionId`, elapsed time beyond a
+    /// 1-minute injected window) -- if the idle window were silently read from the real container
+    /// instead (whatever the developer's own simulator happens to have stored, plausibly the
+    /// `AutoLockPolicy.defaultMinutes` default of several minutes), this specific elapsed time could
+    /// spuriously read as still-unlocked, making the assertion below flaky-in-the-wrong-direction
+    /// evidence of exactly the bug WR-09 names.
+    @Test
+    func idleWindowIsReadFromTheInjectedSuiteNotTheSharedContainer() {
+        let defaults = Self.freshDefaults()
+        AutoLockPolicy.write(1, defaults: defaults) // 1-minute idle window, injected suite ONLY
+        let bootId = LockMarker.currentBootSessionId() ?? "test-boot-session-fallback"
+        LockMarker.write(
+            LockMarker(
+                bootSessionId: bootId,
+                monotonicAtUnlock: LockMarker.monotonicNow() - 120, // 120s ago -- past the 1-minute window
+                hostUnlockUptime: LockMarker.monotonicNow(),
+                writer: "host"
+            ),
+            defaults: defaults
+        )
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "wr09-test", deleteKeyArtifact: { true }, defaults: defaults
+        )
+        #expect(
+            !unlocked,
+            "120s elapsed against a 1-minute injected idle window must read as expired -- if this silently fell back to the REAL container's own configured window (WR-09's own bug), this could spuriously read as still-unlocked"
+        )
+    }
+
     @Test
     func configuredIdleWindowHonoursAWhitelistedStoredValue() {
         let defaults = Self.freshDefaults()
