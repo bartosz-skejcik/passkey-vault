@@ -4088,6 +4088,71 @@ entitlements it signs like any other target.
 **Warning sign that this has been forgotten:** an `.entitlements` file in `git diff` with its keys
 removed, or a phase claiming AutoFill device coverage without naming a paid membership.
 
+### CORRECTION, 2026-08-20 — the membership was purchased; the §3b hardware block on
+### `autofill-credential-provider` is retired; a DIFFERENT, narrower App-Group question opened and
+### was then itself corrected mid-investigation
+
+**[OBSERVED, root-caused live during `.planning/debug/faceid-unlock-loop.md`.]** Bartek purchased the
+paid Apple Developer Program membership. This section amends §3b in this repo's own established
+CORRECTION style (see the 2026-08-17 block immediately above) — the original text is not deleted.
+
+**The membership took effect.** Decoding the three profiles actually issued to Bartek's machine
+(`~/Library/Developer/Xcode/UserData/Provisioning Profiles`, `security cms -D -i <file> | plutil
+-extract Entitlements xml1 -o - -`) on 2026-08-20 shows:
+
+| Profile | `autofill-credential-provider` | `application-groups` | Expires |
+|---|---|---|---|
+| `cloud.blonie.PasskeyVault` | **PRESENT** | **PRESENT** (`group.cloud.blonie.PasskeyVault`) | 2027-08-17 |
+| `cloud.blonie.PasskeyVault.AutoFill` | **PRESENT** | **PRESENT** (`group.cloud.blonie.PasskeyVault`) | 2027-08-17 |
+| `cloud.blonie.PasskeyVaultUITests` | n/a (no capabilities requested) | n/a | 2027-08-17 |
+
+**A year-long expiry on all three, matching this section's own free-team/paid-team diagnostic
+(§3b above: "a 7-day profile expiry is the free-team signature") — the paid membership is
+confirmed active.** `autofill-credential-provider` is granted on BOTH the host app's App ID and
+the extension's App ID. **The §3b hardware block on AutoFill device proof is retired** — Phase 41
+(cross-process ACC-06/ACC-07) and Phase 43 (conditional passkeys) may now plan real device proofs
+against this membership; neither is blocked on entitlement issuance anymore.
+
+**A narrower question was opened, live, mid-investigation, by the debugging session's own
+orchestrator: that `application-groups` was ABSENT from these same three profiles.** This section
+corrects that claim, in the same spirit §3b's own 2026-08-17 block corrected an earlier inference:
+independently re-running the exact decode command above, TWICE, against the profile files actually
+on disk (mtime 2026-08-17 22:06 — the same timestamp the orchestrator's own investigation cited),
+`application-groups` reads as **present**, not absent, on both App IDs, with the correct group
+(`group.cloud.blonie.PasskeyVault`) listed. The `.entitlements` files in this repo
+(`PasskeyVault/PasskeyVault.entitlements`, `PasskeyVaultAutoFill/PasskeyVaultAutoFill.entitlements`)
+are, as of this same session, in their FULL, non-stripped state — `git diff` against both is empty —
+requesting all three capabilities (`autofill-credential-provider`, `application-groups`,
+`keychain-access-groups`) exactly as committed.
+
+**Why the debug session's own orchestrator reported the opposite is not established, and is
+recorded honestly as unresolved rather than silently reconciled:** the two most likely
+explanations — (a) the App Groups capability was added for both App IDs in the Apple Developer
+portal, and Xcode silently re-fetched corrected profiles at some point between the orchestrator's
+own check and this one, coincidentally landing on the same on-disk mtime because Xcode preserves a
+profile's original mtime on re-download; or (b) a transcription error in the orchestrator's own
+diagnosis — are both plausible and neither was distinguished. **This does not weaken the debug
+session's actual root cause or its fix.** The code-level defect this session addresses — a lazy
+lock-state check collapsing "cannot determine" and "positively expired" to the same routing
+decision, a per-view `@State` auto-prompt guard that a wrong relock's own remount defeats, and
+`LockMarker` having no fallback when its shared container is unresolvable for ANY reason — was
+confirmed independently of provisioning-profile specifics: by a full, line-by-line read of the
+production source, AND by a live simulator reproduction using a deterministic, software-only "force
+the shared container unresolvable" hook (`LockMarker.forceSharedContainerUnresolvableForTesting`,
+DEBUG-only) that does not depend on, or make any claim about, which capability is or is not present
+in a given provisioning profile. Whatever DID cause `LockMarker.read()` to return `nil` on Bartek's
+device on 2026-08-20 — a stale build predating a portal capability fix, a transient App Group
+resolution failure, or something not yet identified — the fix holds for all of them, because it
+never depends on WHY the container was unresolvable, only on the fact that it was.
+
+**Open item, narrower than before:** whether the SPECIFIC build that produced the observed loop was
+built against a provisioning profile missing `application-groups` (now fixed, would not recur on a
+fresh build) or something else entirely is unresolved. A real device build+run (out of scope for
+this debug session — the rules governing it required simulator-only work and forbade touching
+Bartek's real device/vault) is the only way to close this specific question. It does not block
+Phase 41/43 device planning, which rests on `autofill-credential-provider` being granted (settled,
+above) and on this session's own code fix (settled, `.planning/debug/faceid-unlock-loop.md`).
+
 ## 4. Open questions — honestly open
 
 1. ~~**IOS-06: UniFFI vs hand-written C ABI.**~~ **RESOLVED — see §1.** Decided: UniFFI, evaluated
