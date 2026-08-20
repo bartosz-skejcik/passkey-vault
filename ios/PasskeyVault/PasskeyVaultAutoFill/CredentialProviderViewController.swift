@@ -202,7 +202,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         case let .success(item):
             cachedItem = item
         case let .failure(error):
-            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=fail error=\(String(describing: error), privacy: .public)")
+            // WR-03 (41-REVIEW.md iteration 2): this line is UNCONDITIONAL, on the real fill path,
+            // in Release -- before this fix, `String(describing: error)` (which prefers
+            // `CustomStringConvertible.description`) wrote `.itemNotFound(id)`'s own raw vault-item
+            // UUID `.public` into the device-persistent, sysdiagnose-exportable unified log. The
+            // `assert_*` greps this line's callers need only the closed-vocabulary `kindToken`;
+            // the full description (embeds the identifier) is `.private`.
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=fail kind=\(error.kindToken, privacy: .public) detail=\(String(describing: error), privacy: .private)")
             extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
             return
         }

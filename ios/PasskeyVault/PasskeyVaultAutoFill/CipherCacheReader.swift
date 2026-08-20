@@ -50,6 +50,22 @@ enum CipherCacheReaderError: Swift.Error, CustomStringConvertible {
         case let .malformedWireKey(field): return "cache record's \(field) is not valid wire JSON"
         }
     }
+
+    /// WR-03 (41-REVIEW.md iteration 2): a CLOSED vocabulary carrying NO user data (never a
+    /// `recordIdentifier`, never a field name derived from user content) -- safe to log `.public`
+    /// on the real, unconditional fill path. `.description` above remains the FULL diagnostic
+    /// (embeds the raw `recordIdentifier` for `.itemNotFound`) and must only ever be logged
+    /// `.private`.
+    var kindToken: String {
+        switch self {
+        case .containerUnavailable: return "container-unavailable"
+        case .cacheUnavailable: return "cache-unavailable"
+        case .itemNotFound: return "not-found"
+        case .missingItemId: return "missing-item-id"
+        case .missingRevision: return "missing-revision"
+        case .malformedWireKey: return "malformed-wire-key"
+        }
+    }
 }
 
 /// One cache row, resolved for the fill path: the two AAD inputs `decrypt_item`/`decryptItem`
