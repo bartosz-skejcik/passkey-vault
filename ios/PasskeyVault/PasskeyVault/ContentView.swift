@@ -19,8 +19,11 @@
 //
 
 import SwiftUI
+import os
 
 struct ContentView: View {
+    private static let log = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
     private enum Route {
         case loading
         /// Phase 38, plan 38-13: presented once, before `.auth`, gated by
@@ -263,13 +266,26 @@ struct ContentView: View {
         // header named this exact call site as "PRODUCTION WIRING ... left to a later plan."
         // Writes Secret C (the non-biometric session artifact the extension reads, DR-41-A) and
         // resets `SessionLifecycle`'s marker -- including `hostUnlockUptime`, the ONLY thing that
-        // may move DR-41-C's 12h absolute ceiling forward. `try?`: a failed write here must never
-        // block the user from reaching their own already-unlocked vault; it only means AutoFill
-        // will not have a fresh Secret C to read until the next successful unlock.
+        // may move DR-41-C's 12h absolute ceiling forward.
+        // WR-04 (41-REVIEW.md): the marker is written FIRST, Secret C second -- the reverse order
+        // left a window where Secret C existed with either no marker or the PREVIOUS (possibly
+        // expired) marker; an AutoFill invocation landing in that window would see
+        // absence/expiry via `checkAndExpireIfNeeded` and delete the key that was written
+        // milliseconds later. A marker without a key merely fails the subsequent Keychain read
+        // (harmless); a key without a marker is deletable by a concurrent extension invocation.
+        SessionLifecycle.recordHostUnlock()
         var sessionBytes = exportUserKeyForSession(userKey: session.userKey)
         defer { sessionBytes.resetBytes(in: 0..<sessionBytes.count) }
-        try? SessionKeyStore.store(sessionBytes)
-        SessionLifecycle.recordHostUnlock()
+        // `try?`: a failed write here must never block the user from reaching their own
+        // already-unlocked vault; it only means AutoFill will not have a fresh Secret C to read
+        // until the next successful unlock -- but WR-04 (41-REVIEW.md) also names the SILENT
+        // swallow itself as a defect: a failed Secret-C write is the difference between "AutoFill
+        // works" and "AutoFill silently never works", and nothing logged it before this fix.
+        do {
+            try SessionKeyStore.store(sessionBytes)
+        } catch {
+            Self.log.error("PVLOCK|stage=host-unlock secretC=store-failed error=\(String(describing: error), privacy: .public)")
+        }
         #if DEBUG
         // Phase 41, Plan 41-07, Tasks 2/3 (E41-4's "prove the check can refuse" leg; E41-7's
         // clock legs): immediately after the REAL unlock above just wrote a fresh, valid marker,
