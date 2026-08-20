@@ -106,6 +106,16 @@ final class AccountService {
 
         let loginResult = try await apiClient.login(email: email, authHashB64: authMaterial.authHashB64)
         SessionTokenStore.save(loginResult.sessionToken)
+        // Phase 42-era correction (`.planning/debug/ios-cold-launch-blank-offline.md`,
+        // `AccountEnvelopeCache.swift`'s own header): every real login success caches
+        // `pw_wrapped_uk` + `email` + `salt`/`kdf` locally, so a later cold launch can route
+        // straight to `LockView` AND unlock offline (`salt`/`kdf` are what let `LockView` run
+        // `deriveAuthMaterial` locally -- without them a password unlock still needs a live
+        // `prelogin` round trip) without ever needing this call again.
+        AccountEnvelopeCache.save(CachedAccountEnvelope(
+            email: email, pwWrappedUkJson: loginResult.pwWrappedUk,
+            saltB64: saltB64, kdfParamsJson: kdfParamsJson
+        ))
         return UnlockedSession(token: loginResult.sessionToken, userKey: userKey, email: email)
     }
 
@@ -139,30 +149,115 @@ final class AccountService {
             wrappedJson: loginResult.pwWrappedUk
         )
         SessionTokenStore.save(loginResult.sessionToken)
+        // Phase 42-era correction: same caching this file's `register` now also does -- see
+        // `AccountEnvelopeCache.swift`'s own header. `prelogin.saltB64`/`prelogin.kdfParamsJson`
+        // are the SERVER's own values (never a client-cached copy from a prior attempt, matching
+        // this function's own long-standing rule stated in this file's header) -- caching them here
+        // is what makes the NEXT unlock of this same session local-only.
+        AccountEnvelopeCache.save(CachedAccountEnvelope(
+            email: email, pwWrappedUkJson: loginResult.pwWrappedUk,
+            saltB64: prelogin.saltB64, kdfParamsJson: prelogin.kdfParamsJson
+        ))
         return UnlockedSession(token: loginResult.sessionToken, userKey: userKey, email: email)
     }
 
+    /// A LOCAL-ONLY restore: reads `SessionTokenStore`/`AccountEnvelopeCache` straight off the
+    /// Keychain, no network call, no `apiClient` involved at all (this is a `static` function
+    /// precisely so its signature itself proves that -- there is no way for it to reach the
+    /// network by accident). This is what `ContentView.determineRoute()`/`performLock()` now use
+    /// for the FIRST render: it either returns a `RestoredAccount` immediately (an app that has
+    /// ever completed one real login/restore on this device) or `nil` (nothing cached yet -- the
+    /// caller's own fallback is a real `restoreSession()` call, exactly the pre-fix behaviour, for
+    /// that one edge case). `nil` is also returned when a session token exists but the envelope
+    /// cache does not (a session established before this cache existed) -- deliberately NOT
+    /// treated as "signed out": the caller distinguishes that case via `SessionTokenStore.load()`
+    /// itself and falls back to the network path rather than this file re-implementing that
+    /// distinction twice.
+    static func localAccount() -> RestoredAccount? {
+        guard let token = SessionTokenStore.load(),
+              let envelope = AccountEnvelopeCache.load()
+        else {
+            return nil
+        }
+        return RestoredAccount(
+            token: token, email: envelope.email, pwWrappedUkJson: envelope.pwWrappedUkJson,
+            saltB64: envelope.saltB64, kdfParamsJson: envelope.kdfParamsJson
+        )
+    }
+
+    /// The offline password-unlock primitive itself (REQUIRED FIX #2's actual consumer):
+    /// `deriveAuthMaterial` -> `unwrapUserKeyFromJson`, entirely local, no `apiClient`, no
+    /// `AccountService` instance even needed (`static`, same discipline as `localAccount()`).
+    /// Throws `LocalUnlockError.noCachedCredentials` when `account.saltB64`/`kdfParamsJson` are
+    /// empty (a legacy/pre-cache session -- `CachedAccountEnvelope`'s own header) -- the caller's
+    /// signal to fall back to the network-based `signIn` flow for that one case. Any OTHER thrown
+    /// error (from `deriveAuthMaterial` or, far more commonly, `unwrapUserKeyFromJson`'s AEAD
+    /// open failing) means exactly one thing to the caller: wrong password -- there is no server
+    /// round trip here to distinguish "wrong password" from any other rejection reason, which is
+    /// the whole point: the wrapped key's own AEAD tag IS the credential check.
+    static func unlockLocally(account: RestoredAccount, password: String) throws -> FfiUserKey {
+        guard !account.saltB64.isEmpty, !account.kdfParamsJson.isEmpty,
+              let saltData = Data(base64Encoded: account.saltB64)
+        else {
+            throw LocalUnlockError.noCachedCredentials
+        }
+        var passwordData = Data(password.utf8)
+        // CP-4 caller-side mitigation, same discipline as `register`/`signIn` above.
+        defer { passwordData.resetBytes(in: 0..<passwordData.count) }
+        let authMaterial = try deriveAuthMaterial(
+            password: passwordData, salt: saltData, kdfParamsJson: account.kdfParamsJson
+        )
+        return try unwrapUserKeyFromJson(wrappingKey: authMaterial.wrappingKey, wrappedJson: account.pwWrappedUkJson)
+    }
+
     /// A previously stored session token's account, recovered WITHOUT
-    /// minting a new session row -- this is the re-unlock-after-relaunch
-    /// route (`LockView`'s reason for existing): the User Key is not held
-    /// in memory across a cold launch, but the server-issued token and the
-    /// account's `pw_wrapped_uk` can be recovered from `GET /api/auth/me`
-    /// while the User Key itself waits for a password or biometric unlock.
-    /// Returns `nil` when no token is stored (never a thrown error -- "no
-    /// session yet" is not a failure). A 401 (the stored token expired or
-    /// was revoked server-side) clears the now-useless token before
-    /// rethrowing, so a caller's next launch does not repeat the same
+    /// minting a new session row -- the server-issued token and the
+    /// account's CURRENT `pw_wrapped_uk` can be recovered from `GET
+    /// /api/auth/me`. Returns `nil` when no token is stored (never a thrown
+    /// error -- "no session yet" is not a failure). A 401 (the stored token
+    /// expired or was revoked server-side) clears the now-useless token
+    /// before rethrowing, so a caller's next launch does not repeat the same
     /// doomed call.
+    ///
+    /// Phase 42-era correction: no longer `LockView`'s ONLY reason for
+    /// existing (`ContentView.determineRoute()` now routes to `.lock` from
+    /// `localAccount()`'s cached copy FIRST, with zero network) -- this call
+    /// is now the BACKGROUND REFRESH `ContentView` fires once the lock
+    /// screen is already showing, never a gate in front of it. On success it
+    /// re-caches the envelope (`AccountEnvelopeCache.save`), which is both
+    /// how the cache STAYS fresh across a long-lived install and, per
+    /// `ios/evidence/42/`'s own proof requirement, an assertable side
+    /// effect: a caller can read the cache back and see it rewritten.
     func restoreSession() async throws -> RestoredAccount? {
         guard let token = SessionTokenStore.load() else {
             return nil
         }
         do {
             let me = try await apiClient.me(token: token)
-            return RestoredAccount(token: token, email: me.email, pwWrappedUkJson: me.pwWrappedUk)
+            // MERGE, never blank: `GET /api/auth/me` (`pv-server`'s own route contract, never
+            // modified by this fix) does not return `salt`/`kdf` at all, so a background refresh
+            // must PRESERVE whatever `register`/`signIn` already cached for this session --
+            // overwriting them with empty strings here would silently downgrade an
+            // already-offline-capable session back into one that needs the network to unlock
+            // (`CachedAccountEnvelope`'s own header).
+            let existing = AccountEnvelopeCache.load()
+            let envelope = CachedAccountEnvelope(
+                email: me.email, pwWrappedUkJson: me.pwWrappedUk,
+                saltB64: existing?.saltB64 ?? "", kdfParamsJson: existing?.kdfParamsJson ?? ""
+            )
+            AccountEnvelopeCache.save(envelope)
+            return RestoredAccount(
+                token: token, email: me.email, pwWrappedUkJson: me.pwWrappedUk,
+                saltB64: envelope.saltB64, kdfParamsJson: envelope.kdfParamsJson
+            )
         } catch let error as PvApiError {
             if case .invalidCredentials = error {
+                // The ONLY case that may bounce a signed-in user to sign-in (REQUIRED FIX #3): a
+                // real, server-confirmed rejection of this token -- never a transport failure,
+                // which is handled entirely by LockView's own offline treatment (38-11 state 8)
+                // and must never reach here as a reason to sign anyone out.
                 SessionTokenStore.clear()
+                AccountEnvelopeCache.clear()
             }
             throw error
         }
@@ -170,21 +265,38 @@ final class AccountService {
 
     /// Best-effort server-side revocation (never blocks on network failure
     /// -- the local token is cleared regardless), then clears the local
-    /// session token unconditionally.
+    /// session token AND the cached account envelope unconditionally --
+    /// `AccountEnvelopeCache`'s own header names this as one of the two
+    /// places (alongside `ServerSettings.store(_:)`) that must clear it
+    /// alongside `SessionTokenStore`.
     func logout() async {
         if let token = SessionTokenStore.load() {
             try? await apiClient.logout(token: token)
         }
         SessionTokenStore.clear()
+        AccountEnvelopeCache.clear()
     }
 }
 
-/// The account recovered from a stored session token via `GET
-/// /api/auth/me` -- no live `FfiUserKey` (the User Key is not recoverable
-/// from the server alone; `pwWrappedUkJson` still needs a password or
-/// biometric unlock to become one).
+/// The account recovered from either a local Keychain read (`AccountService
+/// .localAccount()`) or a live `GET /api/auth/me` (`AccountService
+/// .restoreSession()`) -- no live `FfiUserKey` (the User Key is not
+/// recoverable from either source alone; `pwWrappedUkJson` still needs a
+/// password or biometric unlock to become one). `saltB64`/`kdfParamsJson`
+/// are `""` when not yet cached (a legacy/pre-cache session) -- `LockView`
+/// reads that as "no local unlock is possible yet" (`AccountService
+/// .unlockLocally`'s own doc comment).
 struct RestoredAccount {
     let token: String
     let email: String
     let pwWrappedUkJson: String
+    let saltB64: String
+    let kdfParamsJson: String
+}
+
+/// Thrown by `AccountService.unlockLocally(account:password:)` when the account's cached envelope
+/// carries no `salt`/`kdf` yet -- the caller's signal to fall back to the network-based `signIn`
+/// flow (see that function's own doc comment).
+enum LocalUnlockError: Error {
+    case noCachedCredentials
 }

@@ -8,14 +8,22 @@
 //  session can no longer be confirmed against the server), `LockView` when
 //  a session token restores an account but the User Key is not in memory.
 //
-//  Known simplification, recorded rather than hidden: `LockView`
-//  eligibility is decided by a LIVE `GET /api/auth/me` call
-//  (`AccountService.restoreSession()`) each launch, not a local cache of
-//  `pw_wrapped_uk` -- this avoids a second local-storage mechanism this
-//  phase does not otherwise need, at the cost of requiring network
-//  reachability to distinguish the two screens on cold launch. True
-//  offline-first caching is Phase 39's job (sync/offline cache), not this
-//  plan's.
+//  CORRECTED, Phase 42-era (root-caused live,
+//  `.planning/debug/ios-cold-launch-blank-offline.md`): the paragraph this
+//  replaces described `LockView` eligibility as decided by a LIVE `GET
+//  /api/auth/me` call each launch, "at the cost of requiring network
+//  reachability to distinguish the two screens on cold launch" -- named as
+//  an accepted simplification at the time. In practice this gated the
+//  app's FIRST render on that network call (a blank screen while
+//  reachable-but-slow) and, worse, bounced a SIGNED-IN user to the sign-in
+//  screen on ANY failure of that call, including a transport failure --
+//  contradicting Phase 39 (offline ciphertext cache) and Phase 41 (cold
+//  offline AutoFill), both already shipped by the time this was found.
+//  `routeToLockOrAuth()` now routes from a local Keychain cache
+//  (`AccountService.localAccount()` / `AccountEnvelopeCache`) with ZERO
+//  network, and `GET /api/auth/me` (`refreshSessionInBackground()`) is a
+//  background refresh fired AFTER the lock screen is already showing, never
+//  a gate in front of it.
 //
 
 import SwiftUI
@@ -194,7 +202,12 @@ struct ContentView: View {
                     RestoredAccount(
                         token: "uitest-fixture-token",
                         email: "bartek@paczesny.pl",
-                        pwWrappedUkJson: "{}"
+                        pwWrappedUkJson: "{}",
+                        // Screenshot-forcing hook only -- never exercises a real unlock, so an
+                        // empty salt/kdf (the same "not yet cached" shape a legacy session would
+                        // carry) is correct here, not a placeholder needing a real value.
+                        saltB64: "",
+                        kdfParamsJson: ""
                     )
                 )
             // Phase 38, plan 38-13, Task 1: lands the UI test driver on
@@ -216,7 +229,7 @@ struct ContentView: View {
             route = .onboarding
             return
         }
-        await reroute()
+        routeToLockOrAuth()
     }
 
     /// `OnboardingWelcomeStep`'s two controls decide which `AuthView` mode
@@ -473,7 +486,10 @@ struct ContentView: View {
         // as soon as `ownUserId` re-resolved on the NEXT unlock.
         pendingInviteURL = nil
         route = .loading
-        Task { await reroute() }
+        // Phase 42-era correction: was `Task { await reroute() }` -- a live network call gating
+        // even the RE-lock route, not just cold launch. `routeToLockOrAuth()`'s own header covers
+        // the reasoning; this call site is identical to `determineRoute()`'s.
+        routeToLockOrAuth()
     }
 
     /// Same teardown as `performLock()`, plus forgetting the local session
@@ -515,10 +531,36 @@ struct ContentView: View {
         }
     }
 
-    /// The SAME decision `determineRoute()`'s post-onboarding branch makes,
-    /// factored out so `performLock()` can reuse it without also re-running
-    /// the onboarding/DEBUG-forced-route checks that only make sense at
-    /// initial launch.
+    /// Phase 42-era correction (root-caused live,
+    /// `.planning/debug/ios-cold-launch-blank-offline.md`, REQUIRED FIX #1): the decision
+    /// `determineRoute()`'s post-onboarding branch AND `performLock()` both make -- factored out
+    /// so neither re-runs onboarding/DEBUG-forced-route checks that only make sense at initial
+    /// launch. MUST NEVER block on the network: tries `AccountService.localAccount()` (Keychain
+    /// only -- `SessionTokenStore` + `AccountEnvelopeCache`, no `apiClient` call) FIRST, and routes
+    /// straight to `.lock` from it, kicking off a non-blocking background refresh
+    /// (`refreshSessionInBackground()`) only AFTER that route is already showing. Falls back to the
+    /// OLD blocking `reroute()` ONLY when a session token is stored but no envelope has ever been
+    /// cached for it (a session established before this fix shipped -- there is genuinely no local
+    /// data to route from in that one case). No token at all is the ordinary signed-out case,
+    /// unchanged: straight to `.auth`.
+    private func routeToLockOrAuth() {
+        if let local = AccountService.localAccount() {
+            route = .lock(local)
+            refreshSessionInBackground()
+        } else if SessionTokenStore.load() != nil {
+            Task { await reroute() }
+        } else {
+            route = .auth(initialMode: .signIn)
+        }
+    }
+
+    /// The pre-fix, network-gated restore -- kept ONLY as `routeToLockOrAuth()`'s fallback for a
+    /// stored session token with no cached envelope yet. Its `catch` still routes ANY failure
+    /// (including a transport failure) to `.auth` -- this WAS the worse half of the original defect
+    /// this session root-caused (a signed-in user bounced to sign-in merely because the network was
+    /// unreachable); it is now confined to this one legacy-session edge case instead of firing on
+    /// every cold launch, and is expected to become unreachable in practice once every session has
+    /// been through a real login/restore under this fix at least once.
     private func reroute() async {
         let service = AccountService(apiClient: apiClient)
         do {
@@ -529,6 +571,36 @@ struct ContentView: View {
             }
         } catch {
             route = .auth(initialMode: .signIn)
+        }
+    }
+
+    /// Phase 42-era correction (REQUIRED FIX #3): `GET /api/auth/me`, now a BACKGROUND refresh
+    /// fired once `routeToLockOrAuth()` has already put `.lock` on screen -- never a gate in front
+    /// of it. On success, re-caches the envelope (`AccountEnvelopeCache.save`, inside
+    /// `AccountService.restoreSession()` itself) and refreshes the visible route -- but ONLY while
+    /// still showing `.lock` (an already-`.unlocked` session, or a route that has since moved on to
+    /// `.auth`/`.onboarding`/a fresh `.lock` from a newer cycle, must never be clobbered by a
+    /// refresh that started before the user acted). On `invalidCredentials` (a REAL 401 -- the
+    /// server itself revoked or expired the token) clears the session and routes to `.auth` -- the
+    /// ONLY case that may bounce a signed-in user to sign-in (REQUIRED FIX #3's own wording). On any
+    /// OTHER failure (transport, unexpected response) this function does NOTHING: `LockView`'s own
+    /// `probeReachabilityOnAppear()`/`submitPassword()` already own the visible offline treatment
+    /// (38-11 state 8, `isOffline`) -- inventing a second offline signal here is exactly the "two
+    /// contradictory signals" state 8's own doc comment already warns against.
+    private func refreshSessionInBackground() {
+        Task {
+            let service = AccountService(apiClient: apiClient)
+            do {
+                if let restored = try await service.restoreSession(), case .lock = route {
+                    route = .lock(restored)
+                }
+            } catch let error as PvApiError {
+                if case .invalidCredentials = error, case .lock = route {
+                    route = .auth(initialMode: .signIn)
+                }
+            } catch {
+                // Intentionally silent -- see this function's own doc comment.
+            }
         }
     }
 

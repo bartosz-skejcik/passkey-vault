@@ -205,6 +205,16 @@ enum ServerSettings {
         if validated.absoluteString != previous.absoluteString {
             SessionTokenStore.clear()
             UkEnvelopeStore.delete()
+            // Phase 42-era correction: the cached account envelope
+            // (`AccountEnvelopeCache`) is the SAME class of per-server
+            // secret as the two above -- it wraps a User Key for one
+            // account on the PREVIOUS server, and carrying it across a
+            // server change would let `ContentView`'s local-first restore
+            // route straight to a Lock screen for an account the NEW server
+            // has never heard of. `AccountEnvelopeCache.swift`'s own header
+            // names this file as one of the two places (alongside
+            // `AccountService.logout()`) that must clear it.
+            AccountEnvelopeCache.clear()
         }
         UserDefaults.standard.set(validated.absoluteString, forKey: userDefaultsKey)
     }

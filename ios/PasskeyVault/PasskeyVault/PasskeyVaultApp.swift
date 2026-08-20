@@ -45,6 +45,16 @@ struct PasskeyVaultApp: App {
         if let raw = ProcessInfo.processInfo.environment["PV_UITEST_E41_7_IDLE_MINUTES"], let minutes = Int(raw) {
             AutoLockPolicy.write(minutes)
         }
+
+        // Phase 42-era correction: `LaunchOfflineLockUITests`' own seed -- see
+        // `OfflineLockUITestSeeder.swift`'s own header for why this MUST run here (before
+        // `ContentView` is ever constructed) rather than from `ContentView`'s own DEBUG block.
+        // Same `PV_UITEST_*` hook convention; this one's value IS the payload (the unreachable
+        // server address), not just a presence flag -- same shape as
+        // `PV_UITEST_E41_7_IDLE_MINUTES` immediately above.
+        if let serverURLString = ProcessInfo.processInfo.environment["PV_UITEST_OFFLINE_LOCK_SEED"] {
+            OfflineLockUITestSeeder.seed(serverURLString: serverURLString)
+        }
         #endif
 
         // Phase 36, Plan 36-02, Task 2 (E3): seed the shared keychain item

@@ -1820,6 +1820,119 @@ divergence (F3)", §"Decision records this phase owns" → DR-41-B.
 
 ---
 
+## 1k. Phase 42-era corrections — DR-42-A, 2026-08-20
+
+Root-caused live (`.planning/debug/ios-cold-launch-blank-offline.md`), from a real-device screen
+recording Bartek captured cold-launching the app while signed in: a BLANK white screen for several
+seconds, a Face ID sheet racing that blank screen, and — the worse half, found only by reading the
+code, never mentioned in the recording because a slow-but-eventually-reachable server never
+triggers it — a signed-in user silently bounced to the SIGN-IN screen on any launch where
+`GET /api/auth/me` failed for ANY reason, including a purely transport failure. Confirmed BEFORE
+any fix by direct code reading (`ContentView.swift`, `AccountService.swift`, `LockView.swift`) and
+then reproduced live on the simulator (`ios/evidence/42/launch-offline/before-fix-*.png`): a
+signed-in session, server pointed at `203.0.113.1:9999` (TEST-NET-3, non-routable), landed on
+"Sign in to 203.0.113.1" **within 1.7 seconds** of a cold launch.
+
+`ContentView.swift`'s own header, since Phase 37 (37-04), had NAMED this as an accepted
+simplification at the time ("LockView eligibility is decided by a LIVE `GET /api/auth/me` call
+each launch... at the cost of requiring network reachability to distinguish the two screens on
+cold launch") — correct when written, but Phase 39 (offline ciphertext cache) and Phase 41 (cold
+offline AutoFill) both shipped since, without anyone returning to close this gap, leaving the host
+app's own cold-launch routing the one place in the product that still assumed the network.
+
+### DR-42-A — Cache the account's `pw_wrapped_uk` (+ `salt`/`kdf`) locally, in the Keychain, for offline password unlock: **DECIDED**
+
+**Decision: a companion Keychain item, `AccountEnvelopeCache`** (`kSecClassGenericPassword`,
+`kSecAttrService = "cloud.blonie.PasskeyVault.account-envelope-cache"`,
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, no explicit `kSecAttrAccessGroup` — the SAME
+accessibility class and access-group defaulting as `SessionTokenStore` (ACC-03/DR-37-B), a
+companion to that item, not a third, differently-scoped secret class), written by
+`AccountService.register`/`.signIn` on every real success (the two call sites that actually hold
+`salt`/`kdf`, never re-derived or invented), and refreshed by `AccountService.restoreSession()`
+(now a background call, DR text below) with a **merge** that never blanks an already-cached
+`salt`/`kdf` — `GET /api/auth/me` does not return either field, and overwriting them with empty
+strings on every background refresh would silently downgrade an already-offline-capable session
+back into one that needs the network to unlock. `ContentView.routeToLockOrAuth()` reads it via a
+new `AccountService.localAccount()` (Keychain-only, no `apiClient` parameter at all — structurally
+incapable of a network call) to route straight to `.lock` on cold launch, with zero network.
+`LockView.submitPassword()` reads it via a new `AccountService.unlockLocally(account:password:)`
+(`deriveAuthMaterial` + `unwrapUserKeyFromJson`, entirely local) as its PRIMARY unlock path — the
+wrapped key's own AEAD tag is the credential check; the server is never asked to confirm a
+password. Falls back to the pre-fix, network-based `AccountService.signIn` flow only for a
+legacy/pre-cache session (empty `salt`/`kdf` — a session established before this fix ever ran on
+this device), confining the app's one remaining unlock-time network dependency to that single,
+self-healing edge case.
+
+**Rationale:** this is already a password-wrapped blob (`pw_wrapped_uk`) whose brute-force
+resistance is Argon2id's job — the SAME posture Bitwarden ships for its own offline vault unlock —
+and the vault ciphertext itself has been on-device since Phase 39 (`AppGroupCiphertextCacheStore`).
+Without this cache the app is unusable offline for its own primary "unlock the vault" action, which
+directly contradicts two already-shipped phases (39's offline cache, 41's cold offline AutoFill)
+whose entire premise is that the vault works without the server.
+
+**Rejected: keep `GET /api/auth/me` as the ONLY source, make it a background refresh, but leave
+password unlock going through the network `signIn` flow regardless.** This was the FIRST shape this
+correction took, and it shipped a "fix" that still failed the actual requirement: `ContentView`
+would route to `.lock` from a cache holding only `email`/`pw_wrapped_uk` (no `salt`/`kdf`), and
+`LockView.submitPassword()` still called `AccountService.signIn` — a live `prelogin` + `login`
+round trip — meaning the password field rendered promptly but could not actually be used with the
+server unreachable. Caught by this session's OWN live proof: `LaunchOfflineLockUITests` failed at
+exactly this point (`Password unlock did not reach the unlocked vault with the server
+unreachable`), which is precisely why this record extends the cache to `salt`/`kdf` and adds
+`unlockLocally` as a distinct code path rather than merely caching data nothing local ever reads.
+Recorded here so a future pass does not re-introduce the same half-fix having forgotten why the
+extra two fields exist.
+
+**Rejected: extend `GET /api/auth/me` to also return `salt`/`kdf`, so a single network round trip
+after a fresh install/legacy upgrade could seed a fully offline-capable cache in one shot.**
+Structurally excluded by this session's own constraint (`crates/pv-server` source is never
+modified while investigating a client-side bug) — and, on the merits, unnecessary: `register`/
+`signIn` are the only two events that ever need to establish a NEW envelope in the first place,
+and both already hold `salt`/`kdf` locally without any server change. The one case this would help
+(a legacy session that signed in before this fix shipped) is bounded and self-healing: the very
+next real sign-in caches the missing fields permanently.
+
+**Residual risk, stated plainly, not softened:** an attacker with the unlocked device's file system
+gains an offline brute-force target for the master password — bounded by Argon2id's cost
+parameters (64 MiB / t=3 / p=4, the SAME parameters that already protect `pw_wrapped_uk` in transit
+and at rest server-side; this cache relocates one already-wrapped copy of that same blob onto the
+device, it does not weaken the bound protecting it). Cleared on sign-out
+(`AccountService.logout()`) and on a server-address change (`ServerSettings.store(_:)`, the SAME
+"secrets cleared on change" path this file's own §"38-12"/§"39" precedent already established for
+`SessionTokenStore`/`UkEnvelopeStore` — extended here, not duplicated) — a stale envelope surviving
+either event would let `routeToLockOrAuth()` present a Lock screen for an account the new
+server/no-longer-signed-in state has never heard of.
+
+**Two smaller, non-alternative-bearing corrections, recorded rather than left implicit:**
+
+- **Launch (and re-lock) must never block the first render on the network.**
+  `ContentView.routeToLockOrAuth()` tries `AccountService.localAccount()` first and routes straight
+  to `.lock`; `GET /api/auth/me` (`refreshSessionInBackground()`) now fires AFTER that route is
+  already on screen, and on `invalidCredentials` (a REAL 401) is the ONLY case that may still route
+  a signed-in user to `.auth` — any other failure (transport, unexpected) is silently ignored here,
+  because `LockView`'s own `probeReachabilityOnAppear()`/`submitPassword()` (38-11 state 8,
+  `isOffline`) already own the visible offline treatment; inventing a second one would be the exact
+  "two contradictory signals" that state's own doc comment already warns against.
+- **Biometry must not race the first paint.** `LockView.setUpOnAppear()` deferred
+  `attemptBiometricUnlock` via `DispatchQueue.main.async` — `onAppear` fires once the view is added
+  to the hierarchy but before UIKit has necessarily committed the first actual frame, and on a real
+  device the system Face ID sheet won that race and appeared over a still-blank frame (the reported
+  symptom's own second half). This is a genuinely separate defect from DR-42-A above and survives it
+  on its own — nothing about a faster local route also guarantees biometry waits for the first
+  paint.
+
+**Evidence:** `.planning/debug/ios-cold-launch-blank-offline.md` (full investigation, Evidence
+section citing exact line ranges in `ContentView.swift`/`AccountService.swift`/`LockView.swift`
+read BEFORE any edit); `ios/evidence/42/launch-offline/transcript.md` +
+`before-fix-01-blank-loading.png`/`before-fix-02-bounced-to-signin.png` (the pre-fix defect, live);
+`after-fix-02-lock-chrome-offline-banner.png`/`after-fix-03-reachable-background-refresh.png` (the
+fix, live, both offline and reachable); `LaunchOfflineLockUITests.swift` (automated, repeatable,
+green twice); `LocalAccountRestoreTests.swift` (8 cases: `localAccount()`'s Keychain-only
+structure, `unlockLocally`'s real-crypto round trip / wrong-password rejection /
+`noCachedCredentials` fallback signal, and the envelope-cache merge-never-blanks contract).
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+

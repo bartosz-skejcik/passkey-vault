@@ -463,7 +463,24 @@ struct LockView: View {
 
         guard currentAvailability.isAvailable, !didAutoPromptBiometrics else { return }
         didAutoPromptBiometrics = true
-        attemptBiometricUnlock(availability: currentAvailability)
+        // Phase 42-era correction (root-caused live,
+        // `.planning/debug/ios-cold-launch-blank-offline.md`, REQUIRED FIX #4): `onAppear` fires
+        // once this view is added to the hierarchy, but BEFORE UIKit has necessarily committed the
+        // first actual frame to the screen -- triggering the biometric system sheet synchronously
+        // from here raced that first paint on a real device: Face ID's own system UI won the race
+        // and appeared OVER a still-blank frame (the user-reported symptom: "the Face ID sheet
+        // appears over that blank screen"). This is a DIFFERENT bug from the network-gating defect
+        // this same session root-caused (ContentView no longer blocks the FIRST render at all), but
+        // it survives that fix on its own: nothing previously stopped a biometric attempt from
+        // outrunning even an already-local, already-fast route to `.lock`.
+        // `DispatchQueue.main.async` posts the call to the NEXT run-loop turn, after the CURRENT
+        // turn's screen update has committed -- the same "wait one turn" idiom this file's own
+        // `applyForcedUITestState` hook already uses (`Task { @MainActor in ... }`, this function's
+        // own header two screens up) for the identical underlying reason (that comment's own
+        // citation of the WR-03/FIX-3 focus test failing when applied synchronously).
+        DispatchQueue.main.async {
+            attemptBiometricUnlock(availability: currentAvailability)
+        }
     }
 
     /// State 8's OTHER trigger (addendum A3): a real probe against the
@@ -607,15 +624,25 @@ struct LockView: View {
         }
     }
 
-    /// Reuses `AccountService.signIn` verbatim -- `preloginKdf` against the
-    /// SERVER's own stored salt/params, `deriveAuthMaterial`, `POST login`
-    /// (mints a fresh session token, replacing the stored one), then
-    /// `unwrapUserKeyFromJson` against the account's `pw_wrapped_uk`. Never
-    /// a second, hand-rolled derivation path -- this is the SAME tested
-    /// route `AuthView`'s sign-in submit already exercises. On success, the
-    /// biometric envelope is silently re-armed (37-CONTEXT.md's locked
-    /// decision: no separate "re-enable Face ID" toggle for the user to
-    /// tap).
+    /// Phase 42-era correction (REQUIRED FIX #2, root-caused live,
+    /// `.planning/debug/ios-cold-launch-blank-offline.md`): the PRIMARY path is now
+    /// `AccountService.unlockLocally(account:password:)` -- `deriveAuthMaterial` +
+    /// `unwrapUserKeyFromJson` against `account`'s CACHED `salt`/`kdf`/`pw_wrapped_uk`, entirely
+    /// local. This is what makes password unlock work with the server unreachable at all: the
+    /// server is never asked to confirm the password, because the password's own correctness IS
+    /// what makes `unwrapUserKeyFromJson`'s AEAD tag verify. `account.token` (already in Keychain,
+    /// from whichever login/restore first produced this session) is reused as-is -- the SAME thing
+    /// the biometric path above already does, never minting a fresh one via a network call.
+    ///
+    /// Falls back to the OLD network-based `AccountService.signIn` flow ONLY when
+    /// `unlockLocally` reports `LocalUnlockError.noCachedCredentials` -- a legacy/pre-cache session
+    /// that has never been through a real login/restore under this fix
+    /// (`CachedAccountEnvelope`'s own header). Any OTHER thrown error from `unlockLocally` means
+    /// wrong password, full stop -- never retried over the network, because a wrong password is a
+    /// wrong password whether the server is reachable or not.
+    ///
+    /// On success (either path), the biometric envelope is silently re-armed (37-CONTEXT.md's
+    /// locked decision: no separate "re-enable Face ID" toggle for the user to tap).
     private func submitPassword() {
         // While throttled the submit is disabled, but guard here too: the
         // control is not the only way to reach this (return key, and any future
@@ -626,6 +653,24 @@ struct LockView: View {
         isProcessing = true
         Task {
             defer { isProcessing = false }
+            do {
+                let userKey = try AccountService.unlockLocally(account: account, password: password)
+                let session = UnlockedSession(token: account.token, userKey: userKey, email: account.email)
+                try? BiometricUnlockService.enrol(userKey: userKey)
+                clearThrottleState()
+                isOffline = false
+                onUnlocked(session)
+                return
+            } catch LocalUnlockError.noCachedCredentials {
+                // Legacy/pre-cache session -- falls through to the network path below, exactly the
+                // pre-fix behaviour, confined to this one edge case.
+            } catch {
+                // Any other failure out of `unlockLocally` is a wrong password (see this
+                // function's own doc comment) -- never a reason to fall back to the network.
+                registerFailedAttempt()
+                return
+            }
+
             let service = AccountService(apiClient: apiClient)
             do {
                 let session = try await service.signIn(email: account.email, password: password)
