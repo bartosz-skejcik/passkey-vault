@@ -70,14 +70,23 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     private func logCandidateMatchEvaluation(serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         guard !serviceIdentifiers.isEmpty else { return }
         for serviceIdentifier in serviceIdentifiers {
-            let target = MatchTarget(serviceIdentifier: serviceIdentifier)
             // No live item lookup here (this method must stay cheap and synchronous-ish -- no
             // decrypt) -- the login match is evaluated against the fill path's own tracer URL
             // constant when present, purely so the evidence line proves the array was walked and
             // fed through the SAME matcher, never a second copy of the policy.
+            //
+            // WR-02 (41-REVIEW.md): this line carries the live page's real service identifier
+            // (DR-41-B's own note: `prepareCredentialList`'s array DOES carry the actually-visited
+            // page) -- browsing history plus a vault-item UUID. Gated behind the SAME evidence
+            // flag this line exists for (`PV_PROBE_E41_3`), and the identifier/target themselves
+            // are `.private` even when the flag is on -- only `stage=`/`type=` (no user data) stay
+            // `.public` for `assert_*` greps.
+            #if PV_PROBE_E41_3
+            let target = MatchTarget(serviceIdentifier: serviceIdentifier)
             Self.fillLogger.log(
-                "PVFILL|E41-3|stage=list-evaluate identifier=\(serviceIdentifier.identifier, privacy: .public) type=\(String(describing: serviceIdentifier.type), privacy: .public) target=\(String(describing: target), privacy: .public)"
+                "PVFILL|E41-3|stage=list-evaluate identifier=\(serviceIdentifier.identifier, privacy: .private) type=\(String(describing: serviceIdentifier.type), privacy: .public) target=\(String(describing: target), privacy: .private)"
             )
+            #endif
         }
     }
 
@@ -169,9 +178,18 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         // the ACTUAL page this invocation fired from" -- settled here empirically, never assumed
         // (this whole phase's own epistemology), by comparing this line's logged value across the
         // accepted (port 8765) and refused (port 8766) runs `AutoFillMatchingUITests.swift` drives.
+        //
+        // WR-02 (41-REVIEW.md): this line runs on EVERY fill and was previously unconditional,
+        // `.public`, in Release -- the visited site's own identifier, unredacted, into a
+        // device-persistent, sysdiagnose-exportable log. Gated behind the SAME `PV_PROBE_E41_3`
+        // evidence flag `logCandidateMatchEvaluation` above now uses (this line exists for the
+        // same DR-41-B empirical settling), and the identifier is `.private` even when the flag
+        // is on.
+        #if PV_PROBE_E41_3
         Self.fillLogger.log(
-            "PVFILL|entry=\(entryPoint, privacy: .public) stage=diagnose-target identifier=\(request.credentialIdentity.serviceIdentifier.identifier, privacy: .public) type=\(String(describing: request.credentialIdentity.serviceIdentifier.type), privacy: .public)"
+            "PVFILL|entry=\(entryPoint, privacy: .public) stage=diagnose-target identifier=\(request.credentialIdentity.serviceIdentifier.identifier, privacy: .private) type=\(String(describing: request.credentialIdentity.serviceIdentifier.type), privacy: .public)"
         )
+        #endif
 
         guard let recordIdentifier = request.credentialIdentity.recordIdentifier else {
             Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=no-record-identifier")

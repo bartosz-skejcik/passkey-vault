@@ -226,7 +226,10 @@ enum CipherCacheReader {
             logger.log("PVFILL|E41-6|stage=read-digest field=itemId digest=\(sha256Hex(Data(item.itemId.utf8)), privacy: .public)")
             logger.log("PVFILL|E41-6|stage=read-digest field=revision digest=\(sha256Hex(Data(String(item.revision).utf8)), privacy: .public)")
         case let .failure(error):
-            logger.error("PVFILL|E41-6|stage=read-digest status=fail error=\(String(describing: error), privacy: .public)")
+            // WR-02 (41-REVIEW.md): `error`'s description can embed the raw `recordIdentifier`
+            // (`.itemNotFound(id)`'s own case) -- `.private`, never `.public`, even in this
+            // `PV_PROBE_CACHE_ENCODING`-only evidence path.
+            logger.error("PVFILL|E41-6|stage=read-digest status=fail error=\(String(describing: error), privacy: .private)")
         }
 
         switch lookup(recordIdentifier: wrongShapeItemId) {
