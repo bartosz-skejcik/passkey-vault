@@ -30,62 +30,59 @@ import Testing
 
 struct SyncDecodeTests {
 
-    // MARK: - Reading the captured evidence bodies straight off disk
+    // MARK: - Reading the captured server bodies straight off disk
 
-    /// `#filePath` resolves to THIS file's absolute path at compile time --
-    /// walking up from `PasskeyVaultTests/` to `ios/evidence/39/` reads the
-    /// SAME bytes `scripts/sync-contract-probe.sh` captured live in 39-01,
-    /// not a copy retyped into this file.
-    private static var evidenceURL: URL {
-        URL(fileURLWithPath: #filePath)
+    /// These are the bytes `scripts/sync-contract-probe.sh` captured live
+    /// from a real `pv-server` in plan 39-01 -- lifted OUT of
+    /// `ios/evidence/39/01-server-contract.md` and into their own fixture
+    /// files here.
+    ///
+    /// Why they moved (found by Phase 41's verification, fixed in Phase 42):
+    /// this suite used to parse the fenced ```json blocks out of the
+    /// evidence markdown itself. That file is REWRITTEN by
+    /// `scripts/ios-live-server.sh` on every live run, and Phase 40's
+    /// commit `6701e61` overwrote it with a version carrying no fenced
+    /// blocks at all -- turning both decode tests permanently RED for
+    /// reasons that had nothing to do with the decoder. A test whose input
+    /// is a document other processes rewrite is a test that measures the
+    /// document, not the code.
+    ///
+    /// The provenance the old arrangement was reaching for is preserved by
+    /// the fixtures being byte-identical to what the probe captured
+    /// (recovered from commit `0da012d`); the evidence file remains the
+    /// human-readable record of the run, and is no longer load-bearing for
+    /// any assertion.
+    private static func capturedBody(_ name: String) throws -> String {
+        let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // PasskeyVaultTests/
-            .deletingLastPathComponent() // ios/PasskeyVault/
-            .deletingLastPathComponent() // ios/
-            .appendingPathComponent("evidence")
-            .appendingPathComponent("39")
-            .appendingPathComponent("01-server-contract.md")
+            .appendingPathComponent("Fixtures")
+            .appendingPathComponent(name)
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw TestSupportError.unreadableFixture(path: url.path)
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Extracts the Nth fenced ```json ... ``` block's contents, trimmed.
-    /// The evidence file carries exactly two such blocks, in document order:
     /// (a) the snapshot branch, (b) the up-to-date branch (D-12).
     private static func fencedJSONBlock(_ index: Int) throws -> String {
-        let data = try Data(contentsOf: evidenceURL)
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw TestSupportError.missingFencedBlock(index: index, found: 0)
+        switch index {
+        case 0: return try capturedBody("39-sync-snapshot-body.json")
+        case 1: return try capturedBody("39-sync-uptodate-body.json")
+        default: throw TestSupportError.unknownBody(index: index)
         }
-        let lines = text.components(separatedBy: "\n")
-        var blocks: [String] = []
-        var capturing = false
-        var current: [String] = []
-        for line in lines {
-            if line.hasPrefix("```json") {
-                capturing = true
-                current = []
-                continue
-            }
-            if capturing, line.hasPrefix("```") {
-                blocks.append(current.joined(separator: "\n"))
-                capturing = false
-                continue
-            }
-            if capturing {
-                current.append(line)
-            }
-        }
-        guard index < blocks.count else {
-            throw TestSupportError.missingFencedBlock(index: index, found: blocks.count)
-        }
-        return blocks[index].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private enum TestSupportError: Error, CustomStringConvertible {
-        case missingFencedBlock(index: Int, found: Int)
+        case unreadableFixture(path: String)
+        case unknownBody(index: Int)
 
         var description: String {
             switch self {
-            case let .missingFencedBlock(index, found):
-                return "expected a ```json block at index \(index) in \(evidenceURL.path), found \(found)"
+            case let .unreadableFixture(path):
+                return "captured-body fixture is missing or not UTF-8: \(path)"
+            case let .unknownBody(index):
+                return "no captured body at index \(index) -- this suite has two (snapshot, up-to-date)"
             }
         }
     }

@@ -1,6 +1,6 @@
 # 40-06-EF2 web redemption -- GAP2 closure (40-VERIFICATION.md)
 
-**Recorded:** 2026-08-19 22:03:13 UTC
+**Recorded:** 2026-08-19 22:24:00 UTC
 **Server origin:** http://127.0.0.1:8621
 **Orchestrator:** `scripts/gap2-web-redemption-e2e.sh` (this run), wiring
 `scripts/invite-live-e2e.mjs` (previously committed with zero callers,
@@ -15,25 +15,25 @@ reimplementation), against an invite the REAL iOS app generated.
 ## Step 1: iOS authors the invite (real `InviteService`, real `pv-ffi`)
 
 - Test: `InviteAuthoredForWebRedemptionTests.authorInviteForHostSideWebRedemption()`
-- Owner account A: `pv-gap2-a-1787176988-19ef045d@example.invalid`
-- Family: `GAP2 family 1787176988-19ef045d`
-- Invite URL: `http://127.0.0.1:8621/invite/SrMYVyyDS39i6sSszoyCKqwiSnzVJqTegdHtpNgAWZM#MlbpSotXBHY_CPascA9HJo8u8aHFk1NSkhl-wgvfTkU`
+- Owner account A: `pv-gap2-a-1787178235-4cbcb146@example.invalid`
+- Family: `GAP2 family 1787178235-4cbcb146`
+- Invite URL: `http://127.0.0.1:8621/invite/aR0Xi_EBw3f7Q-XK3QRGppDxwHe7v1dHHZDDZ--rs-I#4sBYXLqoNDGVH4RMaeSUWhiPIeOyUJInueNXYk1dAdc`
 
 ## Step 2: pv-wasm redeems (real web-client crypto, HOST-side node)
 
 ```
-node scripts/invite-live-e2e.mjs redeem http://127.0.0.1:8621 <inviteURL> pv-gap2-b-web-1787176992-55416e3c@example.invalid <password>
-{"ok":true,"email":"pv-gap2-b-web-1787176992-55416e3c@example.invalid","token":"1BwUUy2aroqpVKgSAU0CCRgCy35IL8HNFuSK4JMYrPg=","alreadyMember":false}
+node scripts/invite-live-e2e.mjs redeem http://127.0.0.1:8621 <inviteURL> pv-gap2-b-web-1787178239-507cdb3d@example.invalid <password>
+{"ok":true,"email":"pv-gap2-b-web-1787178239-507cdb3d@example.invalid","token":"k7aCBLyQQuk7S5fzUUZNoGF+C9UqmZUytZZCZZnqT+Y=","alreadyMember":false}
 ```
 
 ## Step 3: receiver-side roster proof (raw HTTP, account A's own token -- the SAME curl-equivalent discipline `InviteTests.fetchMembersRaw` uses)
 
 ```
 node scripts/invite-live-e2e.mjs members http://127.0.0.1:8621 <tokenA>
-{"status":200,"body":[{"user_id":"02f4e63f-676e-43bd-8fe8-90cd54b3bda6","email":"pv-gap2-a-1787176988-19ef045d@example.invalid","role":"owner","joined_at":"2026-08-19 22:03:08","public_key":"wS9eESqA3lfyaU6jOVClqP+gl5Nw5o6v2n5b0aarrG8=","fingerprint":"c655b93ef31c0cea9781bfdadbe114389e8332dc64cd91a30d73dd727f9c8bff","verified_at":null,"status":"active"},{"user_id":"6b278f99-135a-4f5e-ae4b-2d3cf14ce6ba","email":"pv-gap2-b-web-1787176992-55416e3c@example.invalid","role":"member","joined_at":"2026-08-19 22:03:13","public_key":"2+cauYH5yC+qVFrjcIIq3CadoEGguzfjoGQ/UuzcWVM=","fingerprint":"235c1bee303b5930e75f852b43675190ecf2565deb107f616f75db741a702fa2","verified_at":null,"status":"active"}]}
+{"status":200,"body":[{"user_id":"bda43b23-59aa-42d4-8fe5-31d48296d367","email":"pv-gap2-a-1787178235-4cbcb146@example.invalid","role":"owner","joined_at":"2026-08-19 22:23:55","public_key":"mWQOBHz0xTqxOidOEny1MC4AvqFIIb6V8UM9n1KyMlk=","fingerprint":"b49ef900174b81c9526a6b96e2e641d780710f01c9238c3f560387c4989ffe11","verified_at":null,"status":"active"},{"user_id":"842b262f-0005-4159-9a5d-9297b9827392","email":"pv-gap2-b-web-1787178239-507cdb3d@example.invalid","role":"member","joined_at":"2026-08-19 22:23:59","public_key":"qGJiJJN3FMxVzgSV9TqgBn9TIiFrUY305/tQOQj/VG0=","fingerprint":"eef7b0e62e28325272915d3b86794089b1912cdcb8a53b5e09496712adaae36b","verified_at":null,"status":"active"}]}
 ```
 
-New member found in roster: `{"user_id":"6b278f99-135a-4f5e-ae4b-2d3cf14ce6ba","email":"pv-gap2-b-web-1787176992-55416e3c@example.invalid","role":"member","joined_at":"2026-08-19 22:03:13","public_key":"2+cauYH5yC+qVFrjcIIq3CadoEGguzfjoGQ/UuzcWVM=","fingerprint":"235c1bee303b5930e75f852b43675190ecf2565deb107f616f75db741a702fa2","verified_at":null,"status":"active"}`
+New member found in roster: `{"user_id":"842b262f-0005-4159-9a5d-9297b9827392","email":"pv-gap2-b-web-1787178239-507cdb3d@example.invalid","role":"member","joined_at":"2026-08-19 22:23:59","public_key":"qGJiJJN3FMxVzgSV9TqgBn9TIiFrUY305/tQOQj/VG0=","fingerprint":"eef7b0e62e28325272915d3b86794089b1912cdcb8a53b5e09496712adaae36b","verified_at":null,"status":"active"}`
 
 ## What this proves, stated precisely
 
