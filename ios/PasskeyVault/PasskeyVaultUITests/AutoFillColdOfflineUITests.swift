@@ -18,6 +18,15 @@
 // deliberate: `scripts/ios-autofill-e41.sh e41-6` seeds this exact item (via `xcrun simctl launch`,
 // never an XCUITest launch) in the PRE-shutdown phase, so this test's expectation must match that
 // seeder's own literals exactly.
+//
+// WR-11 (41-REVIEW.md): the isolation this test method's own precondition enforces is
+// PROCESS-level (no host app launched anywhere in this boot, and pv-server specifically confirmed
+// unreachable) -- it is NOT network-level isolation. The login form itself is served locally on
+// `127.0.0.1:8765`, so this run is not network-isolated in any strong sense; "offline" here means
+// "the one network dependency this milestone's fill path could reach is unreachable," never "no
+// network access at all." `PV_E41_6_COLD_RUN` (set by the harness only for a genuine cold run)
+// gates the whole test method with `XCTSkip` when absent, so running this file standalone can
+// never silently report a pass it did not earn.
 
 import Foundation
 import XCTest
@@ -42,6 +51,42 @@ final class AutoFillColdOfflineUITests: XCTestCase {
 
     @MainActor
     func testColdOfflineFillFromCacheOnly() throws {
+        // WR-11 (41-REVIEW.md): everything load-bearing about "cold" and "offline" lived ENTIRELY
+        // in the driving harness (`scripts/ios-autofill-e41.sh e41-6`) -- this test method itself
+        // contained no enforcement of either claim. Run this file alone (Xcode Cmd-U, or a future
+        // CI job that runs the UI test bundle) and it would happily PASS on a warm, online
+        // simulator while its own name and header claim otherwise. `PV_E41_6_COLD_RUN` is set by
+        // the harness ONLY for a genuine post-shutdown/-boot cold run (via `TEST_RUNNER_
+        // PV_E41_6_COLD_RUN=1`, xcodebuild's own env-var-to-test-process passthrough); its absence
+        // means this method is not running under the harness's own cold-boot discipline, so it
+        // MUST `XCTSkip` -- never silently report a pass it did not earn.
+        guard ProcessInfo.processInfo.environment["PV_E41_6_COLD_RUN"] == "1" else {
+            throw XCTSkip(
+                "PV_E41_6_COLD_RUN is not set -- this test only proves anything when driven by " +
+                    "scripts/ios-autofill-e41.sh e41-6's own shutdown/boot cycle. Running it " +
+                    "standalone cannot verify cold/offline conditions and must not silently pass."
+            )
+        }
+
+        // The one isolation claim this precondition CAN verify from inside the process: pv-server
+        // (the only network dependency this milestone's fill path could reach, `41-RESEARCH.md`'s
+        // own "Explicitly NOT in the stack" table) must be unreachable. This is a PROCESS-level
+        // isolation claim (no host app launched in this boot), not a network-level one -- the
+        // login form itself is served locally on `127.0.0.1:8765`, so this run is not
+        // network-isolated in any strong sense (this file's own header now states that
+        // explicitly, per WR-11's own secondary note).
+        let healthURL = URL(string: "http://127.0.0.1:8620/healthz")!
+        var healthRequest = URLRequest(url: healthURL)
+        healthRequest.timeoutInterval = 2
+        let healthExpectation = XCTestExpectation(description: "pv-server health probe")
+        var serverReachable = false
+        URLSession.shared.dataTask(with: healthRequest) { _, response, _ in
+            serverReachable = (response != nil)
+            healthExpectation.fulfill()
+        }.resume()
+        wait(for: [healthExpectation], timeout: 3)
+        XCTAssertFalse(serverReachable, "pv-server answered its health check -- this run is not offline.")
+
         // NO `host.launch()` HERE, deliberately -- see this file's own header. The seed
         // (`TracerFillSeeder.seed()`, via `xcrun simctl launch`) already happened, in a process
         // this boot never saw, BEFORE `scripts/ios-autofill-e41.sh e41-6` shut the simulator down.

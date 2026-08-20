@@ -1958,7 +1958,12 @@ seed_before_shutdown() {
 
 run_e41_6_cold_test_once() {
   local udid="$1" out_log="$2"
-  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+  # WR-11 (41-REVIEW.md): `TEST_RUNNER_`-prefixed env vars set on the CALLING `xcodebuild test`
+  # process are propagated (prefix stripped) into the XCUITest runner's OWN process environment --
+  # this is how the test method's own `PV_E41_6_COLD_RUN` precondition (added by WR-11's fix)
+  # learns it is genuinely running under THIS harness's shutdown/boot cycle, as opposed to a bare
+  # Xcode Cmd-U or a future CI job running the UI test bundle standalone.
+  TEST_RUNNER_PV_E41_6_COLD_RUN=1 xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
     -scheme PasskeyVault -configuration Debug \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$DD_PATH" \
