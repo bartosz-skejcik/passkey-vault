@@ -92,22 +92,40 @@ if [ "${#SWIFT_FILES[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# --- Lexical preprocessing (CR-02, copied verbatim from audit-ffi-opaque-handles.sh) ------------
+# --- Lexical preprocessing (CR-02, copied verbatim from audit-ffi-opaque-handles.sh; WR-07
+# (41-REVIEW.md) added `"""` multi-line string handling) -------------------------------------
 # Strips `//` line comments, nested `/* */` block comments, and the CONTENTS of string literals,
 # so this gate's own header prose and any code comment quoting one of the five patterns below can
 # never trip the scan. Declarations/call sites themselves are code and survive stripping intact.
+#
+# WR-07: the original version toggled `state` on every SINGLE `"`, so a `"""` multi-line literal
+# was read as string-open, string-close, string-open -- leaving the machine in `state == "string"`
+# for the REST OF THE FILE, at which point every subsequent line is emitted empty and every real
+# call site in it becomes invisible to the scan. That failure direction is a FALSE PASS, the one
+# direction a gate must not fail in. `"""` is now recognized explicitly (real files in this tree,
+# e.g. `TracerFillSeeder.swift`/`LockE41Seeder.swift`, already use multi-line JSON literals).
+#
+# Raw string literals (`#"..."#`) are NOT tokenized -- `refuse_unsupported_string_literals` below
+# fails loud on any file containing one rather than silently mis-scanning it (T-41-42). No file in
+# this tree uses one today.
 strip_comments_and_strings() {
   awk '
-    function strip(line,   out, i, c, d, n) {
+    function strip(line,   out, i, c, d, e, n) {
       out = ""
       n = length(line)
       i = 1
       while (i <= n) {
         c = substr(line, i, 1)
         d = substr(line, i + 1, 1)
+        e = substr(line, i + 2, 1)
         if (state == "block") {
           if (c == "*" && d == "/") { cdepth--; i += 2; if (cdepth <= 0) { cdepth = 0; state = "code" } ; continue }
           if (c == "/" && d == "*") { cdepth++; i += 2; continue }
+          i++
+          continue
+        }
+        if (state == "triple") {
+          if (c == "\"" && d == "\"" && e == "\"") { state = "code"; i += 3; continue }
           i++
           continue
         }
@@ -119,6 +137,7 @@ strip_comments_and_strings() {
         }
         if (c == "/" && d == "/") { break }
         if (c == "/" && d == "*") { state = "block"; cdepth = 1; i += 2; continue }
+        if (c == "\"" && d == "\"" && e == "\"") { state = "triple"; i += 3; continue }
         if (c == "\"") { state = "string"; i++; continue }
         out = out c
         i++
@@ -130,11 +149,22 @@ strip_comments_and_strings() {
   ' "$1"
 }
 
+# WR-07: fail loud on a raw string literal (`#"`) rather than silently mis-scan one -- see this
+# file's own header above for why raw literals are refused rather than tokenized.
+refuse_unsupported_string_literals() {
+  local f="$1"
+  if grep -qF '#"' "$f"; then
+    echo "ERROR: $f contains a raw string literal (#\"...\"#) this gate's stripper cannot tokenize -- refusing to report PASS over an unscanned construct" >&2
+    exit 1
+  fi
+}
+
 VIOLATIONS=""
 SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
 
 for f in "${SWIFT_FILES[@]}"; do
+  refuse_unsupported_string_literals "$f"
   STRIPPED="$SCRATCH/$(echo "$f" | tr '/' '_').stripped"
   strip_comments_and_strings "$f" > "$STRIPPED"
 
