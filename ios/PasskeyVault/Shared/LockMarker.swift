@@ -85,10 +85,21 @@ public struct LockMarker: Codable, Equatable {
     // rather than silently comparing two different clocks.
     private static let defaultsKey = "cloud.blonie.PasskeyVault.lockMarker.v2"
 
+    /// WR-12 (41-REVIEW.md): resolves the CALLER-supplied `UserDefaults` override if present,
+    /// otherwise the real App Group container -- the SAME injectable-suite discipline
+    /// `SessionLifecycle.configuredIdleWindowSeconds(defaults:)` already established, extended
+    /// here to the marker read/write/clear surface so `SessionLifecycle`'s own tests can exercise
+    /// the real production code paths (`checkAndExpireIfNeeded`/`refreshActivity`/`lock`) without
+    /// touching the real device's App Group container. Production call sites never pass an
+    /// override, so this resolves to the real container exactly as before this fix.
+    private static func resolveDefaults(_ override: UserDefaults?) -> UserDefaults? {
+        override ?? UserDefaults(suiteName: suiteName)
+    }
+
     /// Reads the marker, or `nil` if none has ever been written, the App Group container could
     /// not be resolved, or the stored value is undecodable.
-    public static func read() -> LockMarker? {
-        guard let defaults = UserDefaults(suiteName: suiteName) else { return nil }
+    public static func read(defaults override: UserDefaults? = nil) -> LockMarker? {
+        guard let defaults = resolveDefaults(override) else { return nil }
         guard let data = defaults.data(forKey: defaultsKey) else { return nil }
         return try? JSONDecoder().decode(LockMarker.self, from: data)
     }
@@ -96,8 +107,8 @@ public struct LockMarker: Codable, Equatable {
     /// Writes the marker whole. ACC-07 (DR-41-C) permits BOTH processes to call this -- never
     /// called directly outside `SessionLifecycle.swift` in production code (that type owns which
     /// fields each caller may/may not carry forward; see its own header).
-    public static func write(_ marker: LockMarker) {
-        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+    public static func write(_ marker: LockMarker, defaults override: UserDefaults? = nil) {
+        guard let defaults = resolveDefaults(override) else { return }
         guard let data = try? JSONEncoder().encode(marker) else { return }
         defaults.set(data, forKey: defaultsKey)
     }
@@ -106,8 +117,8 @@ public struct LockMarker: Codable, Equatable {
     /// itself is deleted by `SessionLifecycle`'s caller-supplied `deleteKeyArtifact` closure,
     /// never by this file -- this type owns no Keychain code). Idempotent: clearing an
     /// already-absent marker is not an error.
-    public static func clear() {
-        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+    public static func clear(defaults override: UserDefaults? = nil) {
+        guard let defaults = resolveDefaults(override) else { return }
         defaults.removeObject(forKey: defaultsKey)
     }
 

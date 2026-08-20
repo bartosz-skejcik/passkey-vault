@@ -94,14 +94,21 @@ enum SessionLifecycle {
     /// read (the marker could not be read at all), refuses the read but never destroys a session
     /// that could not be evaluated (WR-03). Returns `true` only when the session is genuinely
     /// still valid.
+    /// WR-12 (41-REVIEW.md): `defaults` is injectable, the SAME discipline
+    /// `configuredIdleWindowSeconds(defaults:)` already established -- production call sites never
+    /// pass an override (resolving to the real App Group container exactly as before); tests inject
+    /// an isolated `UserDefaults` suite so `SessionLifecycleTests` can exercise this REAL function
+    /// (never a re-implementation) without disturbing a real device's container.
     @discardableResult
-    static func checkAndExpireIfNeeded(entryPoint: String, deleteKeyArtifact: () -> Void) -> Bool {
+    static func checkAndExpireIfNeeded(
+        entryPoint: String, deleteKeyArtifact: () -> Void, defaults: UserDefaults? = nil
+    ) -> Bool {
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
         // real elapsed time (fail-open) across a device sleep.
         let now = LockMarker.monotonicNow()
         let state: LockState
-        if let marker = LockMarker.read() {
+        if let marker = LockMarker.read(defaults: defaults) {
             if
                 let currentBootSessionId = LockMarker.currentBootSessionId(),
                 marker.isValid(
@@ -127,7 +134,7 @@ enum SessionLifecycle {
         switch state {
         case .expired:
             deleteKeyArtifact()
-            LockMarker.clear()
+            LockMarker.clear(defaults: defaults)
         case .unlocked, .indeterminate:
             break
         }
@@ -143,8 +150,8 @@ enum SessionLifecycle {
     /// forward UNCHANGED -- the absolute ceiling this refresh must never move (DR-41-C) -- only
     /// `systemUptimeAtUnlock`/`writer` are updated. A no-op if no marker exists (nothing to
     /// refresh; the lazy check would already have refused and deleted).
-    static func refreshActivity(writer: String) {
-        guard let current = LockMarker.read() else { return }
+    static func refreshActivity(writer: String, defaults: UserDefaults? = nil) {
+        guard let current = LockMarker.read(defaults: defaults) else { return }
         LockMarker.write(LockMarker(
             bootSessionId: current.bootSessionId,
             // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, not `ProcessInfo.processInfo
@@ -152,7 +159,7 @@ enum SessionLifecycle {
             systemUptimeAtUnlock: LockMarker.monotonicNow(),
             hostUnlockUptime: current.hostUnlockUptime,
             writer: writer
-        ))
+        ), defaults: defaults)
         logger.log("PVLOCK|stage=activity-refresh writer=\(writer, privacy: .public)")
     }
 
@@ -160,7 +167,7 @@ enum SessionLifecycle {
     /// choke point both `AuthView` and `LockView` funnel every successful unlock through).
     /// Resets EVERY field, including `hostUnlockUptime` -- the ONLY thing that may move the
     /// absolute ceiling forward.
-    static func recordHostUnlock() {
+    static func recordHostUnlock(defaults: UserDefaults? = nil) {
         let bootSessionId = LockMarker.currentBootSessionId() ?? "unknown-boot-session"
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
@@ -168,7 +175,7 @@ enum SessionLifecycle {
         let now = LockMarker.monotonicNow()
         LockMarker.write(LockMarker(
             bootSessionId: bootSessionId, systemUptimeAtUnlock: now, hostUnlockUptime: now, writer: "host"
-        ))
+        ), defaults: defaults)
         logger.log("PVLOCK|stage=host-unlock bootSessionId=\(bootSessionId, privacy: .public)")
     }
 
@@ -176,9 +183,9 @@ enum SessionLifecycle {
     /// `performSignOut()`). Deletes both the key artifact and the marker, unconditionally --
     /// without this, tapping "Lock now" would tear down the host app's OWN in-memory session
     /// while leaving Secret C (and therefore AutoFill) fully able to keep filling.
-    static func lock(deleteKeyArtifact: () -> Void) {
+    static func lock(deleteKeyArtifact: () -> Void, defaults: UserDefaults? = nil) {
         deleteKeyArtifact()
-        LockMarker.clear()
+        LockMarker.clear(defaults: defaults)
         logger.log("PVLOCK|stage=explicit-lock")
     }
 }

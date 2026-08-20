@@ -176,4 +176,71 @@ struct LockMarkerTests {
         #expect(first > 0, "monotonicNow() must report a real, positive uptime, not zero/uninitialized")
         #expect(first < 1_000_000_000, "monotonicNow() must be seconds, not raw nanoseconds (missing / 1_000_000_000)")
     }
+
+    // MARK: - WR-12 (41-REVIEW.md): the two most security-load-bearing `SessionLifecycle`
+    // invariants, previously asserted only in prose and in one live E41-7 leg -- now exercised
+    // against the REAL production functions (never a re-implementation), via the SAME injectable
+    // `UserDefaults` suite `configuredIdleWindowSeconds(defaults:)` already established, extended
+    // to `LockMarker`'s own read/write/clear surface (WR-12's own fix) so these tests never touch
+    // a real device's App Group container.
+
+    @Test
+    func refreshActivityCarriesTheCeilingForwardUnchanged() {
+        let defaults = Self.freshDefaults()
+        SessionLifecycle.recordHostUnlock(defaults: defaults)
+        let before = LockMarker.read(defaults: defaults)!.hostUnlockUptime
+        SessionLifecycle.refreshActivity(writer: "extension", defaults: defaults)
+        #expect(LockMarker.read(defaults: defaults)!.hostUnlockUptime == before)
+        #expect(LockMarker.read(defaults: defaults)!.writer == "extension")
+    }
+
+    @Test
+    func expiryInvokesTheDeleteClosureExactlyOnce() {
+        let defaults = Self.freshDefaults()
+        var deletes = 0
+        // No marker was ever written to THIS fresh suite -- WR-03 (41-REVIEW.md) reclassified "no
+        // marker at all" as `.indeterminate`, not `.expired`, so this test writes a real marker
+        // first, deliberately tagged with a boot-session id that can never equal THIS process's
+        // real `LockMarker.currentBootSessionId()` -- a guaranteed, deterministic expiry
+        // (`isValid`'s boot-identity check fails first) regardless of how long this test machine
+        // has actually been up, unlike gating on idle-window elapsed time.
+        LockMarker.write(
+            LockMarker(
+                bootSessionId: "not-the-real-boot-session-id", systemUptimeAtUnlock: 0,
+                hostUnlockUptime: 0, writer: "host"
+            ),
+            defaults: defaults
+        )
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { deletes += 1 }, defaults: defaults
+        )
+        #expect(!unlocked)
+        #expect(deletes == 1)
+    }
+
+    @Test
+    func indeterminateReadNeverInvokesTheDeleteClosure() {
+        // The WR-03 counterpart to the test above: a fresh suite with NO marker ever written is
+        // `.indeterminate`, and `checkAndExpireIfNeeded` must refuse the read WITHOUT destroying a
+        // session it could not evaluate.
+        let defaults = Self.freshDefaults()
+        var deletes = 0
+        let unlocked = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "test", deleteKeyArtifact: { deletes += 1 }, defaults: defaults
+        )
+        #expect(!unlocked)
+        #expect(deletes == 0, "an indeterminate (unreadable) marker must never trigger a delete -- WR-03")
+    }
+
+    @Test
+    func lockDeletesTheKeyArtifactBeforeClearingTheMarker() {
+        let defaults = Self.freshDefaults()
+        LockMarker.write(Self.marker(), defaults: defaults)
+        var markerStillPresentAtDeleteTime = false
+        SessionLifecycle.lock(deleteKeyArtifact: {
+            markerStillPresentAtDeleteTime = (LockMarker.read(defaults: defaults) != nil)
+        }, defaults: defaults)
+        #expect(markerStillPresentAtDeleteTime, "the key artifact must be deleted BEFORE the marker is cleared")
+        #expect(LockMarker.read(defaults: defaults) == nil)
+    }
 }
