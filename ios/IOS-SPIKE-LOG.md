@@ -1933,6 +1933,91 @@ structure, `unlockLocally`'s real-crypto round trip / wrong-password rejection /
 
 ---
 
+## 1l. QA-05 enforcement mechanism — IOS-07, 2026-08-20
+
+### IOS-07 — QA-05 enforcement mechanism: **DECIDED — two layers, preventive + detective**
+
+**Decision: two layers.** Preventive: a shared `pre-commit` hook (`scripts/install-ios-hooks.sh`)
+delegating to `gsd-tools query check-commit`, which discriminates by `.planning/config.json`'s
+`commit_docs` key — `false` in this worktree, `true` on `main`. Detective:
+`scripts/check-ios-gate.sh`'s `qa05` sub-gate, asserting over this branch's own commit range
+(`FORK..HEAD`, excluding commits already reachable from `origin/main`/local `main`) that no
+`.planning/` commit was ever authored on `ios/spike` itself.
+
+`.planning/` is never committed from this worktree, so a decision recorded only in `.planning/`
+does not exist for anyone reading the committed tree — this record lives here for that reason.
+
+**Rejected, on merit, each with its own reason:**
+
+- **A bespoke pattern-matching hook** (`git diff --cached --name-only | grep '^\.planning/'`). It
+  would fire on `main` too and break the live v0.5 session there — it has no configuration-driven
+  discriminator, only a shape that would need a branch-name/worktree-path heuristic to avoid that,
+  exactly the class Pitfall 2 (42-RESEARCH.md) names.
+- **An ignore-file entry** (`.gitignore` `.planning/` line). Zero effect on the 1000 already-tracked
+  `.planning/` paths inherited from `main` at the fork point — `.gitignore` cannot retroactively
+  untrack a tracked path — and it would be a change to a file `main` also reads.
+- **The shared exclude file** (`.git/info/exclude`). Lives in the git **common** directory, shared
+  with `main`; an entry there would hide new planning files from `main`'s own session. Actively
+  destructive, not merely ineffective.
+- **`git update-index --skip-worktree`** on the five modified tracked files. Genuinely
+  worktree-local (the index itself is per-worktree), but invisible to a future session — edits would
+  silently vanish with no record of why — and broken by an ordinary `git checkout`/merge. It would
+  become a landmine of its own rather than a fix. Open Question 6 (42-RESEARCH.md) answered NO on
+  this basis.
+- **Per-worktree git config** (`git config --worktree`, `.git/worktrees/<name>/config.worktree`).
+  Requires `extensions.worktreeConfig=true`, a **repository-wide** mutation — currently unset — and
+  enabling a repo-wide extension mid-run while another session is live is exactly the class of shared-
+  state mutation this plan's own prohibitions forbid.
+
+**The fail-open choice, stated as a cost, not a feature.** When `node` or `gsd-tools.cjs` cannot be
+resolved inside the hook's own minimal git-provided environment, the installed hook prints a loud
+warning to stderr and exits 0 — it does NOT block the commit. What that buys: a broken PATH on either
+worktree can never block `main`'s autonomous session mid-run. What it costs: a silent QA-05
+preventive-layer gap in exactly the circumstance nobody is watching for it (an interpreter resolution
+failure inside a git hook's own restricted environment). The compensating control is the detective
+layer (`gate_qa05`), which catches a `.planning/` commit after the fact regardless of why the
+preventive hook did or did not fire.
+
+**Two residual holes, named rather than glossed over:**
+
+- **The bypass flag.** `git commit --no-verify` skips every hook, including this one, and GSD's own
+  `cmdCommit` accepts a `--no-verify` flag that forwards it to the real `git commit`
+  (`gsd-tools.cjs`, `commands.cjs`). So the preventive layer is necessary and not sufficient; a
+  `--no-verify` commit is caught only by the detective layer, after the fact.
+- **The guard's own input is itself an uncommitted modification.** `commit_docs: false` lives in
+  `.planning/config.json`, itself one of the five tracked-and-modified planning files in this
+  worktree. Reverting that value would silently disarm the preventive hook (it would then read
+  `commit_docs_enabled` and allow everything) without touching the hook file itself. This is why
+  `gate_qa05` asserts `commit_docs == false` **positively** as its own precondition (QA-03) rather
+  than inferring it from the absence of a problem.
+
+No claim here states that committing `.planning/` from this worktree is structurally impossible —
+that claim would be false (the bypass flag and the config-revert both defeat the preventive layer on
+their own). The honest claim is exactly two layers, with both named gaps disclosed.
+
+**The scope call on CI (Open Question 5, 42-RESEARCH.md), answered NO.** `.github/workflows/ci.yml`
+is byte-identical to `main`'s copy on this branch, and all five of its jobs run on `ubuntu-latest`, a
+platform that cannot build for iOS. Editing it to add an iOS lane would create this branch's first
+merge-conflict surface with a live session, for a lane that could not run this milestone's tests
+anyway. `scripts/check-ios-gate.sh` is the milestone's CI surrogate, exactly as the ROADMAP's own
+`Ograniczenie dowodu` ("static audit + runnable scripts on the simulator/local machine; this does not
+replace a real CI runner") anticipates.
+
+**Verified this session, by execution, not by argument:**
+- The guard's FAIL path: staging `.planning/STATE.md` and running `gsd-tools query check-commit`
+  exits non-zero and names the file. A clean index exits 0 with reason `no_planning_files_staged`.
+- `gsd-tools query check-commit` run with `main`'s worktree as cwd, BEFORE the hook was installed,
+  exits 0 with reason `commit_docs_enabled`.
+- The installed hook, executed directly (no git) with `main`'s worktree as cwd, exits 0.
+- A real `git commit` staging `.planning/STATE.md` in this worktree is refused end to end
+  (non-zero exit, HEAD unchanged).
+- `main`'s own HEAD and tracked-file set were undisturbed by the install.
+
+Full transcripts: `.planning/phases/42-standard-dowodu-bramka-qa-i-ci-dla-ios/42-02-SUMMARY.md`
+(not committed from this worktree by the standing convention this record itself documents).
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
@@ -3956,6 +4041,41 @@ in `ios/IOS-SPIKE-LOG.md` §1i) are the section that must carry this caveat forw
 **Working theory, NOT independently isolated (same honesty discipline E41-3's own matrix used):** the system's suggestion index may treat a host it has never seen a registered identity for differently from a host it already has churn on — e.g. a first-ever registration for a genuinely novel host might need the FULL/replace path (`replaceCredentialIdentities`) to enter the index promptly, while an incremental add against an already-indexed host reuses existing index structure. This was not tested with a controlled A/B (same fresh host, once via `replaceCredentialIdentities`, once via `saveCredentialIdentities`) — flagged as an open question for Phase 42's audit, same as E41-3's own Falsification 3.
 
 **Consequence for any future plan registering a vault item's FIRST identity at a brand-new host via `IdentityStoreSync`:** do not assume immediate QuickType availability; either reuse an already-established host for time-sensitive evidence work (this plan's own fix), or budget for an unbounded propagation delay and design the evidence capture around it, never around a fixed retry count. **Do not change `IdentityStoreSync.swift` itself to always use the full-replacement path** as a workaround without first properly isolating this — that would be a production behaviour change reaching every mutation call site (create/update/delete/sync-pull) on the strength of one demonstration task's own workaround, not a decision this plan is scoped to make.
+
+### L-39 -- git hooks are shared between worktrees
+
+**Numbering note (same reason as L-12's/L-15's/L-33's):** 42-02-PLAN.md's own text names this
+landmine "L-9". That ID was already claimed by an unrelated defect from an earlier phase
+(`ios/IOS-SPIKE-LOG.md`, "a check that cannot fail" produced FOUR more instances in a single
+phase"). It is recorded here as **L-39**, the next free ID after L-38, rather than as a duplicate
+L-9 -- two landmines sharing one number breaks every future cross-reference by that number.
+
+**Found 2026-08-20, Phase 42, Plan 42-02.** A `pre-commit` hook written to stop THIS worktree
+(`ios/spike`, `commit_docs: false`) from committing `.planning/` fires for the `main` worktree too,
+whose entire v0.5 autonomous session commits `.planning/` legitimately and continuously — because
+`git rev-parse --git-path hooks` resolves to the **common** directory shared by every worktree of a
+repository, not a per-worktree one. A hook naive to this (rejecting any staged `.planning/` path
+outright) would break `main`'s live session mid-run the moment it was installed.
+
+**Why:** the hooks directory is the common one (confirmed: `git rev-parse --git-path hooks` from
+both worktrees resolves to the identical path under `main`'s `.git/`). The per-worktree
+alternatives that would avoid this are all repository-wide mutations of their own: `core.hooksPath`
+and `extensions.worktreeConfig` both apply repo-wide, not per-worktree, so "just point each
+worktree at its own hooks dir" is not actually available without a shared-state change of the exact
+kind this plan's own prohibitions forbid.
+
+**How it was avoided here:** configuration-driven discrimination. The hook delegates to
+`gsd-tools query check-commit`, which reads `.planning/config.json`'s `commit_docs` key — `false`
+here, `true` on `main` — and is a no-op on `main` **by that value**, not by inspecting which
+worktree it is running in. Proven by direct execution, not by argument: the guard was run with
+`main`'s worktree as cwd and shown exiting 0 with reason `commit_docs_enabled` BEFORE the hook file
+was ever written (E2(a)), and the installed hook file itself was then executed directly (no git,
+`main` as cwd) and shown exiting 0 (E2(b)), re-confirmed after install.
+
+**Warning sign:** any hook — for this repository or a future one with the same worktree layout —
+that branches its behaviour on branch name, worktree path, or a `$PWD` string match. That shape
+cannot generalise to a hooks directory shared by worktrees it does not know about in advance, and
+is the exact defect class this landmine documents avoiding.
 
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 
