@@ -1,0 +1,74 @@
+=== cargo test -p pv-provider --lib make_credential_ctap2 -- --nocapture ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.48s
+     Running unittests src/lib.rs (target/debug/deps/pv_provider-e25f1e98c4deb158)
+
+running 4 tests
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_rejects_when_es256_not_in_supported_algorithms ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_honors_exclude_list ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_es256_succeeds_with_none_attestation ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_exclude_list_scoped_by_rp_id ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.02s
+
+
+=== cargo test -p pv-provider --test real_rp_verification -- --nocapture ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/real_rp_verification.rs (target/debug/deps/real_rp_verification-b3b77e9e4f4f2402)
+
+running 2 tests
+test make_credential_ctap2_attestation_verified_by_independent_webauthn_rs ... ok
+test pv_provider_round_trip_verified_by_independent_webauthn_rs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+=== cargo test -p pv-provider (full suite) ===
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/debug/deps/pv_provider-e25f1e98c4deb158)
+
+running 11 tests
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_rejects_when_es256_not_in_supported_algorithms ... ok
+test ceremony::ctap2_tests::empty_store_rejected ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_es256_succeeds_with_none_attestation ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_honors_exclude_list ... ok
+test ceremony::make_credential_ctap2_tests::make_credential_ctap2_exclude_list_scoped_by_rp_id ... ok
+test tests::prf_capable_credential ... ok
+test tests::origin_mismatch_rejected ... ok
+test ceremony::ctap2_tests::wrong_rp_id_rejected ... ok
+test credential_store::tests::passkey_round_trip_is_lossless_for_a_fully_populated_passkey ... ok
+test tests::create_then_get_roundtrip ... ok
+test ceremony::ctap2_tests::signature_verifies_against_independent_webauthn_rs ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ctap2_ceremony.rs (target/debug/deps/ctap2_ceremony-46cce5eddf1c13e0)
+
+running 2 tests
+test sign_count_is_always_zero_for_ctap2_assertion ... ok
+test sign_count_stays_zero_across_two_consecutive_calls ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/real_rp_verification.rs (target/debug/deps/real_rp_verification-b3b77e9e4f4f2402)
+
+running 2 tests
+test make_credential_ctap2_attestation_verified_by_independent_webauthn_rs ... ok
+test pv_provider_round_trip_verified_by_independent_webauthn_rs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/response_shape.rs (target/debug/deps/response_shape-6ff658a84eebcd8c)
+
+running 3 tests
+test create_response_binary_fields_are_base64url_strings ... ok
+test sign_count_is_always_zero_for_a_provider_ceremony_assertion ... ok
+test get_response_binary_fields_are_base64url_strings ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+   Doc-tests pv_provider
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

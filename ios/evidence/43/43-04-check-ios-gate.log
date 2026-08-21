@@ -1,0 +1,83 @@
+==> running sub-gate: qa05
+PASS[qa05]: zero .planning/ commits authored on this branch itself since 6bbee654a1a591970e7c6db4d7c933d580061b07 (excluding $QA05_EXCLUDE_REF=origin/main; positive control: 340 commit(s) found under -- ios/; commit_docs precondition holds)
+==> running sub-gate: ffi_build
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.42s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.17s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-5ff1166bfdc679bb.pv_ffi.c9f552404ace256e-cgu.01.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+PASS[ffi_build]: scripts/build-ios.sh completed (both triples built, Swift bindings generated, XCFramework assembled, its own slice gate ran)
+==> running sub-gate: ffi_falsifiable
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> --verify-falsifiable: proving BOTH halves of the vtool gate CAN fail
+
+==> falsifying the ios-arm64 half of the gate (expect /^[[:space:]]*platform[[:space:]]+IOS$/, strip 'ios')
+==> BEFORE strip: vtool -show-build on the real (unmodified) ios-arm64 object
+/var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.R97tbBIGMl/slice.25PINA/pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o:
+Load command 1
+      cmd LC_BUILD_VERSION
+  cmdsize 24
+ platform IOS
+    minos 18.0
+      sdk n/a
+   ntools 0
+==> AFTER strip: vtool -show-build on the corrupted object
+/var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.R97tbBIGMl/slice.25PINA/stripped.o:
+==> PASS: the corrupted ios-arm64 object no longer matches /^[[:space:]]*platform[[:space:]]+IOS$/ -- that half of the gate genuinely can fail (QA-02/QA-04)
+
+==> falsifying the ios-arm64-simulator half of the gate (expect /^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/, strip 'iossim')
+==> BEFORE strip: vtool -show-build on the real (unmodified) ios-arm64-simulator object
+/var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.R97tbBIGMl/slice.QSn6HR/pv_ffi-5ff1166bfdc679bb.pv_ffi.c9f552404ace256e-cgu.01.rcgu.o:
+Load command 1
+      cmd LC_BUILD_VERSION
+  cmdsize 24
+ platform IOSSIMULATOR
+    minos 18.0
+      sdk n/a
+   ntools 0
+==> AFTER strip: vtool -show-build on the corrupted object
+/var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.R97tbBIGMl/slice.QSn6HR/stripped.o:
+==> PASS: the corrupted ios-arm64-simulator object no longer matches /^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/ -- that half of the gate genuinely can fail (QA-02/QA-04)
+
+==> falsifying the 'slice must contain pv-ffi's own code' guard on ios-arm64-simulator
+    scratch copy retains 752 non-pv_ffi objects (the shape the old '-name *.o -print -quit' happily accepted)
+ERROR: no pv_ffi*.o extracted from ios/PasskeyVault/build/PvFfi.xcframework/ios-arm64-simulator/libpv_ffi.a (scratch copy, pv_ffi objects removed) -- the slice does not contain this crate's own code, so nothing about pv-ffi's platform tagging can be concluded from it
+       (objects present: 752)
+==> PASS: the gate refuses a slice with no pv-ffi code instead of validating an unrelated object (WR-03)
+
+==> ALL falsification proofs passed
+PASS[ffi_falsifiable]: scripts/build-ios.sh --verify-falsifiable proved both slice-gate halves (device+simulator) and the WR-03 pv-ffi-object guard can genuinely fail
+==> running sub-gate: ffi_opaque
+OK[ffi_opaque]: freshness precondition holds -- ios/PasskeyVault/build/swift-bindings/pv_ffi.swift exists, is non-empty, and no source under crates/pv-ffi/src/ is newer than it
+PASS: generated Swift exposes zero raw-byte accessors beyond exportUserKeyForSession/importUserKeyFromSession, and zero handle-carrying structs smuggle a raw-byte field alongside the handle (FFI-02, shapes A/B/C/D)
+      audited handle classes: FfiCollectionKey FfiIdentityKey FfiIdentityPublicKey FfiInviteChannel FfiUserKey FfiWrappingKey
+      audited handle-carrying structs: FfiAuthMaterial
+PASS[ffi_opaque]: bindings provably fresh (see OK line above), and scripts/audit-ffi-opaque-handles.sh reports zero raw-byte accessors outside its sanctioned exceptions
+==> running sub-gate: swift_tests
+RETRY[swift_tests]: attempt 1 hit the L-41 bindings-transition build failure (xcodebuild exit 65) -- retrying once (this exact failure is known to be transitional, not a real regression; see this file's own gate_swift_tests header comment)
+PASS[swift_tests]: scheme 'PasskeyVault' present (E9 autocreated); xcodebuild test exit=0 (after 1 L-41 retry); executed-test count=5 (> 0, E8's zero-count trap did not fire); matched all required FFI identifiers: FfiRoundTripTests/fullRoundTripOnLiteralBytes() FfiRoundTripTests/embeddedNulByteSurvivesExportImportRoundTrip() FfiRoundTripTests/embeddedNulByteInNonceIsNotTruncated() FfiPanicSafetyTests/nonSentinelInputReturnsNormally() FfiPanicSafetyTests/sentinelInputThrowsCatchableDiscriminatedErrorAndHandleSurvives()
+==> running sub-gate: qa_register
+OK[qa_register]: positive control holds -- 150 row(s) parsed across 7 phase section(s), Phase 35's section is among them
+Excluded from coverage (printed on every run, never silently dropped):
+  - phase 29 -- outside the audited range 35-41 (a different milestone phase)
+  - phase 30 -- outside the audited range 35-41 (a different milestone phase)
+  - phase 42 -- the phase PERFORMING this audit; its own SUMMARYs appear on disk while it is still executing, so requiring a section for phase 42 would be a criterion that can never pass
+  - phase 43 -- CONDITIONAL in the ROADMAP and may legitimately end undone; an absent Phase 43 section is VALID, not a gap
+PASS[qa_register]: every IN-COVERAGE phase with SUMMARY files on disk has a register section carrying at least one row; all 150 row(s) resolve to a real file:line with a non-empty excerpt
+PASS[qa_register]: scripts/check-qa-audit-register.sh reports full coverage over ios/QA-AUDIT-v1.0.md (see its own OK/PASS line above)
+==> SUMMARY: executed sub-gate(s): qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register

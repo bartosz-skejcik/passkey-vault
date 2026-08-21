@@ -5306,3 +5306,98 @@ a workspace member, before this plan touched anything. `crates/rp-fixture` adds 
 with the same class of gap, which does not make anything worse (already broken) but does not fix it
 either. Not in this plan's `files_modified`, not part of its `<verify>` block — recorded here for
 visibility only.
+
+## 12. Phase 43, Plan 43-04 — `make_credential_ctap2` registration + Open Question 3 settled empirically (2026-08-21)
+
+`make_credential_ctap2` (`crates/pv-provider/src/ceremony.rs`, `fe9a0d3`) and its `pv-ffi` export
+`provider_make_credential` (`crates/pv-ffi/src/provider.rs`, `5f2873b`) complete the matched pair
+43-02 started — 43-RESEARCH.md Pitfall 7 names shipping assertion without registration as a
+phase-scope failure. This plan's own genuinely open unknown, Open Question 3 (does `ciborium`'s
+`fmt:"none"` attestation object satisfy a real RP verifier?), is closed by evidence in this plan,
+not deferred.
+
+**Two deviations from the plan's originally-authored shape, both load-bearing, not cosmetic:**
+
+1. **`existing_credentials_json` parameter added** (absent from the plan's own authored signature).
+   Without it, `excluded_credential_ids` is a structural no-op: `PvCredentialStore::from_passkeys_json`
+   against an empty store means `Authenticator::find_credentials` always returns
+   `Ctap2Error::NoCredentials`, which `make_credential` treats as "nothing to exclude" —
+   `create_provider_credential`'s own doc comment already documents this exact behavior for the
+   WebAuthn-client path, and the plan's own action text imported that rationale but drew the
+   opposite conclusion from it. Fixed by mirroring `get_assertion_ctap2`/`get_provider_assertion`'s
+   existing `existing_credentials_json` precedent.
+
+2. **A populated store alone is still not sufficient** — a second, independent finding from direct
+   source read of `passkey-authenticator=0.5.0`'s own test suite
+   (`authenticator/make_credential/tests.rs::assert_excluded_credentials`): that test's own
+   `.expect("Excluded id gets ignored")`, with the CTAP2-spec-correct
+   `.expect_err(Ctap2Error::CredentialExcluded)` assertion commented out immediately below it, is
+   upstream's own admission that `Authenticator::make_credential` never actually terminates the
+   ceremony on an exclude-list match — it only surfaces `UiHint::InformExcludedCredentialFound` as an
+   informational hint and proceeds regardless. `make_credential_ctap2` performs its own explicit
+   exclude-list rejection against `existing_credentials_json` BEFORE ever calling into the library,
+   rather than trusting a library behavior that its own vendored test suite documents as absent.
+
+**A third, smaller deviation (quality improvement, not a correctness fix):** the plan's action text
+instructed hand-constructing the CBOR attestation-object map via `ciborium::value::Value::Map` with
+integer keys `1`/`2`/`3`, citing WebAuthn §6.5.4 inline. `passkey_types::ctap2::make_credential::
+Response` already provides `as_webauthn_bytes()` — the crate's OWN CBOR encoding of exactly this
+shape, using the correct WebAuthn STRING keys (`fmt`/`authData`/`attStmt`), not CTAP2's integer
+keys. Using the crate's own method is a STRICTER reading of this file's "never hand-assembled
+bytes" convention than the plan's own hand-rolled version would have been (and the hand-rolled
+version, if written with CTAP2's integer keys as the plan's own action text specified, would have
+produced a WIRE-INCOMPATIBLE attestation object — a real third-party RP's CBOR parser expects
+WebAuthn's string keys for `attestationObject`, not CTAP2's integer keys for the CBOR request/
+response types those integers are scoped to).
+
+**Open Question 3, settled empirically:** `real_rp_verification.rs`'s new
+`make_credential_ctap2_attestation_verified_by_independent_webauthn_rs` hands a genuine
+`webauthn-rs`-issued challenge through `make_credential_ctap2` (via a hand-built `clientDataJSON` +
+its SHA-256 `client_data_hash`, the exact split an OS-level caller performs — `make_credential_ctap2`
+never sees the JSON, only the hash), then feeds the CTAP2 result back into `webauthn-rs`'s own
+`finish_passkey_registration`. **PASS**: an INDEPENDENT, real third-party RP verifier accepts the
+attestation object this crate produces. Full transcripts: `ios/evidence/43/43-04-rust-ffi-
+transcripts.log`.
+
+**L-3/L-9 note on the negative control, restated because the first attempt was itself wrong and
+worth recording:** the plan's action text asked for "corrupt one byte of `attestation_object`". An
+initial draft flipped the LAST byte (part of the EC public key's y-coordinate) — `finish_passkey_
+registration` returned `Ok` anyway. This is not a test bug to paper over: `fmt:"none"` attestation
+carries NO attestation statement, so nothing cryptographically binds the public key to anything at
+registration time — a corrupted public-key byte is simply a DIFFERENT valid credential, not an
+invalid one. Direct source read of `webauthn-rs-core-0.5.5/src/core.rs::register_credential_internal`
+found the actual verified field: `authData`'s `rpIdHash` (`if data.attestation_object.auth_data.
+rp_id_hash != self.rp_id_hash { return Err(...) }`). The negative control now decodes the CBOR
+attestation object genuinely (`ciborium`, never a raw byte-offset guess), flips `authData`'s first
+byte, and re-encodes. Manually falsified both directions before trusting it: disabling the
+corruption line reproduces the original false-pass (`Ok` returned on a corrupted object — see the
+"DISABLED" half of `ios/evidence/43/43-04-falsification-proof.log`), restoring it reproduces the
+correct `Err` (the "RESTORED" half of the same file).
+
+**T-43-04/T-43-05/T-43-06 closed structurally:** `FfiProviderRegistrationResult` carries only
+`credential_id`/`attestation_object` (public) and `new_passkey_json` (secret, the SAME sanctioned
+`CreateProviderResult.new_passkey_json` exception, immediately re-encrypted by the caller) — never
+`key_cbor`. No handle-typed field at all, so `scripts/audit-ffi-opaque-handles.sh` needs no new
+allow-list entry; re-ran it against the freshly rebuilt Swift bindings, PASS (`ios/evidence/43/
+43-04-check-ios-gate.log`). `fmt:"none"` only (T-43-05) and `-7`/ES256-only algorithm negotiation,
+checked BEFORE any credential is constructed (T-43-06) — a picky RP requesting only a different
+algorithm gets `PvProviderError::InvalidInput`, never a wrong-algorithm credential.
+
+**EXT-10 extended, not re-litigated:** the new `Authenticator::new(...)` construction in
+`make_credential_ctap2` never opts into `make_credentials_with_signature_counter(true)`, matching
+every other entry point in this file, for the identical reasons `get_provider_assertion`'s own
+EXT-10 decision record states (a passkey shared across N concurrently active member extensions has
+no single authoritative "last counter value" to advance from).
+
+**Full-gate confirmation:** `scripts/check-ios-gate.sh` (all six sub-gates: qa05, ffi_build,
+ffi_falsifiable, ffi_opaque, swift_tests, qa_register) exits 0 against this plan's changes —
+`swift_tests` hit the already-documented L-41 bindings-transition retry (not a regression) and
+passed on retry, all 5 required FFI identifiers matched. No `ios/PasskeyVault*` Swift file was
+touched by this plan; the scoped Swift test lane exercises the app target linking the freshly
+rebuilt XCFramework as a structural confirmation only, same posture as 43-02's own entry above.
+Transcript: `ios/evidence/43/43-04-check-ios-gate.log`.
+
+**Session interruption note:** this plan's execution was interrupted mid-run by the host machine
+sleeping (not a work failure — both Rust/FFI commits had already landed cleanly beforehand). Evidence
+capture and this spike-log entry were completed in a follow-on continuation of the same plan run, no
+task re-done.
