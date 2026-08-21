@@ -156,9 +156,16 @@ async fn index(Query(params): Query<IndexParams>) -> Html<String> {
 <body>
 <h1>rp-fixture</h1>
 <p>rp_id={rp_id} mode={mode}</p>
+<button id="rp-fixture-start">Start</button>
 <div id="rp-fixture-result" data-ok="pending">pending</div>
 <script>
-(async function() {{
+// WebAuthn's `navigator.credentials.create()`/`.get()` require a genuine user
+// activation (a real tap) in Safari -- an auto-fired ceremony on page load
+// was found, live, to be silently rejected. `#rp-fixture-start` gives the
+// driving harness (`scripts/ios-autofill-e43.sh tracer`) a stable
+// Accessibility-visible tap target that supplies that activation, instead
+// of firing on load.
+document.getElementById('rp-fixture-start').addEventListener('click', async function() {{
   const rpId = {rp_id_json};
   const mode = {mode_json};
   const userName = {user_name_json};
@@ -246,7 +253,7 @@ async fn index(Query(params): Query<IndexParams>) -> Html<String> {
     resultEl.setAttribute('data-ok', 'false');
     resultEl.textContent = 'exception: ' + (e && e.message ? e.message : String(e));
   }}
-}})();
+}});
 </script>
 </body>
 </html>

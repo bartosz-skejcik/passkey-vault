@@ -174,6 +174,18 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 43, Plan 43-03 (OPT-03): seeds Secret C + a real host-app unlock marker + ONE
+        // real, genuinely fixture-registered passkey item into the Phase-39 cache -- BEFORE the
+        // extension is ever invoked, same ordered host-then-extension sequence every other seeder
+        // in this file already establishes. Compiled in only under `PV_PROBE_E43_TRACER` -- inert
+        // for every other probe. See `PasskeyTracerSeeder.swift`'s own header for why this
+        // deviates from files_modified (Rule 2, documented in 43-03-SUMMARY.md).
+        #if PV_PROBE_E43_TRACER
+        Task {
+            await PasskeyTracerSeeder.seed()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

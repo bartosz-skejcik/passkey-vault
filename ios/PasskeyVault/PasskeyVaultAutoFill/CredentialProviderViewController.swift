@@ -65,6 +65,30 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
     }
 
+    /// Phase 43, Plan 43-03 (OPT-03) -- a LIVE-RUN FINDING, not in the original plan text: with no
+    /// `ASPasskeyCredentialIdentity` registered for a credential, Safari's own system "Sign In"
+    /// sheet is what actually invokes our provider (via its "Other accounts" row), and doing so
+    /// calls THIS overload -- `prepareCredentialListForServiceIdentifiers:requestParameters:`
+    /// (`ASCredentialProviderViewController.h:54`) -- never `provideCredentialWithoutUserInteraction`/
+    /// `prepareInterfaceToProvideCredential`. See `performPasskeyAssertion`'s own header for the
+    /// full account (including the live evidence that pinned this down: the extension process
+    /// launched and materialized this view controller, but with neither override implemented,
+    /// NEITHER path ever ran -- a permanently blank system sheet). `serviceIdentifiers` is unused
+    /// here (this overload's own passkey-specific counterpart to the plain `serviceIdentifiers`
+    /// array above) -- `requestParameters` carries everything a passkey ceremony needs.
+    override func prepareCredentialList(
+        for serviceIdentifiers: [ASCredentialServiceIdentifier],
+        requestParameters: ASPasskeyCredentialRequestParameters
+    ) {
+        Self.fillLogger.log("PVFILL|passkey|entry=list-passkey stage=entry")
+        performPasskeyAssertion(
+            rpId: requestParameters.relyingPartyIdentifier,
+            clientDataHash: requestParameters.clientDataHash,
+            allowedCredentialIds: requestParameters.allowedCredentials,
+            entryPoint: "list-passkey"
+        )
+    }
+
     /// Best-effort, logging-only: for each requested service identifier, checks whether the
     /// currently-cached tracer/probe item(s) this extension can see would match under
     /// `CredentialMatcher`'s policy. Never gates `prepareCredentialList`'s own cancel behaviour
@@ -109,11 +133,26 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_E41_5
         Self.fillLogger.log("PVFILL|E41-5|variant=A stage=entry")
         #endif
-        // Phase 41, Plan 41-03, Task 1 (the tracer): the real no-UI fill path -- NO UI IS
-        // PERMITTED HERE (`ASCredentialProviderViewController.h:100-134`). Under DR-41-A(b) this
-        // is the ONLY path a normal QuickType tap ever needs: Secret C carries no
-        // `SecAccessControl`, so the lock check and the key read below never require a ceremony.
-        fillOrCancel(for: credentialRequest, entryPoint: "silent")
+        // Phase 43 (43-03-PLAN.md), OPT-03: `.passkeyAssertion` is NEW this phase -- routes to
+        // `fillPasskeyOrCancel`, which reuses `fillOrCancel`'s own unlock-gating sequence but
+        // diverges at credential lookup/completion (a passkey assertion, not a password fill).
+        // `default` preserves Phase 41's own UNCHANGED behaviour for `.password` (and any other
+        // request type this extension does not yet handle) -- this switch is additive, never a
+        // rewrite of the existing password path.
+        switch credentialRequest.type {
+        case .passkeyAssertion:
+            guard let passkeyRequest = credentialRequest as? ASPasskeyCredentialRequest else {
+                extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                return
+            }
+            fillPasskeyOrCancel(for: passkeyRequest, entryPoint: "silent")
+        default:
+            // Phase 41, Plan 41-03, Task 1 (the tracer): the real no-UI fill path -- NO UI IS
+            // PERMITTED HERE (`ASCredentialProviderViewController.h:100-134`). Under DR-41-A(b) this
+            // is the ONLY path a normal QuickType tap ever needs: Secret C carries no
+            // `SecAccessControl`, so the lock check and the key read below never require a ceremony.
+            fillOrCancel(for: credentialRequest, entryPoint: "silent")
+        }
     }
 
     override func prepareInterfaceToProvideCredential(for credentialRequest: any ASCredentialRequest) {
@@ -124,11 +163,24 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         #if PV_PROBE_KEYCHAIN
         KeychainProbe.emit()
         #endif
-        // UI IS legal here. Under DR-41-A(b) the same sequence below never actually needs a
-        // ceremony (Secret C is non-biometric) -- this override exists so the system's own
-        // fallback invocation (after a `userInteractionRequired` cancel from the silent entry
-        // point above) still completes the fill rather than dead-ending.
-        fillOrCancel(for: credentialRequest, entryPoint: "interactive")
+        // Phase 43 (43-03-PLAN.md), OPT-03: same `.passkeyAssertion` branch as the silent entry
+        // point above -- the system may invoke THIS override directly for a passkey request (UI is
+        // legal here), or as its own fallback after a `.failed`/`.userInteractionRequired` cancel
+        // from the silent entry point.
+        switch credentialRequest.type {
+        case .passkeyAssertion:
+            guard let passkeyRequest = credentialRequest as? ASPasskeyCredentialRequest else {
+                extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                return
+            }
+            fillPasskeyOrCancel(for: passkeyRequest, entryPoint: "interactive")
+        default:
+            // UI IS legal here. Under DR-41-A(b) the same sequence below never actually needs a
+            // ceremony (Secret C is non-biometric) -- this override exists so the system's own
+            // fallback invocation (after a `userInteractionRequired` cancel from the silent entry
+            // point above) still completes the fill rather than dead-ending.
+            fillOrCancel(for: credentialRequest, entryPoint: "interactive")
+        }
     }
 
     // MARK: - Phase 41, Plan 41-03, Task 1 -- the real fill path (FILL-02/FILL-05)
@@ -323,6 +375,211 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             }
         }
     }
+
+    // MARK: - Phase 43, Plan 43-03 -- the passkey assertion fill path (OPT-03)
+
+    /// The passkey-assertion counterpart to `fillOrCancel` above (43-03-PLAN.md). Reuses the SAME
+    /// unlock-gating sequence (`SessionLifecycle.checkAndExpireIfNeeded`, `SessionKeyReader` read,
+    /// `importUserKeyFromSession`) up through obtaining an unlocked User Key -- then diverges: no
+    /// identity-store `ASPasskeyCredentialIdentity` registration exists yet for passkeys (43-05
+    /// onward, this plan's own `<success_criteria>`), so there is no `recordIdentifier` to look up
+    /// by. Instead this scans every row in the current account's cached snapshot, decrypting each
+    /// and checking its OWN `credential_id` (the raw `SerializablePasskey` wire shape,
+    /// `packages/pv-ui/vault/types.ts`'s `RawPasskeyWireFields` -- no `type` key, `credential_id` +
+    /// `rp_id` present, `ios/PasskeyVault/PasskeyVault/Vault/ItemNormalize.swift`'s own
+    /// `isRawPasskeyWireFields` precedent, duplicated here because the extension target has no
+    /// dependency on that host-only file) against the requested `rpId`/`allowedCredentialIds`. The
+    /// SAME decrypt-every-row pattern `runIdentityRebuildIfPending()` below already established for
+    /// the identity-store rebuild path -- this is not a second scanning mechanism.
+    ///
+    /// CALLED FROM TWO ENTRY POINTS (a live-run finding, not the original plan text): with no
+    /// `ASPasskeyCredentialIdentity` registered, Safari's own "Sign In" system sheet (no matching
+    /// saved credential) is what the user actually sees, and selecting our provider from its "Other
+    /// accounts" row invokes `prepareCredentialList(for:requestParameters:)` (`ASCredentialProviderViewController.h:54`)
+    /// -- NOT `provideCredentialWithoutUserInteraction`/`prepareInterfaceToProvideCredential`, which
+    /// `43-RESEARCH.md`'s own diagram assumed were the only entry points needed, matching Phase 41's
+    /// PASSWORD precedent. Live evidence (`ios/evidence/43/`): the extension process launched and
+    /// materialized `CredentialProviderViewController` (confirmed via `log show`), but with NEITHER
+    /// override implemented, NEITHER ever ran -- a persistent blank system sheet, no
+    /// `PVFILL|passkey|` line anywhere, the fixture's own `/assert/finish` never called. This
+    /// override is a Rule 2 deviation (missing critical functionality) discovered by the tracer
+    /// doing exactly its job: catching an architectural gap before every later plan builds on top
+    /// of it. `allowedCredentialIds` unifies both call shapes: `.passkeyAssertion`'s own
+    /// `ASPasskeyCredentialIdentity.credentialID` (always exactly one) vs.
+    /// `ASPasskeyCredentialRequestParameters.allowedCredentials` (a list, EMPTY meaning "any
+    /// credential for this rp_id is allowed").
+    ///
+    /// `<behavior>` (43-03-PLAN.md): never draws a picker of its own -- completes silently or via
+    /// the system's own confirmation surface (OPT-01's UI scope fence). If MORE than one cached
+    /// item matches, this refuses rather than guessing (a picker is explicitly out of scope, so
+    /// there is no way to let the user disambiguate). ANY ceremony failure (no matching item,
+    /// decrypt failure, `providerGetAssertion` error) cancels via `ASExtensionError(.failed)`,
+    /// never `.userInteractionRequired` -- a genuine ceremony failure is not "needs user
+    /// interaction to proceed", unlike the password path's locked-vault case above, which
+    /// legitimately can be retried once the vault is unlocked.
+    private func performPasskeyAssertion(rpId: String, clientDataHash: Data, allowedCredentialIds: [Data], entryPoint: String) {
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) == .unlocked else {
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        let userKey: FfiUserKey
+        switch SessionKeyReader.importUserKey() {
+        case let .success(uk):
+            userKey = uk
+        case .failure:
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=sessionkey status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=sessionkey status=ok")
+
+        let store = AppGroupCiphertextCacheStore()
+        guard
+            let accountMarker = store.currentAccountMarker(),
+            let snapshot = store.readCurrentSnapshot(accountId: accountMarker.accountId, serverBaseURL: accountMarker.serverBaseURL)
+        else {
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=cache-lookup status=no-cache")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+
+        var matches: [String] = []
+        for row in snapshot.items {
+            guard
+                let encKey = Self.decodeRebuildWireKey(row.encKey),
+                let encData = Self.decodeRebuildWireKey(row.encData),
+                let revision32 = UInt32(exactly: row.revision)
+            else {
+                continue
+            }
+            let item = FfiEncryptedItem(encKey: encKey, encData: encData)
+            guard let plaintext = try? decryptItem(userKey: userKey, item: item, itemId: row.id, revision: revision32) else {
+                continue
+            }
+            guard
+                let raw = (try? JSONSerialization.jsonObject(with: Data(plaintext.utf8))) as? [String: Any],
+                // Raw passkey wire shape: no `type` key, `credential_id`/`rp_id` present (mirrors
+                // ItemNormalize.swift's own isRawPasskeyWireFields -- a login/other item's
+                // plaintext simply lacks these keys and is skipped here).
+                raw["type"] == nil,
+                let itemRpId = raw["rp_id"] as? String,
+                let credentialIdInts = raw["credential_id"] as? [Int]
+            else {
+                continue
+            }
+            guard itemRpId == rpId else {
+                continue
+            }
+            let credentialIdBytes = Data(credentialIdInts.map { UInt8(truncatingIfNeeded: $0) })
+            // Empty `allowedCredentialIds` means "any credential for this rp_id is allowed"
+            // (`ASPasskeyCredentialRequestParameters.allowedCredentials`'s own documented shape);
+            // otherwise the item's credential_id must be one of the named allowed ids.
+            if allowedCredentialIds.isEmpty || allowedCredentialIds.contains(credentialIdBytes) {
+                matches.append(plaintext)
+            }
+        }
+
+        guard matches.count == 1, let existingPasskeyJson = matches.first else {
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=match status=fail count=\(matches.count, privacy: .public)")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=match status=ok")
+
+        // The ONE Rust/FFI entry point this branch may call (43-03-PLAN.md prohibitions) --
+        // `providerGetAssertion` (43-02), thin delegation to `pv_provider::get_assertion_ctap2`.
+        // `existingCredentialsJson` is a one-element JSON array wrapping the SAME decrypted
+        // `SerializablePasskey` plaintext this loop just matched -- `pv_provider`'s own expected
+        // shape (`PvCredentialStore::from_passkeys_json`).
+        var result: FfiProviderAssertionResult
+        do {
+            result = try providerGetAssertion(
+                rpId: rpId,
+                clientDataHash: clientDataHash,
+                allowCredentialId: allowedCredentialIds.first,
+                existingCredentialsJson: "[\(existingPasskeyJson)]"
+            )
+        } catch {
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=ceremony status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+
+        #if DEBUG
+        // 43-03-PLAN.md Task 2's own falsification leg (`ios-autofill-e43.sh tracer
+        // --corrupt-signature`): a harness-side interception, gated behind a marker file in the
+        // App Group container (the SAME `TracerFillSeeder.shouldMutateRevision()` marker-file
+        // convention, `ios-autofill-e41.sh`'s own header note on why a file, not an env var, is
+        // the reliable cross-process signal). Flips one byte of the REAL signature this ceremony
+        // just produced -- proves the fixture's own independent `webauthn-rs` verifier genuinely
+        // fails closed on a corrupted signature, never a shape/`.ok`-only check (L-3/L-9).
+        if Self.shouldCorruptSignatureForFalsification(), !result.signature.isEmpty {
+            let idx = result.signature.startIndex
+            result.signature[idx] ^= 0xFF
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=falsify status=signature-corrupted")
+        }
+        #endif
+
+        let credential = ASPasskeyAssertionCredential(
+            userHandle: result.userHandle ?? Data(),
+            relyingParty: rpId,
+            signature: result.signature,
+            clientDataHash: clientDataHash,
+            authenticatorData: result.authenticatorData,
+            credentialID: result.credentialId
+        )
+        Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=fill status=ok")
+        extensionContext.completeAssertionRequest(using: credential, completionHandler: nil)
+
+        // Plan 41-07, Task 1 (ACC-07): the SAME post-fill activity refresh `fillOrCancel` performs
+        // -- AutoFill-only usage (a passkey assertion is exactly that) must not log the user out
+        // mid-use.
+        SessionLifecycle.refreshActivity(writer: "extension")
+    }
+
+    /// Thin adapter for the `.passkeyAssertion`-typed request shape (`ASPasskeyCredentialRequest`)
+    /// -- see `performPasskeyAssertion`'s own header for the full rationale and the SECOND entry
+    /// point (`prepareCredentialList(for:requestParameters:)` below) this same function serves.
+    private func fillPasskeyOrCancel(for request: ASPasskeyCredentialRequest, entryPoint: String) {
+        // `ASCredentialRequest.credentialIdentity` is declared `id<ASCredentialIdentity>` on the
+        // base protocol (`ASCredentialRequest.h:39`) -- Swift sees `any ASCredentialIdentity`
+        // here even though `request` is already narrowed to `ASPasskeyCredentialRequest`, so the
+        // passkey-specific fields (`credentialID`/`relyingPartyIdentifier`) need this ONE explicit
+        // downcast. Header ground truth confirmed this is genuinely `ASPasskeyCredentialIdentity`
+        // for a `.passkeyAssertion` request (`ASPasskeyCredentialRequest.h`'s own doc comment); an
+        // unexpected shape here is treated as a real ceremony failure, never force-unwrapped.
+        guard let passkeyIdentity = request.credentialIdentity as? ASPasskeyCredentialIdentity else {
+            Self.fillLogger.log("PVFILL|passkey|entry=\(entryPoint, privacy: .public) stage=identity-cast status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        performPasskeyAssertion(
+            rpId: passkeyIdentity.relyingPartyIdentifier,
+            clientDataHash: request.clientDataHash,
+            allowedCredentialIds: [passkeyIdentity.credentialID],
+            entryPoint: entryPoint
+        )
+    }
+
+    #if DEBUG
+    /// 43-03-PLAN.md Task 2's own falsification marker -- see this function's own call site
+    /// above for the full rationale. Checked at ceremony-completion time, not compile time, so
+    /// the driving script can toggle it per-run without a second build (mirrors
+    /// `TracerFillSeeder.shouldMutateRevision()`'s own precedent, `ios-autofill-e41.sh`'s header).
+    private static func shouldCorruptSignatureForFalsification() -> Bool {
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.cloud.blonie.PasskeyVault"
+        ) else {
+            return false
+        }
+        return FileManager.default.fileExists(
+            atPath: containerURL.appendingPathComponent("pv-43-corrupt-signature.marker").path
+        )
+    }
+    #endif
 
     // MARK: - Plan 41-04 (FILL-03) -- the full-rebuild recovery path
 

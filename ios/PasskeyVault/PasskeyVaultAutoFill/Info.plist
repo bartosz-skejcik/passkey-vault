@@ -43,6 +43,13 @@
 			<dict>
 				<key>ProvidesPasswords</key>
 				<true/>
+				<!-- Phase 43 (43-03-PLAN.md), OPT-03: this key IS documented in-header
+				     (ASCredentialProviderViewController.h:117-118,123-124,178-179,184-185,
+				     43-RESEARCH.md) -- L-7's missing-dict trap does not apply here the way
+				     it applied to ProvidesPasswords; the risk was only ever forgetting to
+				     add this entry. -->
+				<key>ProvidesPasskeys</key>
+				<true/>
 				<key>ShowsConfigurationUI</key>
 				<true/>
 			</dict>
