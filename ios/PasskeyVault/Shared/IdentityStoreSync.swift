@@ -59,6 +59,20 @@ struct VaultIdentitySource: Equatable {
     let urls: [String]
 }
 
+/// One passkey's identity-relevant data -- Plan 43-05 (OPT-03), a sibling to `VaultIdentitySource`
+/// with NO URL/host concept: a passkey is keyed by relying-party id + credential id, never a
+/// service URL the way a password login is. The host builds this from a decrypted `passkey`-typed
+/// item (`packages/pv-ui/vault/types.ts` shape, L-15); the machinery below has no dependency on
+/// that decode -- Plan 43-07 (deferred, not this plan) is where the first real call site
+/// constructs one.
+struct PasskeyIdentitySource: Equatable {
+    let itemId: String
+    let rpId: String
+    let credentialId: Data
+    let userHandle: Data
+    let username: String?
+}
+
 enum IdentityStoreSyncError: Swift.Error, CustomStringConvertible {
     case storeDisabled
     case saveFailed(Swift.Error)
@@ -580,5 +594,250 @@ enum IdentityStoreSync {
             // be sitting under this key; loop once more to merge OUR keys into THAT value instead
             // of silently having clobbered it.
         }
+    }
+
+    // MARK: - Passkey identities (Plan 43-05, OPT-03 machinery)
+    //
+    // Additive sibling to the password path above -- SAME choke point (this file), SAME
+    // `saveWithRetry`/`removeWithRetry`/`replaceWithRetry` busy-retry discipline, SAME
+    // upsertOne-never-diffs / republish-always-diffs split (CR-01/CR-02's invariant, inherited
+    // identically). A passkey identity has no URL/host concept -- it is keyed by (rpId,
+    // credentialId), never `PublishedKey`'s (serviceIdentifier, user) shape, so this section owns
+    // its OWN persisted diff/removal record (`identityPublishedPasskeyKeysKey`) rather than
+    // sharing `publishedKeysKey` -- mixing the two would risk a password identity computing as a
+    // spurious passkey removal or vice versa (this plan's own prohibition).
+    //
+    // This plan (43-05) builds the MACHINERY only -- no call site anywhere reaches
+    // `upsertOnePasskey`/`republishPasskeys` yet (Plan 43-07 adds the first one, the registration
+    // override). Known limitation for that future integration, NOT fixed here (out of this
+    // plan's own scope -- the call site is explicitly deferred): on a device where
+    // `state.supportsIncrementalUpdates` is FALSE, both `republish(sources:)` and
+    // `republishPasskeys(sources:)` fall back to `replaceCredentialIdentities(with:)`, which
+    // replaces the ENTIRE store, not just the type it was handed -- calling the two independently
+    // on such a device would make each call erase the OTHER's identities. Plan 43-07's own call
+    // site must combine password and passkey sources into ONE full-replacement write on that
+    // branch; this simulator/toolchain reports `supportsIncrementalUpdates == true` today, so the
+    // collision is latent, not exercised, by this plan's own tests.
+
+    private static let identityPublishedPasskeyKeysKey = "cloud.blonie.PasskeyVault.identityPublishedPasskeyKeys"
+
+    /// The whole identity of an `ASPasskeyCredentialIdentity` as far as diffing/removal cares --
+    /// keyed by (rpId, credentialId), the passkey-side analogue of `PublishedKey`'s
+    /// (serviceIdentifier, user) pair. Deliberately 3 fields, mirroring `PublishedKey`'s own
+    /// minimal-field design: `userName`/`userHandle` are not needed to identify WHICH entry to
+    /// remove, only to reconstruct a removal-shaped object below (placeholder values there,
+    /// documented on `republishPasskeysIncremental`).
+    private struct PublishedPasskeyKey: Codable, Hashable {
+        let rpId: String
+        let credentialIdBase64: String
+        let recordIdentifier: String
+
+        init(identity: ASPasskeyCredentialIdentity) {
+            rpId = identity.relyingPartyIdentifier
+            credentialIdBase64 = identity.credentialID.base64EncodedString()
+            recordIdentifier = identity.recordIdentifier ?? ""
+        }
+    }
+
+    /// Mirrors `PublishedKeySet` -- a version counter so `unionIntoPublishedPasskeyKeys`'s own
+    /// compare-and-swap retry (below) can detect a concurrent cross-process write, exactly the
+    /// same reason WR-06 (41-REVIEW.md iteration 2) added one to the password-side set.
+    private struct PublishedPasskeyKeySet: Codable {
+        let version: Int
+        let keys: [PublishedPasskeyKey]
+    }
+
+    private static func readPublishedPasskeyKeySet() -> PublishedPasskeyKeySet {
+        guard let defaults = UserDefaults(suiteName: suiteName),
+              let data = defaults.data(forKey: identityPublishedPasskeyKeysKey),
+              let set = try? JSONDecoder().decode(PublishedPasskeyKeySet.self, from: data)
+        else { return PublishedPasskeyKeySet(version: 0, keys: []) }
+        return set
+    }
+
+    private static func readPublishedPasskeyKeys() -> Set<PublishedPasskeyKey> {
+        Set(readPublishedPasskeyKeySet().keys)
+    }
+
+    /// The WHOLE-SET replace `republishPasskeys(sources:)` uses -- mirrors `persistPublishedKeys`.
+    private static func persistPublishedPasskeyKeys(_ keys: Set<PublishedPasskeyKey>) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+        let next = PublishedPasskeyKeySet(version: readPublishedPasskeyKeySet().version &+ 1, keys: Array(keys))
+        guard let data = try? JSONEncoder().encode(next) else { return }
+        defaults.set(data, forKey: identityPublishedPasskeyKeysKey)
+    }
+
+    /// `upsertOnePasskey`'s own compare-and-swap union -- identical structure/rationale to
+    /// `unionIntoPublishedKeys` (WR-06, 41-REVIEW.md iteration 2), against the passkey-side key
+    /// instead.
+    private static func unionIntoPublishedPasskeyKeys(_ newKeys: Set<PublishedPasskeyKey>) {
+        guard let defaults = UserDefaults(suiteName: suiteName) else { return }
+        for _ in 0..<2 {
+            let before = readPublishedPasskeyKeySet()
+            let merged = Set(before.keys).union(newKeys)
+            let next = PublishedPasskeyKeySet(version: before.version &+ 1, keys: Array(merged))
+            guard let data = try? JSONEncoder().encode(next) else { return }
+            let versionMovedDuringMerge = readPublishedPasskeyKeySet().version != before.version
+            defaults.set(data, forKey: identityPublishedPasskeyKeysKey)
+            if !versionMovedDuringMerge { return }
+        }
+    }
+
+    /// Builds `ASPasskeyCredentialIdentity` values from sources, skipping (never crashing on) any
+    /// source whose `rpId`/`credentialId`/`userHandle` is empty -- the passkey-side analogue of
+    /// `buildIdentities`'s own URL-parsing skip branches, same `status=skipped-*` logging
+    /// discipline. Constructed via the non-refined FACTORY-derived Swift convenience init
+    /// (`ASPasskeyCredentialIdentity(relyingPartyIdentifier:userName:credentialID:userHandle:recordIdentifier:)`),
+    /// confirmed against BOTH `ASPasskeyCredentialIdentity.h` (the
+    /// `+identityWithRelyingPartyIdentifier:...` factory) and the
+    /// `arm64-apple-ios-simulator.swiftinterface` (`extension AuthenticationServices.ASPasskeyCredentialIdentity
+    /// { convenience public init(relyingPartyIdentifier:userName:credentialID:userHandle:recordIdentifier:) }`,
+    /// this task's own `<read_first>`) -- L-1's amended "check both" rule. L-1's Pitfall 5: the
+    /// DESIGNATED initializer (`NS_REFINED_FOR_SWIFT`) is not reachable directly from Swift at
+    /// all, so there is no raw/simpler form to accidentally reach for instead.
+    private static func buildPasskeyIdentities(from sources: [PasskeyIdentitySource]) -> [ASPasskeyCredentialIdentity] {
+        var identities: [ASPasskeyCredentialIdentity] = []
+        for (sourceIndex, source) in sources.enumerated() {
+            guard !source.rpId.isEmpty else {
+                logger.debug("PVFILL|E43-5|stage=build-passkey-identity kind=passkey status=skipped-empty-rpid")
+                continue
+            }
+            guard !source.credentialId.isEmpty else {
+                logger.debug("PVFILL|E43-5|stage=build-passkey-identity kind=passkey status=skipped-empty-credential-id")
+                continue
+            }
+            guard !source.userHandle.isEmpty else {
+                logger.debug("PVFILL|E43-5|stage=build-passkey-identity kind=passkey status=skipped-empty-user-handle")
+                continue
+            }
+            let identity = ASPasskeyCredentialIdentity(
+                relyingPartyIdentifier: source.rpId,
+                userName: source.username ?? "",
+                credentialID: source.credentialId,
+                userHandle: source.userHandle,
+                recordIdentifier: source.itemId
+            )
+            identity.rank = sourceIndex
+            identities.append(identity)
+        }
+        return identities
+    }
+
+    /// The additive, single-passkey-identity choke point -- CR-01's exact split (`republish`
+    /// diffs/removes against the CURRENT COMPLETE set; `upsertOne*` never diffs, never removes,
+    /// only saves-and-unions), applied identically to the passkey side. Idempotent: re-saving an
+    /// already-published `(rpId, credentialId)` pair is a no-op update, not a duplicate entry --
+    /// `saveCredentialIdentities` is upsert-shaped by `recordIdentifier` within a service, and
+    /// `unionIntoPublishedPasskeyKeys` merges into a `Set`, so a repeat key contributes nothing
+    /// new to the persisted record either.
+    @discardableResult
+    static func upsertOnePasskey(source: PasskeyIdentitySource) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let state = await ASCredentialIdentityStore.shared.state()
+        guard state.isEnabled else {
+            logger.log("PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=store-disabled")
+            markRebuildPending(true)
+            return .failure(.storeDisabled)
+        }
+
+        let identities = buildPasskeyIdentities(from: [source])
+        guard !identities.isEmpty else {
+            // Mirrors `upsertOne`'s own CR-02 escalation: wrote NOTHING, so the self-heal
+            // obligation this call exists to discharge is NOT discharged -- escalate to a
+            // full-vault rebuild rather than clearing anything.
+            markRebuildPending(true)
+            logger.error("PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=no-identity-built")
+            return .failure(.nothingToWrite)
+        }
+
+        let result = await saveWithRetry(identities as [any ASCredentialIdentity])
+        switch result {
+        case .success:
+            let newKeys = Set(identities.map(PublishedPasskeyKey.init(identity:)))
+            unionIntoPublishedPasskeyKeys(newKeys)
+            clearSelfHealPending()
+            logger.log("PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=ok")
+        case let .failure(error):
+            logger.error("PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=fail error=\(error.description, privacy: .public)")
+        }
+        return result
+    }
+
+    /// The passkey-side `republish(sources:)` -- diffs against the LAST published PASSKEY set
+    /// (`identityPublishedPasskeyKeysKey`), never `publishedKeysKey` (the password path's own
+    /// record). Same incremental-save-then-remove vs. full-replacement branch on
+    /// `state.supportsIncrementalUpdates`, same busy-retry discipline throughout. See this
+    /// section's own header comment for the full-replacement collision this plan defers to 43-07.
+    @discardableResult
+    static func republishPasskeys(sources: [PasskeyIdentitySource]) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let state = await ASCredentialIdentityStore.shared.state()
+        guard state.isEnabled else {
+            logger.log("PVFILL|E43-5|stage=republish-passkeys kind=passkey status=store-disabled")
+            markRebuildPending(true)
+            return .failure(.storeDisabled)
+        }
+        logger.log(
+            "PVFILL|E43-5|stage=state kind=passkey supportsIncrementalUpdates=\(state.supportsIncrementalUpdates, privacy: .public)"
+        )
+
+        let desired = buildPasskeyIdentities(from: sources)
+        let desiredKeys = Set(desired.map(PublishedPasskeyKey.init(identity:)))
+
+        let writeResult: Swift.Result<Void, IdentityStoreSyncError>
+        if state.supportsIncrementalUpdates {
+            writeResult = await republishPasskeysIncremental(desired: desired, desiredKeys: desiredKeys)
+        } else {
+            writeResult = await republishPasskeysFullReplacement(desired: desired)
+        }
+
+        switch writeResult {
+        case .success:
+            persistPublishedPasskeyKeys(desiredKeys)
+            markRebuildPending(false)
+            clearSelfHealPending()
+            logger.log(
+                "PVFILL|E43-5|stage=republish-passkeys kind=passkey status=ok count=\(desired.count, privacy: .public) mode=\(state.supportsIncrementalUpdates ? "incremental" : "full", privacy: .public)"
+            )
+        case let .failure(error):
+            logger.error("PVFILL|E43-5|stage=republish-passkeys kind=passkey status=fail error=\(error.description, privacy: .public)")
+        }
+        return writeResult
+    }
+
+    private static func republishPasskeysIncremental(
+        desired: [ASPasskeyCredentialIdentity], desiredKeys: Set<PublishedPasskeyKey>
+    ) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let previousKeys = readPublishedPasskeyKeys()
+        let removedKeys = previousKeys.subtracting(desiredKeys)
+        if !removedKeys.isEmpty {
+            // Reconstructed removal-shaped identity: `userName`/`userHandle` are placeholders
+            // (`PublishedPasskeyKey`'s own doc comment) -- only `rpId`/`credentialId`/
+            // `recordIdentifier` identify WHICH entry to remove.
+            let removals: [any ASCredentialIdentity] = removedKeys.compactMap { key -> ASPasskeyCredentialIdentity? in
+                guard let credentialIdData = Data(base64Encoded: key.credentialIdBase64) else {
+                    logger.error("PVFILL|E43-5|stage=republish-passkeys kind=passkey status=skipped-unparseable-credential-id")
+                    return nil
+                }
+                return ASPasskeyCredentialIdentity(
+                    relyingPartyIdentifier: key.rpId,
+                    userName: "",
+                    credentialID: credentialIdData,
+                    userHandle: Data(),
+                    recordIdentifier: key.recordIdentifier
+                )
+            }
+            if case let .failure(error) = await removeWithRetry(removals) {
+                return .failure(error)
+            }
+        }
+        guard !desired.isEmpty else { return .success(()) }
+        let saves: [any ASCredentialIdentity] = desired
+        return await saveWithRetry(saves)
+    }
+
+    private static func republishPasskeysFullReplacement(
+        desired: [ASPasskeyCredentialIdentity]
+    ) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let replacements: [any ASCredentialIdentity] = desired
+        return await replaceWithRetry(replacements)
     }
 }
