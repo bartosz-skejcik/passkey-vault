@@ -1,0 +1,8 @@
+2026-08-22 00:20:29.694 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=preflight status=ok
+2026-08-22 00:20:29.707 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandleLen=16 userNameLen=20
+2026-08-22 00:20:29.707 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandle={length = 16, bytes = 0x8a29dbff29d24f5ab19881fd903b0a51} userName=ios-sc4-registration
+2026-08-22 00:20:31.274 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=ceremony status=ok
+2026-08-22 00:20:31.274 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=encrypt status=ok
+2026-08-22 00:20:31.314 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=network status=ok
+2026-08-22 00:20:31.556 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=identity-store status=ok
+2026-08-22 00:20:31.556 Df PasskeyVaultAutoFill[3421:b9ec45] [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=complete status=ok

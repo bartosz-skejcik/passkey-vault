@@ -1,0 +1,20 @@
+=== TRANSCRIPT 1: swap upsertOnePasskey( -> republishPasskeys( in the registration call site ===
+799:                    let identityResult = await IdentityStoreSync.republishPasskeys(sources: [identitySource])
+exit=1
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+CredentialProviderViewController.prepareInterface(forPasskeyRegistration:) (registration self-heal write) (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift, declared at line 665) -- no IdentityStoreSync.upsertOnePasskey( call found within 90 lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)
+
+
+=== TRANSCRIPT 2: delete the upsertOnePasskey( call entirely ===
+663:    /// `IdentityStoreSync.upsertOnePasskey(` call stays inside THIS declaration's own measured
+796:                    // (B) extension) -- a single-item write, `upsertOnePasskey`, never `republish`/
+exit=1
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+CredentialProviderViewController.prepareInterface(forPasskeyRegistration:) (registration self-heal write) (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift, declared at line 665) -- no IdentityStoreSync.upsertOnePasskey( call found within 90 lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)
+
+byte-for-byte identical to original
+
+=== TRANSCRIPT 3: restored, original code byte-for-byte ===
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 7 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)

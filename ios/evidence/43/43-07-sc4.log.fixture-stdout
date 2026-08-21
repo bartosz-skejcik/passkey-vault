@@ -1,0 +1,9 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running `target/debug/rp-fixture --port 8900`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/ rp_id=localhost mode=create user_name=Some("ios-sc4-registration")
+RPFIXTURE|route=init rp_id=localhost origin=http://localhost:8900/ status=created
+RPFIXTURE|route=/challenge/register rp_id=localhost user_name=ios-sc4-registration status=issued
+RPFIXTURE|route=/register/finish rp_id=localhost ok=true reason=registered

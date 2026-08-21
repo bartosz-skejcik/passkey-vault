@@ -1,0 +1,18 @@
+=== TRANSCRIPT 1: assertion (B) -- inject a .sync( call into the allow-listed file ===
+787:                            _ = try await api.createItem(id: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson); _ = try await api.sync(since: 0)
+exit=1
+FAIL: extension network-scope violation(s) found (T-43-10):
+-- Assertion (B), a non-createItem VaultAPI method called from an allow-listed file:
+ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift:787:                            _ = try await api.createItem(id: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson); _ = try await api.sync(since: 0) [VaultAPI method call OTHER than .createItem( from an allow-listed file]
+
+
+=== TRANSCRIPT 2: assertion (A) -- a VaultAPI( construction in a scratch file OUTSIDE the allow-list ===
+exit=1
+FAIL: extension network-scope violation(s) found (T-43-10):
+-- Assertion (A), VaultAPI construction outside the allow-list:
+ios/PasskeyVault/PasskeyVaultAutoFill/ZZScratchNetworkScopeFalsification.swift:4:        let api = VaultAPI(baseURL: URL(string: )!, tokenProvider: { nil }) [VaultAPI construction OUTSIDE the allow-list]
+
+CPVC byte-for-byte identical to pre-falsification
+
+=== TRANSCRIPT 3: restored, exit 0 again ===
+PASS: the AutoFill extension constructs VaultAPI ONLY from the reviewed allow-list (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift), and every such construction site calls ONLY .createItem( (T-43-10, DR-43-A)

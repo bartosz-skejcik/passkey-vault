@@ -5546,3 +5546,117 @@ This IS the "extract the minimal surface... and note the deviation" contingency 
 **Verification, re-run at commit time.** `grep -q "DR-43-A" ios/IOS-SPIKE-LOG.md` — this section.
 `caffeinate -i bash scripts/build-ios.sh` succeeds for both targets after the `VaultAPI.swift`/
 `SessionTokenStore.swift`/`PvApiError.swift`/`SyncModels.swift` relocation.
+
+## 14. Phase 43, Plan 43-07 — registration wired end-to-end, ROADMAP SC4 proven live (2026-08-22)
+
+`prepareInterface(forPasskeyRegistration:)` (`CredentialProviderViewController.swift`, `c1fc50c`) is
+the last piece OPT-03 needed: confirmation screen → CTAP2 registration (43-04) →
+`PasskeyIdentitySource`/`upsertOnePasskey` (43-05) → `VaultAPI.createItem` + self-heal (43-06). Every
+prior wave's own machinery is this plan's sole caller.
+
+**Landmine L-43: the Swift import name for `prepareInterfaceForPasskeyRegistration:` is
+`prepareInterface(forPasskeyRegistration:)`, not `prepareInterfaceForPasskeyRegistration(for:)`.**
+43-RESEARCH.md's own code example (and this plan's own action text, copied from it) assumed the
+latter — a real `swiftc` diagnostic corrected it: `'prepareInterfaceForPasskeyRegistration' has been
+renamed to 'prepareInterface(forPasskeyRegistration:)'`. The Clang importer's "For"-splitting
+heuristic treats `...ForPasskeyRegistration:` as `prepareInterface` + label `forPasskeyRegistration`,
+unlike `prepareInterfaceToProvideCredentialForRequest:`'s existing `prepareInterface(for:)` shape —
+the two sibling selectors do NOT import the same way, confirmed by a standalone `swiftc -typecheck`
+probe before committing (`/tmp/pv_check_override2.swift`, this session). A fourth extension of L-1's
+"the header is not the whole story" family, but from the OPPOSITE direction: here the header's own
+selector text was accurate, and it was the PLAN's own inference from it (English-language guesswork
+about Swift's argument-label splitting) that was wrong — always verify the ACTUAL Swift-facing
+signature with a real compile, never infer it from the ObjC selector by eye.
+
+**The registration DECISION logic could not live in the file it decides for.**
+`PasskeyRegistrationPreflight.swift` (new, `Shared/`) holds the pure algorithm/lock-state refusal
+decision `PasskeyRegistrationOverrideTests` exercises — NOT because of any AuthenticationServices-
+free-testability convention (`IdentityStoreSync.swift` already breaks that convention and is
+`@testable`-covered fine), but because `CredentialProviderViewController.swift` compiles ONLY into
+the `PasskeyVaultAutoFill` extension target, and `PasskeyVaultTests`' `@testable import PasskeyVault`
+reaches the HOST app module only — confirmed directly from the pbxproj's own
+`PBXFileSystemSynchronizedRootGroup`/`fileSystemSynchronizedGroups` entries (`PasskeyVaultTests`'s own
+group lists only its own folder, never `PasskeyVaultAutoFill`). 43-PLAN-CHECK.md C5's own
+"actually run by this plan's own gate" requirement is unsatisfiable for logic that lives only in the
+extension folder; this is the general shape, not specific to this one method.
+
+**The chokepoint gate's assertion (B) extended and shown red-then-green (43-PLAN-CHECK.md B6).**
+`scripts/audit-ios-identity-store-chokepoint.sh` gains a seventh `CALL_SITE_*` entry
+(`3903b55`) for the new override's own `IdentityStoreSync.upsertOnePasskey(` call, anchored on its
+corrected declaration line, window a stated generous upper bound (the placement above
+`runIdentityRebuildIfPending()` keeps the primary `next_decl_offset` extent-detection path
+authoritative, per 43-PLAN-CHECK.md C1). Falsification, captured in
+`ios/evidence/43/43-07-t2-chokepoint-falsification.log`: (1) swap the call for
+`IdentityStoreSync.republishPasskeys(` → FAIL, naming this exact entry; (2) delete the call
+entirely → FAIL, naming the same entry; (3) restore byte-for-byte → PASS. The SAME three-transcript
+discipline 43-05's own assertion (A) extension already established, applied here to (B) for the
+first time since 41-08 originally built it.
+
+**Carry-forward obligation from 43-05-SUMMARY.md, closed.** `IdentityStoreSync.republishRebuild
+(passwordSources:passkeySources:)` (new) is the ONE place password and passkey sources are combined
+before a full-vault rebuild — on a device where `state.supportsIncrementalUpdates` is `true` (this
+simulator, still, per 43-05's own finding), it delegates unchanged to `republish`/`republishPasskeys`
+independently (safe: `saveCredentialIdentities`/`removeCredentialIdentities` only ever touch the
+identities they are handed); on the `false` branch it issues ONE combined `replaceCredentialIdentities`
+call, closing the erasure collision 43-05 documented and deferred. `combinedRebuildIdentities`
+(the pure combination step) is factored out and directly tested — the live collision itself remains
+unexercised on this toolchain (still `supportsIncrementalUpdates == true`), the same honest limit
+43-05's own entry recorded.
+
+**ROADMAP SC4, proven live, twice (once per harness run, the second with the fix below).**
+`scripts/ios-autofill-e43.sh sc4` drives a REAL registration ceremony on the pinned simulator against
+`crates/rp-fixture` (`mode=create`), against a genuinely isolated, throwaway `pv-server` (D-23's own
+discipline extended: never `data/pv.db`), then a DIRECT `GET /api/vault/items` against that live
+server (bypassing any client cache, via a genuinely independent real `pv-wasm` client —
+`scripts/ios-autofill-e43-sc4-probe.mjs`, the SAME E-W1 precedent `scripts/sync-contract-probe.sh`
+already established) decodes the row and asserts the raw `passkey` wire shape
+(`isRawPasskeyWireFields`'s own predicate, re-implemented minimally, never a new, divergent check).
+**PASS**: `ios/evidence/43/43-07-sc4-after.json` shows one row, `rpId=localhost`,
+`credentialIdLength=16`. Falsification (`sc4 --stale-snapshot`): the SAME assertion against
+`ios/evidence/43/43-07-sc4-before.json` (captured right after the throwaway account was created,
+before any ceremony ran) shows the row genuinely absent — **PASS**, proving the check can fail.
+
+**LIVE FINDING (first attempt, this session): the system's own "Save Passkey" confirm control has no
+"Continue" label at all.** The first `sc4` run's own UI test (`AutoFillPasskeyRegistrationUITests`,
+`3903b55`) correctly found and tapped Safari's OWN "Save in PasskeyVault" provider-choice row (a
+`Selected` radio-style button in a real system sheet), but then polled for a "Continue" label for 30s
+and never found one — the extension process never launched at all (`xcrun simctl spawn ... log show
+--predicate 'process == "PasskeyVaultAutoFill"'` returned zero lines for the whole test window,
+receiver-side proof the failure was real, not a polling bug). The captured accessibility hierarchy
+(`provider-row-found-poll2-hierarchy`, extracted via `xcrun xcresulttool export attachments`) showed
+the real confirm control: `Other, identifier: 'ASAuthorizationControllerContinueButton'`, label
+**"Add Passkey"** — a DIFFERENT surface, and a DIFFERENT label, than the sibling assertion tracer's
+own "Continue" (43-03-PLAN.md's own live finding, a different system sheet entirely). Fixed by
+checking the identifier first (stable, not localization-dependent), falling back to the "Add Passkey"
+label text, then "Continue" as a last resort. The SECOND run, with this fix, reached and tapped OUR
+OWN confirm screen (`passkeyRegistration.confirm`, found via its `accessibilityIdentifier`) and
+completed the full ceremony.
+
+**Open Question 1, settled empirically, live (43-RESEARCH.md's own recommendation: settle in this
+phase's first live registration experiment, before treating the field-population behavior as
+known).** Logged from inside the override, BEFORE any transformation
+(`ios/evidence/43/43-07-t1-open-question-1-log.txt`):
+```
+PVFILL|passkey-reg|stage=opt-01-oq1 userHandleLen=16 userNameLen=20
+PVFILL|passkey-reg|stage=opt-01-oq1 userHandle={length = 16, bytes = 0x8a29dbff29d24f5ab19881fd903b0a51} userName=ios-sc4-registration
+```
+`userName` is an EXACT match for the harness's own `PV_E43_SC4_USERNAME` value, and `userHandle` is
+16 bytes — exactly `crates/rp-fixture`'s own `start_passkey_registration(Uuid::new_v4(), &user_name,
+&user_name, None)` (`main.rs:283`), a fresh random UUID the RP itself mints for a NEW registration.
+**Answer: iOS forwards the RP's real `user.id`/`user.name` values verbatim for a fresh registration —
+it does not synthesize a placeholder.** A2 (43-RESEARCH.md's Assumptions Log) confirmed correct.
+
+**Every ceremony stage confirmed green from the device's own log, this same run**
+(`ios/evidence/43/43-07-t1-open-question-1-log.txt`): `stage=preflight status=ok` →
+`stage=ceremony status=ok` → `stage=encrypt status=ok` → `stage=network status=ok` (the REAL POST to
+the live throwaway server) → `stage=identity-store status=ok` → `stage=complete status=ok`.
+
+**`scripts/audit-extension-network-scope.sh` gains its first, and so far only, real caller** —
+`CredentialProviderViewController.swift`, exactly as that gate's own header anticipated when 43-06
+built it with an empty allow-list. Falsified both directions
+(`ios/evidence/43/43-07-network-scope-falsification.log`): a `.sync(` call injected into the
+allow-listed file → FAIL under assertion (B); a `VaultAPI(` construction in a scratch file outside
+the allow-list → FAIL under assertion (A); both reverted → PASS.
+
+**Full-gate confirmation:** `scripts/check-ios-gate.sh` (all six sub-gates) exits 0 against this
+plan's changes. Transcript: `ios/evidence/43/43-07-check-ios-gate.log`.

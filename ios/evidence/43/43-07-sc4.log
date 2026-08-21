@@ -1,0 +1,108 @@
+==> sc4: pinned simulator UDID: 34992BB7-4982-4915-92C7-C7FC987802AF
+==> sc4: pv-server healthy on http://127.0.0.1:8901 (isolated, throwaway db: /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T//pv-e43-sc4.Mx7GSN/pv.db)
+==> sc4: rp-fixture ready on http://localhost:8900
+==> sc4: registering throwaway account pv-43-07-sc4-1787350732@example.invalid via real pv-wasm client
+(node:1805) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"email":"pv-43-07-sc4-1787350732@example.invalid"}
+==> sc4: capturing the BEFORE snapshot (must show the row absent)
+(node:1810) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"email":"pv-43-07-sc4-1787350732@example.invalid","rowCount":0,"passkeyRowCount":0}
+==> sc4: BEFORE snapshot confirmed absent (ios/evidence/43/43-07-sc4-before.json)
+==> sc4: building pv-ffi (plain variant)
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.23s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.17s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-5ff1166bfdc679bb.pv_ffi.c9f552404ace256e-cgu.01.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+==> sc4: building app+extension (PV_PROBE_E43_SC4)
+==> sc4: building the UI test bundle (PasskeyVaultUITests)
+==> sc4: launching host app to run PasskeyRegistrationSc4Seeder.seed() (sign-in via native pv-ffi)
+==> sc4: seed confirmed ok
+==> sc4: driving Safari against the fixture, mode=create (AutoFillPasskeyRegistrationUITests)
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.7oTOyrQrvS for the full transcript
+    t =    14.97s     Check for interrupting elements affecting "ASAuthorizationControllerContinueButton" Other
+    t =    15.02s     Synthesize event
+    t =    15.33s     Wait for com.apple.springboard to idle
+    t =    15.33s Find the Application 'com.apple.mobilesafari'
+    t =    15.46s Added attachment named 'poll-1-screenshot'
+    t =    15.46s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    15.64s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    15.78s Added attachment named 'poll-1-hierarchy'
+    t =    15.78s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    15.81s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    15.84s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    15.88s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    15.92s Find the Application 'com.apple.mobilesafari'
+    t =    16.04s Added attachment named 'poll-2-screenshot'
+    t =    16.04s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    16.22s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    16.25s Added attachment named 'poll-2-hierarchy'
+    t =    16.76s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    16.78s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    16.79s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    16.89s Find the "passkeyRegistration.confirm" Button
+    t =    16.93s Find the Application 'com.apple.springboard'
+    t =    17.06s Added attachment named 'confirm-button-found-poll3-screenshot'
+    t =    17.06s Requesting snapshot of accessibility hierarchy for app with pid 96388
+    t =    17.30s Requesting snapshot of accessibility hierarchy for app with pid 96388
+    t =    17.35s Added attachment named 'confirm-button-found-poll3-hierarchy'
+    t =    17.35s Tap "passkeyRegistration.confirm" Button
+    t =    17.35s     Wait for com.apple.springboard to idle
+    t =    17.35s     Find the "passkeyRegistration.confirm" Button
+    t =    17.38s     Check for interrupting elements affecting "passkeyRegistration.confirm" Button
+    t =    17.42s     Synthesize event
+    t =    17.71s     Wait for com.apple.springboard to idle
+    t =    17.72s Find the Application 'com.apple.mobilesafari'
+    t =    17.85s Added attachment named 'poll-3-screenshot'
+    t =    17.85s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    18.01s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    18.04s Added attachment named 'poll-3-hierarchy'
+    t =    21.05s Find the Application 'com.apple.mobilesafari'
+    t =    21.16s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-tappedCreatePasskey=true-screenshot'
+    t =    21.16s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    21.30s Requesting snapshot of accessibility hierarchy for app with pid 3138
+    t =    21.32s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-tappedCreatePasskey=true-hierarchy'
+    t =    21.32s Tear Down
+Test Case '-[PasskeyVaultUITests.AutoFillPasskeyRegistrationUITests testPasskeyRegistrationAgainstRpFixture]' passed (21.574 seconds).
+Test Suite 'AutoFillPasskeyRegistrationUITests' passed at 2026-08-22 12:20:35.328 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.574 (21.576) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 12:20:35.329 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.574 (21.577) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 12:20:35.331 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 21.574 (21.579) seconds
+2026-08-22 00:20:35.687 xcodebuild[2640:12180948] [MT] IDETestOperationsObserverDebug: 27.570 elapsed -- Testing started completed.
+2026-08-22 00:20:35.687 xcodebuild[2640:12180948] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 00:20:35.687 xcodebuild[2640:12180948] [MT] IDETestOperationsObserverDebug: 27.570 sec, +27.570 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_12-19-51-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+==> sc4: capturing the AFTER snapshot (direct GET /api/vault/items, bypassing any client cache)
+(node:3596) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"email":"pv-43-07-sc4-1787350732@example.invalid","rowCount":1,"passkeyRowCount":1}
