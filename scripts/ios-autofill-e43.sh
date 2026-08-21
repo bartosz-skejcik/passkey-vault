@@ -45,8 +45,17 @@ SEED_INPUT_FILE_NAME="pv-43-seed-passkey.json"
 CORRUPT_MARKER_FILE_NAME="pv-43-corrupt-signature.marker"
 STATUS_FILE_NAME="e43-tracer-seed-status.json"
 
+# --- Plan 43-07, Task 2 (ROADMAP SC4) constants -----------------------------------------------
+# A throwaway port, distinct from the default (8620, `ios-live-server.sh`'s own D-23 refusal
+# target), from `rp-fixture`'s own 8900, and from every other e2e fixture-server port this
+# workspace already claims (43-03-PLAN.md Task 1's own port inventory).
+SC4_SERVER_PORT=8901
+SC4_SEED_INPUT_FILE_NAME="pv-43-sc4-seed.json"
+SC4_STATUS_FILE_NAME="e43-sc4-seed-status.json"
+SC4_PROBE_SCRIPT="scripts/ios-autofill-e43-sc4-probe.mjs"
+
 usage() {
-  echo "Usage: $0 {tracer} [--corrupt-signature] [--assert-only <path> --expect-ok <true|false>]" >&2
+  echo "Usage: $0 {tracer|sc4} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
   exit 1
 }
 
@@ -373,8 +382,233 @@ assert_tracer() {
   return 0
 }
 
+# --- Plan 43-07, Task 2 (ROADMAP SC4) -----------------------------------------------------------
+#
+# RECEIVER-SIDE assertion: reads the classified snapshot file
+# `scripts/ios-autofill-e43-sc4-probe.mjs`'s `snapshot` action wrote -- a direct, DECRYPTED
+# `GET /api/vault/items` read against the live server, bypassing any client cache -- and checks for
+# at least one row whose decrypted plaintext is the raw `passkey` wire shape
+# (`isRawPasskeyWireFields`'s own predicate, re-implemented in the probe script, never a new,
+# divergent shape check) with `rp_id=localhost`. `expect` is `"present"` or `"absent"`.
+assert_sc4_snapshot() {
+  local target="$1" expect="$2"
+  if ! require_nonempty_file "$target" "e43 sc4 snapshot"; then
+    return 1
+  fi
+  local count
+  count=$(jq '[.[] | select(.isPasskeyShape == true and .rpId == "localhost")] | length' "$target")
+  if [ "$expect" = "present" ]; then
+    [ "$count" -gt 0 ]
+  else
+    [ "$count" -eq 0 ]
+  fi
+}
+
+# `sc4 --stale-snapshot`: the falsification leg (43-07-PLAN.md Task 2's own acceptance criteria) --
+# re-runs the SAME assertion against the snapshot captured BEFORE the registration ceremony ever
+# ran (`$before_file`, written by a prior `sc4` run) and confirms the row is ABSENT there. No
+# boot/build/drive -- this is a pure re-check of an already-captured file.
+cmd_sc4_stale_snapshot() {
+  local before_file="$EVIDENCE_DIR/43-07-sc4-before.json"
+  if [ ! -f "$before_file" ]; then
+    echo "ERROR: $before_file does not exist -- run '$0 sc4' (without --stale-snapshot) at least once first" >&2
+    exit 1
+  fi
+  if assert_sc4_snapshot "$before_file" "absent"; then
+    echo "PASS: sc4 --stale-snapshot -- the pre-registration snapshot correctly shows the row ABSENT ($before_file)"
+    exit 0
+  else
+    echo "FAIL: sc4 --stale-snapshot -- the pre-registration snapshot unexpectedly shows the row PRESENT (the falsification cannot fail as designed)" >&2
+    exit 1
+  fi
+}
+
+# `sc4`: drives a REAL registration ceremony on the pinned simulator against `crates/rp-fixture`
+# (`?rp_id=localhost&mode=create`), against a REAL, isolated, throwaway `pv-server` (never the
+# developer's own `data/pv.db` -- D-23's own preflight, mirroring `ios-live-server.sh`), then
+# performs a DIRECT `GET /api/vault/items` call against that live server (bypassing any client
+# cache) and asserts the returned row decodes to the `passkey` shape.
+cmd_sc4() {
+  mkdir -p "$EVIDENCE_DIR"
+
+  local before_file="$EVIDENCE_DIR/43-07-sc4-before.json"
+  local after_file="$EVIDENCE_DIR/43-07-sc4-after.json"
+  local log_file="$EVIDENCE_DIR/43-07-sc4.log"
+  : > "$log_file"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> sc4: pinned simulator UDID: $udid" | tee -a "$log_file"
+
+  # --- throwaway, isolated pv-server (D-23 discipline: never the developer's own data/pv.db) ----
+  local stray_port=8620
+  if lsof -nP -i ":${stray_port}" >/dev/null 2>&1; then
+    echo "ERROR: something is already listening on the default port :${stray_port} -- refusing to proceed (D-23)" >&2
+    exit 1
+  fi
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+    exit 1
+  fi
+  local db_dir db_url server_log server_pid server_base
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e43-sc4.XXXXXX")
+  db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+  server_log="${db_dir}/pv-server.log"
+  server_base="http://127.0.0.1:${SC4_SERVER_PORT}"
+
+  PV_ADDR="127.0.0.1:${SC4_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "$server_log" 2>&1 &
+  server_pid=$!
+  cleanup_sc4() {
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" 2>/dev/null || true
+    stop_fixture
+    rm -rf "$db_dir"
+  }
+  trap cleanup_sc4 EXIT
+
+  local healthy=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+    cat "$server_log" >&2
+    exit 1
+  fi
+  echo "==> sc4: pv-server healthy on ${server_base} (isolated, throwaway db: ${db_dir}/pv.db)" | tee -a "$log_file"
+
+  start_fixture "${log_file}.fixture-stdout"
+  echo "==> sc4: rp-fixture ready on ${FIXTURE_BASE}" | tee -a "$log_file"
+
+  # --- real, throwaway account, via the SAME real pv-wasm client scripts/sync-contract-probe.sh
+  # already trusts (E-W1) --------------------------------------------------------------------
+  local wasm_glue="${REPO_ROOT}/web/src/lib/crypto/wasm/pv_wasm.js"
+  local wasm_bytes="${REPO_ROOT}/web/public/wasm/pv_wasm_bg.wasm"
+  if [ ! -f "$wasm_glue" ] || [ ! -f "$wasm_bytes" ]; then
+    echo "ERROR: pv-wasm artifact missing (${wasm_glue} / ${wasm_bytes}). Run scripts/build-wasm.sh first." >&2
+    exit 1
+  fi
+  local sc4_email sc4_password
+  sc4_email="pv-43-07-sc4-$(date +%s)@example.invalid"
+  sc4_password="pv-43-07 sc4 fixture password $(date +%s) $$"
+
+  echo "==> sc4: registering throwaway account ${sc4_email} via real pv-wasm client" | tee -a "$log_file"
+  node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc4_email" "$sc4_password" \
+    >> "$log_file" 2>&1 || { echo "ERROR: account registration failed -- see $log_file" >&2; exit 1; }
+
+  echo "==> sc4: capturing the BEFORE snapshot (must show the row absent)" | tee -a "$log_file"
+  node "$SC4_PROBE_SCRIPT" snapshot "$server_base" "$wasm_glue" "$wasm_bytes" "$sc4_email" "$sc4_password" "$before_file" \
+    >> "$log_file" 2>&1 || { echo "ERROR: BEFORE snapshot failed -- see $log_file" >&2; exit 1; }
+  if ! assert_sc4_snapshot "$before_file" "absent"; then
+    echo "ERROR: the BEFORE snapshot already shows a passkey row -- the account is not genuinely fresh" >&2
+    exit 1
+  fi
+  echo "==> sc4: BEFORE snapshot confirmed absent ($before_file)" | tee -a "$log_file"
+
+  # --- build+install app+extension, PV_PROBE_E43_SC4 ------------------------------------------
+  echo "==> sc4: building pv-ffi (plain variant)" | tee -a "$log_file"
+  "$REPO_ROOT/scripts/build-ios.sh" >> "$log_file" 2>&1
+
+  echo "==> sc4: building app+extension (PV_PROBE_E43_SC4)" | tee -a "$log_file"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_SC4" /tmp/pv-e43-sc4-build.log build
+
+  echo "==> sc4: building the UI test bundle (PasskeyVaultUITests)" | tee -a "$log_file"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_SC4" /tmp/pv-e43-sc4-build-for-testing.log build-for-testing
+
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  # First launch: no seed input staged yet -- creates the App Group container on disk, seeder
+  # logs a harmless "no-seed-input" and returns (same double-launch pattern `cmd_tracer` above
+  # already establishes).
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+  rm -f "${group_dir}/${SC4_STATUS_FILE_NAME}"
+
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${sc4_email}\",\"password\":\"${sc4_password}\"}" \
+    > "${group_dir}/${SC4_SEED_INPUT_FILE_NAME}"
+
+  echo "==> sc4: launching host app to run PasskeyRegistrationSc4Seeder.seed() (sign-in via native pv-ffi)" | tee -a "$log_file"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "${group_dir}/${SC4_STATUS_FILE_NAME}" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: PasskeyRegistrationSc4Seeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "${group_dir}/${SC4_STATUS_FILE_NAME}"; then
+    echo "ERROR: PasskeyRegistrationSc4Seeder reported a non-ok status:" >&2
+    cat "${group_dir}/${SC4_STATUS_FILE_NAME}" >&2
+    exit 1
+  fi
+  echo "==> sc4: seed confirmed ok" | tee -a "$log_file"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  echo "==> sc4: driving Safari against the fixture, mode=create (AutoFillPasskeyRegistrationUITests)" | tee -a "$log_file"
+  local ui_test_log
+  ui_test_log=$(mktemp)
+  local ui_result=0
+  PV_E43_SC4_USERNAME="$sc4_email" \
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/AutoFillPasskeyRegistrationUITests/testPasskeyRegistrationAgainstRpFixture \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E43_SC4" \
+    test > "$ui_test_log" 2>&1 &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || ui_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+
+  echo "## XCUITest drive (exit $ui_result) -- see $ui_test_log for the full transcript" >> "$log_file"
+  tail -60 "$ui_test_log" >> "$log_file" || true
+
+  echo "==> sc4: capturing the AFTER snapshot (direct GET /api/vault/items, bypassing any client cache)" | tee -a "$log_file"
+  sleep 2
+  node "$SC4_PROBE_SCRIPT" snapshot "$server_base" "$wasm_glue" "$wasm_bytes" "$sc4_email" "$sc4_password" "$after_file" \
+    >> "$log_file" 2>&1 || { echo "ERROR: AFTER snapshot failed -- see $log_file" >&2; exit 1; }
+
+  if assert_sc4_snapshot "$after_file" "present"; then
+    echo "PASS: sc4 -- a real registration ceremony produced a server-visible passkey row (rp_id=localhost) -- see $after_file / $log_file"
+    exit 0
+  else
+    echo "FAIL: sc4 -- no server-visible passkey row (rp_id=localhost) after the registration ceremony -- see $after_file / $log_file" >&2
+    exit 1
+  fi
+}
+
 main() {
   case "${1:-}" in
+    sc4)
+      shift
+      if [ "${1:-}" = "--stale-snapshot" ]; then
+        cmd_sc4_stale_snapshot
+      fi
+      cmd_sc4
+      ;;
     tracer)
       shift
       if [ "${1:-}" = "--assert-only" ]; then

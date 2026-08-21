@@ -186,6 +186,18 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 43, Plan 43-07 (ROADMAP SC4): seeds a REAL, throwaway account against a LIVE
+        // `pv-server` -- BEFORE the extension is ever invoked, same ordered host-then-extension
+        // sequence every other seeder in this file already establishes. Compiled in only under
+        // `PV_PROBE_E43_SC4` -- inert for every other probe. See
+        // `PasskeyRegistrationSc4Seeder.swift`'s own header for why this deviates from
+        // files_modified (Rule 2, documented in 43-07-SUMMARY.md).
+        #if PV_PROBE_E43_SC4
+        Task {
+            await PasskeyRegistrationSc4Seeder.seed()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

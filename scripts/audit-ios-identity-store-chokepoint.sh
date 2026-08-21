@@ -33,18 +33,23 @@
 #       deviation in 41-08-SUMMARY.md).
 #
 #   (B) Every mutation call site 41-04-SUMMARY.md's own "the mutation call-site list" enumerates
-#       still reaches `IdentityStoreSync.republish(` -- the direction that ACTUALLY fails silently
-#       (T-41-41): a call site that stops calling the writer produces no error, no crash, just a
-#       QuickType entry that is quietly never there or never updated. Six sites, all in the SAME
-#       two files: `VaultStore.swift`'s `create`/`update`/`delete`/`performRefresh` (the sync-pull
-#       completion, run after the shared/family-wide merge), and
-#       `CredentialProviderViewController.swift`'s post-fill self-heal write and full-rebuild
-#       recovery path (`runIdentityRebuildIfPending()`). Each site is located by its OWN function
-#       DECLARATION (a stable, low-drift anchor, per this plan's own `<read_first>` guidance to
-#       "prefer scanning all declarations ... over isolating a region and trusting the isolation"
-#       -- 35-REVIEW's CR-02/CR-03), then a BOUNDED forward line-window (not brace-depth
-#       extraction) is searched for `IdentityStoreSync.republish(`. A bounded window is sound here
-#       specifically because this is a FIXED, ENUMERATED set of six known sites with known,
+#       still reaches its own REQUIRED `IdentityStoreSync` entry point -- the direction that
+#       ACTUALLY fails silently (T-41-41): a call site that stops calling the writer produces no
+#       error, no crash, just a QuickType entry that is quietly never there or never updated. Seven
+#       sites (43-07 added the seventh), all in the SAME two files: `VaultStore.swift`'s
+#       `create`/`update`/`delete`/`performRefresh` (the sync-pull completion, run after the
+#       shared/family-wide merge), and `CredentialProviderViewController.swift`'s post-fill
+#       self-heal write, full-rebuild recovery path (`runIdentityRebuildIfPending()` -- Plan 43-07
+#       moved this site's own required call from `IdentityStoreSync.republish(` to
+#       `IdentityStoreSync.republishRebuild(`, the combined password+passkey full-vault rebuild
+#       entry point that closes 43-05-SUMMARY.md's deferred cross-type full-replacement collision),
+#       and the NEW registration override (`prepareInterface(forPasskeyRegistration:)`, Plan 43-07's
+#       own single-item self-heal write, `IdentityStoreSync.upsertOnePasskey(`). Each site is
+#       located by its OWN function DECLARATION (a stable, low-drift anchor, per this plan's own
+#       `<read_first>` guidance to "prefer scanning all declarations ... over isolating a region and
+#       trusting the isolation" -- 35-REVIEW's CR-02/CR-03), then a BOUNDED forward line-window (not
+#       brace-depth extraction) is searched for the site's own required call. A bounded window is
+#       sound here specifically because this is a FIXED, ENUMERATED set of known sites with known,
 #       generous gaps to their own neighbours -- never a general "find where a function ends"
 #       scanner, which is exactly the CR-02/CR-03 trap this plan's own `<read_first>` warns against.
 #
@@ -255,12 +260,14 @@ CALL_SITE_LABELS=(
   "VaultStore.performRefresh (sync-pull completion)"
   "CredentialProviderViewController.fillOrCancel (post-fill self-heal write)"
   "CredentialProviderViewController.runIdentityRebuildIfPending (full-rebuild recovery path)"
+  "CredentialProviderViewController.prepareInterface(forPasskeyRegistration:) (registration self-heal write)"
 )
 CALL_SITE_FILES=(
   "$VAULT_STORE"
   "$VAULT_STORE"
   "$VAULT_STORE"
   "$VAULT_STORE"
+  "$CPVC"
   "$CPVC"
   "$CPVC"
 )
@@ -271,16 +278,27 @@ CALL_SITE_ANCHORS=(
   "private func performRefresh() async throws {"
   "private func fillOrCancel(for request: any ASCredentialRequest, entryPoint: String) {"
   "private static func runIdentityRebuildIfPending() async {"
+  "override func prepareInterface(forPasskeyRegistration registrationRequest: any ASCredentialRequest) {"
 )
-CALL_SITE_WINDOWS=(90 100 30 90 140 80)
+# Plan 43-07 (43-PLAN-CHECK.md C1): the seventh entry's window is a GENEROUS UPPER BOUND ONLY --
+# Task 1 deliberately placed this override's declaration ABOVE `runIdentityRebuildIfPending()` (see
+# that function's own anchor above, further down this same file), so a real, later `func`
+# declaration follows it and the primary `next_decl_offset` path (below) is what actually governs
+# this entry's measured extent in practice, never this numeric fallback.
+CALL_SITE_WINDOWS=(90 100 30 90 140 80 90)
 # CR-01 (41-REVIEW.md): the REQUIRED call differs per site -- this is "contract shape, not string
-# proximity". The four `VaultStore` mutation sites and the full-rebuild recovery path each hand
-# the writer "the CURRENT, COMPLETE vault item set" (`republish(sources:)`'s own documented
-# contract), so `IdentityStoreSync.republish(` is the correct, and only correct, call for them.
-# The post-fill self-heal site is different BY DESIGN: it proves reachability for exactly ONE
-# item and must never be able to compute removals against everything else that's published --
-# `IdentityStoreSync.upsertOne(` is a STRUCTURALLY different entry point (it takes one `source:`,
-# never an array) that cannot be handed a delta by construction. Before CR-01's fix this site
+# proximity". The four `VaultStore` mutation sites each hand the writer "the CURRENT, COMPLETE
+# vault item set" (`republish(sources:)`'s own documented contract), so `IdentityStoreSync.republish(`
+# is the correct, and only correct, call for them. The full-rebuild recovery path hands over the
+# CURRENT, COMPLETE set for BOTH types at once (Plan 43-07) -- `IdentityStoreSync.republishRebuild(`
+# is the combined entry point that closes the cross-type full-replacement collision
+# 43-05-SUMMARY.md recorded (calling `republish`/`republishPasskeys` independently on a device
+# where `supportsIncrementalUpdates` is false would make each erase the other's identities).
+# The two self-heal sites (password `fillOrCancel`, passkey `prepareInterface(forPasskeyRegistration:)`)
+# are different BY DESIGN: each proves reachability for exactly ONE item and must never be able to
+# compute removals against everything else that's published -- `IdentityStoreSync.upsertOne(`/
+# `upsertOnePasskey(` are STRUCTURALLY different entry points (each takes one `source:`, never an
+# array) that cannot be handed a delta by construction. Before CR-01's fix the password site
 # called `.republish(sources: [oneItem])`, which satisfied the OLD proximity-only check (it
 # merely grepped for the literal substring `IdentityStoreSync.republish(` anywhere in the window)
 # while still being the exact defect CR-01 names. Requiring the SITE-SPECIFIC call name is what
@@ -291,7 +309,8 @@ CALL_SITE_REQUIRED_CALLS=(
   "IdentityStoreSync.republish("
   "IdentityStoreSync.republish("
   "IdentityStoreSync.upsertOne("
-  "IdentityStoreSync.republish("
+  "IdentityStoreSync.republishRebuild("
+  "IdentityStoreSync.upsertOnePasskey("
 )
 
 VIOLATIONS_B=""

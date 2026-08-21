@@ -12,12 +12,14 @@
 # unconstrained `VaultAPI` usage there is not what T-43-10 is about):
 #
 #   (A) Every `VaultAPI(` CONSTRUCTION site in a scanned file is inside an EXPLICIT, reviewed
-#       allow-list. Ground-truthed against the real tree, THIS session: the allow-list is
-#       currently EMPTY -- nothing under `PasskeyVaultAutoFill/` or `Shared/` constructs a
-#       `VaultAPI` today (Task 1/Task 2 of this plan add the TYPE and its host-side retry caller
-#       only; ContentView.swift's own retry-hook construction is host-only, outside these two scan
-#       roots). Plan 43-07's registration confirmation-flow file is expected to be the FIRST entry
-#       added here, reviewed at that time.
+#       allow-list. Plan 43-07 adds the FIRST entry -- `CredentialProviderViewController.swift`'s
+#       own `prepareInterface(forPasskeyRegistration:)` override, the registration confirmation
+#       flow's real caller, exactly as this file's own header anticipated (`ios/evidence/43/`).
+#       Reviewed: the ONE `VaultAPI(baseURL:tokenProvider:)` construction there lives inside the
+#       post-confirm `Task { }` closure, reads `baseURL` from `VaultAPI.extensionBaseURL()`
+#       (READ-ONLY, 43-06's own scoped capability) and `tokenProvider` from `SessionTokenStore.load()`
+#       (never writes either) -- the same shape 43-06-PLAN.md's own Task 2 retry-hook construction
+#       already established for the host side.
 #
 #   (B) No file reachable from the extension target calls any `VaultAPI` method OTHER than
 #       `createItem` -- `sync`, `deleteItem`, `touchItem`, `updateItem`, `createFolder`,
@@ -65,9 +67,10 @@ for d in "${SCAN_DIRS[@]}"; do
 done
 
 # --- Assertion (A)'s allow-list: exact file paths, reviewed, each with its own justification ----
-# Deliberately EMPTY today -- see this file's own header above for why. Plan 43-07 adds the first
-# entry (its own registration confirmation-flow file) when it wires the first real caller.
-ALLOWLIST=()
+# Plan 43-07: the first, and so far only, real caller -- see this file's own header above.
+ALLOWLIST=(
+  "ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift"
+)
 
 is_allowlisted() {
   local candidate="$1" entry
