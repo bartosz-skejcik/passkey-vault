@@ -1,0 +1,25 @@
+# Plan 43-05, Task 2 -- assertion (A) falsification transcript (ASPasskeyCredentialIdentity term)
+# Run 2026-08-21, `bash scripts/audit-ios-identity-store-chokepoint.sh` at each step.
+
+## Step 1 -- baseline (after adding the WRITE_PATTERN term, before injection)
+
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)
+EXIT: 0
+
+## Step 2 -- injected throwaway rogue writer (ios/PasskeyVault/PasskeyVault/E4305ThrowawayRogueWriter.swift),
+## a bare `ASPasskeyCredentialIdentity(` construction OUTSIDE the allow-list
+
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (A), writer outside the allow-list:
+ios/PasskeyVault/PasskeyVault/E4305ThrowawayRogueWriter.swift:7:        ASPasskeyCredentialIdentity( [identity-store write OUTSIDE the allow-list]
+
+EXIT: 1
+
+## Step 3 -- deleted the throwaway file, re-ran (expect byte-identical PASS to step 1)
+
+$ rm -f ios/PasskeyVault/PasskeyVault/E4305ThrowawayRogueWriter.swift
+$ bash scripts/audit-ios-identity-store-chokepoint.sh
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 6 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)
+EXIT: 0

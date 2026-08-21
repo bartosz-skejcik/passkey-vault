@@ -5401,3 +5401,75 @@ Transcript: `ios/evidence/43/43-04-check-ios-gate.log`.
 sleeping (not a work failure — both Rust/FFI commits had already landed cleanly beforehand). Evidence
 capture and this spike-log entry were completed in a follow-on continuation of the same plan run, no
 task re-done.
+
+## 13. Phase 43, Plan 43-05 — passkey machinery inside FILL-03's choke point (2026-08-21)
+
+`IdentityStoreSync.swift` (`b78a8fe`) gains a full passkey-identity sibling to the existing
+password path: `PasskeyIdentitySource` (a top-level struct, sibling to `VaultIdentitySource`,
+keyed by relying-party id + credential id — no URL/host concept), `upsertOnePasskey(source:)`
+and `republishPasskeys(sources:)` mirroring `upsertOne`/`republish`'s exact CR-01/CR-02 split
+(upsert never diffs/removes, republish always does), and its own persisted diff/removal record
+(`identityPublishedPasskeyKeysKey`) kept structurally separate from the password path's
+`publishedKeysKey` — the plan's own prohibition, since a passkey has no URL/host to collide on
+but mixing the two records would still risk a spurious cross-type removal. `ASPasskeyCredentialIdentity`
+is constructed via the non-refined factory-derived Swift convenience init
+(`ASPasskeyCredentialIdentity(relyingPartyIdentifier:userName:credentialID:userHandle:recordIdentifier:)`),
+confirmed against BOTH `ASPasskeyCredentialIdentity.h` (the `+identityWithRelyingPartyIdentifier:...`
+factory) and the `arm64-apple-ios-simulator.swiftinterface` on this toolchain before writing the
+call — L-1's amended "check both" rule, and L-1's Pitfall 5: the designated init
+(`NS_REFINED_FOR_SWIFT`) is not reachable directly from Swift at all here, so there was no simpler
+form to accidentally reach for instead.
+
+`scripts/audit-ios-identity-store-chokepoint.sh`'s assertion (A) `WRITE_PATTERN` (`33e43d6`) gained
+`ASPasskeyCredentialIdentity\(` as a sixth alternation term, so the gate now polices passkey
+construction exactly like it already polices password construction. `ALLOWLIST` needed no new
+entry. Falsification transcript (green, inject, red, revert, green) run by hand and captured in
+`ios/evidence/43/43-05-chokepoint-falsification.log`: baseline PASS; a throwaway file with a bare
+`ASPasskeyCredentialIdentity(` construction outside the allow-list made the gate FAIL, naming the
+file/line; deleting it restored a byte-identical PASS.
+
+**New test file** `ios/PasskeyVault/PasskeyVaultTests/IdentityStoreSyncPasskeyTests.swift`
+exercises all four `<behavior>` cases against the REAL `ASCredentialIdentityStore.shared` (never
+a mock — L-34's own finding means the read-back API is unreliable on this simulator, so these
+tests assert on `Swift.Result` return values and on the persisted UserDefaults record instead,
+never `credentialIdentities(forService:)`): a valid source saves and returns `.success`; a repeat
+upsert for the same `(rpId, credentialId)` is idempotent (persisted set stays at one entry);
+`republishPasskeys` dropping a previously-published pair computes it as a removal, diffed against
+the passkey-specific persisted set; an empty `credentialId` builds nothing and returns
+`.failure(.nothingToWrite)`. A fifth test asserts the passkey and password persisted-key literals
+are provably distinct. All 5 green, scoped run
+(`-only-testing:PasskeyVaultTests/IdentityStoreSyncPasskeyTests`), positive xcresult count
+asserted (L-30). Transcript: `ios/evidence/43/43-05-swift-tests.log`.
+
+**Deviation (Rule 3, blocking): the AutoFill provider was not elected on the fresh
+`xcodebuild test` simulator clone.** The first scoped run (default parallel-clone destination)
+failed all four behavior tests with `.storeDisabled` — `pluginkit -m -p
+com.apple.authentication-services-credential-provider-ui` showed no `+`-prefixed entry on
+`Clone 1 of PV-iPhone16`. `scripts/ios-autofill-e41.sh`'s own `ensure_provider_enabled`/e41-6
+precedent already names the fix: `xcrun simctl spawn "$udid" pluginkit -e use -i
+cloud.blonie.PasskeyVault.AutoFill` (CLI-only re-election, no host-app launch needed). Re-ran the
+scoped test WITHOUT letting `xcodebuild` spawn a clone
+(`-parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1`) so the
+re-elected state stayed in effect for the test process — all 5 tests then passed. No code change;
+purged the parallel clone afterward (`simctl --set testing shutdown all && delete all`), leaving
+only the base `PV-iPhone16` booted, per this session's own hard rules.
+
+**Known limitation, documented in-code, NOT fixed here (out of this plan's own scope — the call
+site is explicitly deferred to Plan 43-07):** on a device where `state.supportsIncrementalUpdates`
+is `false`, both `republish(sources:)` and `republishPasskeys(sources:)` fall back to
+`replaceCredentialIdentities(with:)`, which replaces the ENTIRE store, not just the type it was
+handed — calling the two independently on such a device would make each call erase the OTHER's
+identities. Plan 43-07's own call site (the first real integration point) must combine password
+and passkey sources into ONE full-replacement write on that branch. This simulator/toolchain
+reports `supportsIncrementalUpdates == true` today (confirmed live in the test log above,
+`mode=incremental`), so the collision is latent, not exercised, by this plan's own tests — a
+design question for 43-07's own `<action>`, not something machinery alone can resolve.
+
+`project.pbxproj` shows a cosmetic `fileSystemSynchronizedGroups` array reordering (same UUIDs,
+same paths, different array order) — an automatic side effect of Xcode's build system picking up
+the new test file under the already-synchronized `PasskeyVaultTests/` directory; no manual edit
+made, no functional change.
+
+This plan builds MACHINERY only, per its own explicit scope boundary; the registration override
+that actually calls `upsertOnePasskey` lands in Plan 43-07, which also extends assertion (B)'s
+`CALL_SITE_*` arrays once that call site exists to enumerate.

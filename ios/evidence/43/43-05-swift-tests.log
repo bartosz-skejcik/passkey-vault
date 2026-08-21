@@ -1,0 +1,42 @@
+# Plan 43-05, Task 1 -- IdentityStoreSyncPasskeyTests, scoped run
+# xcodebuild test -project ios/PasskeyVault/PasskeyVault.xcodeproj -scheme PasskeyVault
+#   -destination "platform=iOS Simulator,id=$(cat /private/tmp/pv16.udid)"
+#   -only-testing:PasskeyVaultTests/IdentityStoreSyncPasskeyTests
+#   -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1
+#   -resultBundlePath /tmp/e43-05-t1.xcresult
+#
+# Deviation noted: the FIRST attempt (default parallel-clone destination) failed all 4
+# behavior tests with `.storeDisabled` -- the AutoFill provider was not elected on the fresh
+# xcodebuild-test clone. Re-elected via `pluginkit -e use -i cloud.blonie.PasskeyVault.AutoFill`
+# (the same CLI-only re-election e41-6's own driving script already established) and re-ran
+# WITHOUT letting xcodebuild spawn a clone (-parallel-testing-enabled NO). Second run below.
+
+◇ Suite IdentityStoreSyncPasskeyTests started.
+◇ Test upsertOnePasskeyWithAValidSourceSavesAndReturnsSuccess() started.
+2026-08-21 23:09:26.236280+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=ok
+✔ Test upsertOnePasskeyWithAValidSourceSavesAndReturnsSuccess() passed after 0.310 seconds.
+◇ Test upsertOnePasskeyTwiceForTheSamePairIsIdempotent() started.
+2026-08-21 23:09:26.267885+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=ok
+2026-08-21 23:09:26.280721+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=ok
+✔ Test upsertOnePasskeyTwiceForTheSamePairIsIdempotent() passed after 0.041 seconds.
+◇ Test republishPasskeysDroppingAPreviouslyPublishedPairComputesARemoval() started.
+2026-08-21 23:09:26.285344+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=state kind=passkey supportsIncrementalUpdates=true
+2026-08-21 23:09:26.293908+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=republish-passkeys kind=passkey status=ok count=1 mode=incremental
+2026-08-21 23:09:26.297606+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=state kind=passkey supportsIncrementalUpdates=true
+2026-08-21 23:09:26.301171+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=republish-passkeys kind=passkey status=ok count=0 mode=incremental
+✔ Test republishPasskeysDroppingAPreviouslyPublishedPairComputesARemoval() passed after 0.020 seconds.
+◇ Test upsertOnePasskeyWithEmptyCredentialIdBuildsNothingAndFails() started.
+2026-08-21 23:09:26.307635+0200 PasskeyVault[39363:11950259] [fill] PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=no-identity-built
+✔ Test upsertOnePasskeyWithEmptyCredentialIdBuildsNothingAndFails() passed after 0.005 seconds.
+◇ Test passkeyPersistedKeyIsDistinctFromThePasswordPersistedKey() started.
+✔ Test passkeyPersistedKeyIsDistinctFromThePasswordPersistedKey() passed after 0.001 seconds.
+✔ Suite IdentityStoreSyncPasskeyTests passed after 0.380 seconds.
+✔ Test run with 5 tests in 1 suite passed after 0.380 seconds.
+
+** TEST SUCCEEDED **
+
+# L-30 vacuous-gate check:
+$ xcrun xcresulttool get test-results summary --path /tmp/e43-05-t1.xcresult --format json | jq '.totalTestCount'
+5
+$ test 5 -gt 0 && echo "GATE: PASS (positive count)"
+GATE: PASS (positive count)
