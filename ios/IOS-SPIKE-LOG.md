@@ -4880,4 +4880,55 @@ human / later phases:
 6. **39-evidence regression → Phase 42:** `SyncDecodeTests.decoding*Body()` are RED at HEAD because
    Phase 40's 6701e61 overwrote `ios/evidence/39/01-server-contract.md`'s fenced JSON bodies (tests
    parse an evidence file that live scripts rewrite — a coupling Phase 42's audit must break).
+
+## 10. Phase 42, plan 42-03 — FFI gate composition, WR-05 closed by construction (2026-08-21)
+
+`scripts/check-ios-gate.sh` gained three sub-gates composing Phase 35's two already-falsifiable FFI
+gates (`scripts/build-ios.sh` plain + `--verify-falsifiable`, and
+`scripts/audit-ffi-opaque-handles.sh`) — `gate_ffi_build`, `gate_ffi_falsifiable`, `gate_ffi_opaque` —
+appended to the composer's `GATES` array after `qa05`. All three invoke the existing scripts (`bash
+<script>`), never reimplement their logic: `grep -c 'scripts/build-ios.sh'` and `grep -c
+'scripts/audit-ffi-opaque-handles.sh'` over the composer both confirm real invocation counts, and
+`grep -v '^\s*#' | grep -c vtool` over the composer is `0` — the slice-check logic lives in exactly
+one place.
+
+**The hole this closes (35-REVIEW.md WR-05), by construction, not by discipline.**
+`audit-ffi-opaque-handles.sh` audits whatever generated Swift bindings an EARLIER build happened to
+leave on disk under `ios/**/build/` (gitignored) — nothing stopped a stale-bindings PASS if a raw-byte
+accessor were added to `crates/pv-ffi/src/` without rebuilding. `gate_ffi_opaque` now asserts,
+POSITIVELY and BEFORE consulting the audit's verdict, that the generated bindings file exists, is
+non-empty, and that no `*.rs` under `crates/pv-ffi/src/` is newer than it (`find ... -newer ... -print
+-quit`, never `find | head` — the same SIGPIPE-under-`set -euo pipefail` reason `build-ios.sh`'s own
+`extract_pv_ffi_object` documents). A stale-bindings state is now `exit 1` naming the specific newer
+source file, not a silent pass-through to the audit.
+
+**Falsification, both at the composer's own `--verify-falsifiable` level (zero mutation — every
+sub-gate's path is overridable via an env var, mirroring `gate_qa05`'s own `QA05_CONTROL_PATH`
+idiom) and, separately, against the REAL artifacts (Task 2's four mutations, transcripts in
+`42-03-SUMMARY.md`):**
+
+- **M1 — missing prerequisite.** `PvFfi.xcframework` moved aside; `--only ffi_falsifiable` failed
+  non-zero, naming the ordering dependency ("the ffi_build sub-gate ... must run first"); restored,
+  green.
+- **M2 — stale bindings, the WR-05 hole itself.** `crates/pv-ffi/src/lib.rs` touched (mtime only, no
+  rebuild); `--only ffi_opaque` failed non-zero, naming the specific stale file and stating the
+  audit's verdict would be about code no longer there — the assertion that distinguishes this
+  composer from simply calling the audit script. Rebuilt, green.
+- **M3 — a real opaque-handle violation.** A raw-byte accessor (`temp_leak_raw_bytes`) added to `impl
+  FfiUserKey`, same shape 35-04/40-04 used; full gate failed non-zero, naming `ffi_opaque` and
+  quoting the generated Swift declaration (`open func tempLeakRawBytes() -> Data {`). Reverted via
+  `git checkout --`, confirmed by `git diff --stat` (empty, not by eye), rebuilt, green.
+- **M4 — the slice gate.** `gate_ffi_falsifiable` delegates to `build-ios.sh --verify-falsifiable`,
+  already self-falsifying (both vtool slice halves + the WR-03 pv-ffi-object guard); captured within
+  every full composer run above. Inherited coverage, not newly proven by this plan — and the device
+  slice's own half of it (35-REVIEW.md WR-10) has never itself been demonstrated able to fail, a gap
+  this plan does not close (recorded for 42-06's register, per DR-42-A: this phase's audit finds and
+  records, it does not repair `build-ios.sh`/`audit-ffi-opaque-handles.sh`'s own open findings).
+
+Full gate (`bash scripts/check-ios-gate.sh`) verified green end to end both before and after every
+mutation, `git rev-parse HEAD` unchanged across the whole task (`0cca540...`), and `git diff --stat --
+scripts/build-ios.sh scripts/audit-ffi-opaque-handles.sh` empty throughout — neither pre-existing gate
+script was touched. Full transcripts:
+`.planning/phases/42-standard-dowodu-bramka-qa-i-ci-dla-ios/42-03-SUMMARY.md` (not committed from this
+worktree, per the standing QA-05 convention this record itself documents).
 7. §3b hardware block stands: all AutoFill proof is simulator-only until the paid membership.
