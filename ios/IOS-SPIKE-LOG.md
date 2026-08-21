@@ -5482,3 +5482,67 @@ was touched by this plan; `ffi_build`/`ffi_falsifiable`/`ffi_opaque` ran as part
 gate's own standing checks, same posture as 43-02's/43-04's own entries above. Parallel simulator
 clones purged after both this run and the earlier scoped `IdentityStoreSyncPasskeyTests` run,
 leaving only the base `PV-iPhone16` booted. Transcript: `ios/evidence/43/43-05-check-ios-gate.log`.
+
+### DR-43-A — the AutoFill extension gains scoped network POST capability: **DECIDED — `VaultAPI.createItem` only, structurally enforced**
+
+Recorded in the SAME OPT-0x/EXT-10 rigor as this project's own decision records (43-PLAN-CHECK.md
+C2): a decision is stated, rejected alternatives are named and rejected on their own merits, and
+residual risk is stated plainly. This is the FIRST time the AutoFill extension process makes a
+real network call in this project's history — Phase 41's password fill is a purely local read of
+the host's persisted ciphertext cache; nothing before this plan ever gave the extension a
+`URLSession` call.
+
+**1. Decision.** Grant the extension exactly one new capability: `VaultAPI.createItem` over HTTPS,
+reusing the host's ALREADY-established session token (`SessionTokenStore`, the same shared
+`keychain-access-groups` item both targets already declare, Phase 36) and the host's already-
+configured server URL (`ServerSettings`' new App Group companion copy, Plan 43-06, Task 1). The
+extension never mints a new credential, never requests one, and never gains any OTHER `VaultAPI`
+method — enforced structurally by `scripts/audit-extension-network-scope.sh` (Task 3, this plan),
+not by convention or comment alone. Registration's own UI/ceremony wiring (Plan 43-07) is the
+first real caller; this plan builds and proves the capability, never uses it for anything itself.
+
+**2. Rejected alternative: route the item-creation POST through the host app instead** (the
+extension writes a pending record only, and the host app performs the ONLY network call, on its
+next launch or foreground). Rejected because it delays server-side visibility of a freshly
+registered passkey by an unbounded, user-dependent interval — until the user next happens to open
+the host app — which would make ROADMAP SC4's "visible server-side" proof flaky and slow rather
+than immediate. `PendingProviderItemStore` (Task 2, this plan) is kept anyway, but strictly as the
+FAILURE-PATH self-heal for a process kill mid-POST, never as the primary path.
+
+**3. Rejected alternative: a second, extension-scoped API credential**, minted and rotated
+independently of the host's own session. Rejected because it would be a SECOND secret to manage,
+rotate, and revoke for a capability that is already a strict SUBSET of what the host's own session
+token authorizes — reusing the existing token via the existing shared keychain-access-group is
+simpler and has no larger blast radius than what already exists today: the extension already
+reads and decrypts full vault contents under this same session's authority for the password/
+passkey fill path (Phase 41/43-05). A second credential would add operational cost (rotation,
+revocation, a second place a leak could originate) without narrowing risk anywhere real.
+
+**4. Residual risk, accepted, stated plainly (T-43-11).** The session-token Keychain item is now
+readable by a second process — the AutoFill extension, not merely the host app. Accepted because
+both targets ALREADY declare the IDENTICAL `keychain-access-groups` entitlement value (Phase 36);
+this task adds no new entitlement and no new secret. It makes an ALREADY-shared secret reachable
+by code that previously had no reason to read it, not a new secret exposure surface. Bounded
+further by the network-scope gate (Task 2/3: one construction site, one method) and the leak proof
+(Task 3's `VaultAPILeakProofTests`, asserting the POST body carries ciphertext only).
+
+**5. Load-bearing implementation deviation from this plan's own authored shape, noted here per
+this plan's own `<read_first>` instruction.** `VaultAPI.swift` does NOT have zero host-app-only
+dependencies as anticipated ("unlikely, but verify") — it throws `PvApiError` throughout its
+`send`/`requireStatus` plumbing (which `createItem` itself calls) and its `sync(since:)` method
+returns `SyncPullResult`. Both types lived in host-only files (`Core/PvApiClient.swift`,
+`Sync/SyncModels.swift`). Rather than trimming `VaultAPI`'s method surface (which Task 3's own gate
+design already assumes is NOT trimmed — its assertion (B) is written to catch a call to any OTHER
+`VaultAPI` method, which presumes those methods are physically present and merely un-called), both
+dependency types were relocated alongside it: `PvApiError` to a new `Shared/PvApiError.swift`, and
+the whole of `SyncModels.swift` to `Shared/SyncModels.swift` (its own `CachedSnapshot` bridging
+extensions were already safe to relocate -- `CachedSnapshot` itself lives in `PvShared/`, already
+synchronized into both targets). Every existing host call site (`VaultStore.swift`,
+`FolderStore.swift`, `SyncClient.swift`, `ContentView.swift`, `LiveSyncProbe.swift`,
+`PvApiClient.swift`) compiles unchanged -- same module, unqualified references, no import changes.
+This IS the "extract the minimal surface... and note the deviation" contingency this plan's own
+`<read_first>` named in advance, resolved in the direction Task 3's own gate design requires.
+
+**Verification, re-run at commit time.** `grep -q "DR-43-A" ios/IOS-SPIKE-LOG.md` — this section.
+`caffeinate -i bash scripts/build-ios.sh` succeeds for both targets after the `VaultAPI.swift`/
+`SessionTokenStore.swift`/`PvApiError.swift`/`SyncModels.swift` relocation.

@@ -217,5 +217,15 @@ enum ServerSettings {
             AccountEnvelopeCache.clear()
         }
         UserDefaults.standard.set(validated.absoluteString, forKey: userDefaultsKey)
+        // Plan 43-06, Task 1 (DR-43-A): an ADDITIONAL, read-only companion copy for the
+        // AutoFill extension -- `.standard` is disk-backed but per-BUNDLE-ID, and the host app
+        // and `.AutoFill` extension are different bundle ids, so `.standard` alone never reaches
+        // the extension process. This does not replace `.standard` as the host's own primary
+        // read path (`resolved`/`resolved(in:)` above, unchanged) -- it is a second write of the
+        // SAME value, to the SAME App Group suite `IdentityStoreSync.swift` already uses, so
+        // `VaultAPI.extensionBaseURL()` can read it. The extension never calls `store(_:)` itself.
+        UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault")?.set(
+            validated.absoluteString, forKey: userDefaultsKey
+        )
     }
 }

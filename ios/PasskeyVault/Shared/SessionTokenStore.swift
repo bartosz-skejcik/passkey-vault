@@ -1,6 +1,6 @@
 //
 //  SessionTokenStore.swift
-//  PasskeyVault
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
 //
 //  Phase 37 (konto-unlock-hasłem-i-biometria), plan 37-04. The session
 //  token: a SECOND, deliberately weaker Keychain secret, deliberately kept
@@ -8,6 +8,13 @@
 //  secrets have different classes, different flags, and different failure
 //  semantics; collapsing them into one generic wrapper is how that
 //  asymmetry gets lost in a later refactor.
+//
+//  Moved from `PasskeyVault/PasskeyVault/Core/Keychain/` into `Shared/` by Plan 43-06, Task 1 --
+//  code-free move (this file sets no explicit `kSecAttrAccessGroup`, confirmed by this task's own
+//  precondition check), reusing the SAME `keychain-access-groups` entitlement value both targets
+//  already declare (Phase 36). `VaultAPI.createItem`'s new extension-process caller (Plan 43-07)
+//  reads the SAME Keychain item this file already wrote for the host, never a second one
+//  (DR-43-A, `ios/IOS-SPIKE-LOG.md` §1). No code below changed.
 //
 //  ACC-03 (ios/IOS-SPIKE-LOG.md §1, Secret B) / DR-37-B is the single
 //  source of truth: `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, no

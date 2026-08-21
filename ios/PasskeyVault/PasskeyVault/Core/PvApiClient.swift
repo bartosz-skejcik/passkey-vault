@@ -20,37 +20,11 @@
 
 import Foundation
 
-/// Typed, non-leaking error surface for `PvApiClient`. `.invalidCredentials`
-/// carries no hint about which of email/password was wrong (T-37-08) -- it
-/// is the single case a 401 from ANY `pv-server` auth route maps to.
-enum PvApiError: Error, CustomStringConvertible {
-    /// A 401 from any auth route. Deliberately hint-free.
-    case invalidCredentials
-    /// Any other non-2xx/non-401 response, carrying the HTTP status and the
-    /// server's own `{"error": "<message>"}` body (or a fallback string when
-    /// the body did not parse as that shape). `AccountService.register`
-    /// inspects `status == 409` here to detect the ACC-01 concurrency edge.
-    case httpError(status: Int, message: String)
-    /// The response body did not decode into the shape this client expects
-    /// -- a genuine wire-contract mismatch, never silently swallowed.
-    case unexpectedResponse(String)
-    /// `URLSession` itself failed (no network, DNS, TLS, etc.) before an
-    /// HTTP response was ever received.
-    case network(Error)
-
-    var description: String {
-        switch self {
-        case .invalidCredentials:
-            return "Invalid email or password."
-        case let .httpError(status, message):
-            return "Server error (\(status)): \(message)"
-        case let .unexpectedResponse(message):
-            return "Unexpected server response: \(message)"
-        case let .network(error):
-            return "Network error: \(error.localizedDescription)"
-        }
-    }
-}
+/// `PvApiError` (the typed error surface this file's own `send`/`requireStatus` throws) moved to
+/// `Shared/PvApiError.swift` by Plan 43-06, Task 1 -- `VaultAPI.swift`'s own move into `Shared/`
+/// (reachable from `PasskeyVaultAutoFill`) needed this type visible there too, and it carries no
+/// host-app-only dependency, so its declaration relocated rather than being duplicated. Same
+/// module, unqualified reference below is unchanged.
 
 /// Thin `URLSession` wrapper over `pv-server`'s `/api/auth/*` routes.
 /// Stateless (no stored session token) -- every authenticated call takes its

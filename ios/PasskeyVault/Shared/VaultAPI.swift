@@ -1,10 +1,21 @@
 //
 //  VaultAPI.swift
-//  PasskeyVault
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
 //
 //  Phase 38 (pełny interfejs vaulta), plan 38-02. The vault half of the REST
 //  contract, sibling to `Core/PvApiClient.swift`'s auth half, against the
 //  SAME unmodified `pv-server`.
+//
+//  Moved from `PasskeyVault/PasskeyVault/Vault/` into `Shared/` by Plan 43-06 (OPT-03), Task 1 --
+//  the SAME `IdentityStoreSync.swift`/41-04 technique (this project's own established cross-target
+//  folder), so the AutoFill extension's own registration call site (Plan 43-07) can reach the SAME
+//  `createItem` this file already defines, rather than a second, divergent HTTP client. This is
+//  the FIRST time the extension gains any network capability at all (DR-43-A, `ios/IOS-SPIKE-LOG.md`
+//  §1) -- scoped, by `scripts/audit-extension-network-scope.sh` (43-06, Task 3), to `createItem`
+//  only. `PvApiError` (thrown throughout this file's `send`/`requireStatus`) moved alongside to
+//  `Shared/PvApiError.swift` in the SAME commit, for the SAME reason -- see that file's own header.
+//  Every method below is unchanged from its pre-move shape; only its location and `PvApiError`'s
+//  location changed.
 //
 //  DR-38-C (`ios/IOS-SPIKE-LOG.md` §1a) governs this file: `enc_key`,
 //  `enc_data` and `enc_name` are `String` on BOTH sides and are moved through
@@ -104,6 +115,21 @@ struct VaultAPI {
     /// swapped from inside a test. Production call sites never pass this
     /// argument, so nothing about the real network path changes.
     var session: URLSession = .shared
+
+    /// Plan 43-06, Task 1. READ-ONLY: the AutoFill extension's own way to learn which server the
+    /// host has configured, without ever calling `ServerSettings.store(_:)` or any write path --
+    /// that boundary is stated as a prohibition in this plan's own frontmatter. Reads the SAME
+    /// App Group companion copy `ServerSettings.store(_:)` now also writes (`"pv.server.url"`,
+    /// `group.cloud.blonie.PasskeyVault` -- the identical suite `IdentityStoreSync.swift` already
+    /// uses). Returns `nil`, never a hardcoded default, when nothing has been written yet -- a
+    /// caller can then distinguish "no server configured" from a real, resolved URL.
+    static func extensionBaseURL() -> URL? {
+        guard
+            let raw = UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault")?.string(forKey: "pv.server.url"),
+            let url = URL(string: raw)
+        else { return nil }
+        return url
+    }
 
     private static let userAgent = "PasskeyVault-iOS/1.0 (vault, 38-02)"
 

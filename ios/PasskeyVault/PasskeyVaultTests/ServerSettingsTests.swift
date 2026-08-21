@@ -40,6 +40,10 @@ struct ServerSettingsTests {
     /// same simulator) never inherits this file's fixture URL.
     private static func resetPersistedState() {
         UserDefaults.standard.removeObject(forKey: "pv.server.url")
+        // Plan 43-06, Task 1: the App Group companion copy `store(_:)` now also writes -- reset
+        // alongside `.standard` so this file's fixture URLs never leak into a later suite's own
+        // `VaultAPI.extensionBaseURL()` read.
+        UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault")?.removeObject(forKey: "pv.server.url")
         SessionTokenStore.clear()
         UkEnvelopeStore.delete()
     }
@@ -227,5 +231,34 @@ struct ServerSettingsTests {
 
         #expect(SessionTokenStore.load() != nil)
         #expect(Self.envelopeItemExists())
+    }
+
+    // MARK: - App Group companion copy (Plan 43-06, Task 1, DR-43-A)
+
+    /// The live write-then-read proof this task's own acceptance criteria require: `store(_:)`
+    /// writes to `.standard` (unchanged primary path) AND, additionally, to the App Group suite
+    /// -- read back here via a SEPARATE, direct `UserDefaults(suiteName:)` access (never through
+    /// `ServerSettings` itself), confirming the value matches byte-for-byte. `VaultAPI
+    /// .extensionBaseURL()` is asserted against the SAME write, proving the extension's own read
+    /// path resolves to the identical URL a real process boundary would see.
+    @Test func storeWritesTheAppGroupCompanionCopyByteForByte() throws {
+        Self.resetPersistedState()
+        defer { Self.resetPersistedState() }
+
+        try ServerSettings.store(URL(string: "https://vault.example.com")!)
+
+        let groupDefaults = try #require(UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault"))
+        #expect(groupDefaults.string(forKey: "pv.server.url") == "https://vault.example.com")
+        #expect(VaultAPI.extensionBaseURL()?.absoluteString == "https://vault.example.com")
+    }
+
+    /// Before ANY `store(_:)` call this session, a caller must be able to tell "no server
+    /// configured yet" apart from a real URL -- `extensionBaseURL()` returns `nil`, never a
+    /// hardcoded fallback, when the App Group key has never been written.
+    @Test func extensionBaseURLIsNilWithNothingStored() {
+        UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault")?.removeObject(forKey: "pv.server.url")
+        defer { UserDefaults(suiteName: "group.cloud.blonie.PasskeyVault")?.removeObject(forKey: "pv.server.url") }
+
+        #expect(VaultAPI.extensionBaseURL() == nil)
     }
 }

@@ -1,9 +1,19 @@
 //
 //  SyncModels.swift
-//  PasskeyVault
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
 //
 //  Phase 39 (synchronizacja-i-cache-offline), plan 39-03. THE single
 //  decoding site for `GET /api/sync`'s two-shape response.
+//
+//  Moved from `PasskeyVault/PasskeyVault/Sync/` into `Shared/` by Plan 43-06, Task 1 -- a
+//  load-bearing deviation this plan's own text explicitly anticipated: `VaultAPI.swift`'s move
+//  into `Shared/` (this same commit) needed `SyncPullResult` (used by `VaultAPI.sync(since:)`)
+//  visible in the `PasskeyVaultAutoFill` module too, or the type would fail to compile there. This
+//  file has zero host-app-only dependencies beyond `PvShared`'s own `CachedSnapshot` (below),
+//  which is ALREADY synchronized into both targets (`PvShared/CachedSnapshot.swift`) -- so this is
+//  a pure, code-free relocation, not a rewrite. The extension process never calls `sync(since:)` or
+//  constructs a `SyncPullResult` itself (`scripts/audit-extension-network-scope.sh` scopes it to
+//  `createItem` only); this type is compiled into that module only because `VaultAPI.swift` is.
 //
 //  Moved here from Phase 38's `Vault/VaultAPI.swift`, where `SyncResponse`
 //  (renamed `SyncPullResult` below) and its two row types originally lived
