@@ -1,0 +1,20 @@
+[package]
+name = "rp-fixture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "TEST-ONLY fixture: an independent, real webauthn-rs (kanidm) Relying Party, exposed over HTTP for cross-process/cross-language reuse (iOS Safari, Chromium/Playwright, a future native-app harness). NEVER shipped in the product's Docker image -- the Dockerfile builds only pv-server/web (see its own COPY list); this crate is a workspace member purely so `cargo build -p rp-fixture` is reachable, it is not a production dependency of anything."
+
+[dependencies]
+axum = "0.8"
+# Exact pin matching pv-server's own (crates/pv-server/Cargo.toml) -- no
+# extra features needed here: this fixture holds RegistrationState/
+# AuthenticationState in-process memory for the lifetime of one run, never
+# serializes them across a request boundary, so pv-server's own
+# `danger-allow-state-serialisation` feature is NOT needed.
+webauthn-rs = "=0.5.5"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
