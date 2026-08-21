@@ -5,9 +5,11 @@
 # `ios/PasskeyVault/{PasskeyVault,PasskeyVaultAutoFill,Shared}`:
 #
 #   (A) The identity store is WRITTEN from an EXACT, explicit allow-list of files, never anywhere
-#       else. "Written" is scoped to the five call shapes that actually mutate
+#       else. "Written" is scoped to the six call shapes that actually mutate
 #       `ASCredentialIdentityStore` or construct an entry FOR mutation -- `ASPasswordCredentialIdentity(`
-#       construction, and `.saveCredentialIdentities(`/`.removeCredentialIdentities(`/
+#       construction, `ASPasskeyCredentialIdentity(` construction (Plan 43-05, OPT-03: the passkey-
+#       identity machinery inside the SAME choke point, `IdentityStoreSync.swift`), and
+#       `.saveCredentialIdentities(`/`.removeCredentialIdentities(`/
 #       `.replaceCredentialIdentities(`/`.removeAllCredentialIdentities(` calls -- never a bare
 #       READ (`ASCredentialIdentityStore.shared.state()`/`.getState`/`.credentialIdentities(forService:)`
 #       alone, with no write pattern anywhere in the same file), because FILL-03's actual failure
@@ -211,7 +213,12 @@ if [ "${#SWIFT_FILES[@]}" -eq 0 ]; then
 fi
 
 VIOLATIONS_A=""
-WRITE_PATTERN='ASPasswordCredentialIdentity\(|\.saveCredentialIdentities\(|\.removeCredentialIdentities\(|\.replaceCredentialIdentities\(|\.removeAllCredentialIdentities\('
+# Plan 43-05 (OPT-03): added `ASPasskeyCredentialIdentity\(` as a sixth alternation term --
+# `IdentityStoreSync.swift`'s new passkey-identity machinery constructs this type through the
+# SAME choke point, so assertion (A) must police it exactly like the password-side construction
+# it already policed. `ALLOWLIST` needs no new entry: `IdentityStoreSync.swift` is already
+# allow-listed and is the only file that constructs it (see this file's own header above).
+WRITE_PATTERN='ASPasswordCredentialIdentity\(|ASPasskeyCredentialIdentity\(|\.saveCredentialIdentities\(|\.removeCredentialIdentities\(|\.replaceCredentialIdentities\(|\.removeAllCredentialIdentities\('
 
 for f in "${SWIFT_FILES[@]}"; do
   if file_has_unsupported_string_literal "$f"; then
