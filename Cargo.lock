@@ -2215,6 +2215,7 @@ name = "pv-provider"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "ciborium",
  "coset",
  "passkey-authenticator",
  "passkey-client",

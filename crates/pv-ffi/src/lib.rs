@@ -87,6 +87,7 @@
 //! | `FfiInviteChannel::wrap_collection_key` | `Result<String,_>` | serde_json — złapane jako `Err` (40-04) |
 //! | `FfiInviteChannel::unwrap_collection_key` | `Result<Arc<FfiCollectionKey>,_>` | serde_json/AAD mismatch — złapane jako `Err` (40-04) |
 //! | `provider_get_assertion`        | `Result<FfiProviderAssertionResult,_>` | — `?`-propagowane tylko z `pv_provider::get_assertion_ctap2`, ten sam kształt co `wrap_user_key` (43-02) |
+//! | `provider_make_credential`      | `Result<FfiProviderRegistrationResult,_>` | — `?`-propagowane tylko z `pv_provider::make_credential_ctap2`, ten sam kształt co `provider_get_assertion` (43-04) |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -175,7 +176,10 @@ pub use sharing::{
 // a NEW `From<pv_provider::PvProviderError> for FfiError` impl
 // (`error.rs`), the exact conversion the IOS-06 decision record anticipated.
 pub mod provider;
-pub use provider::{provider_get_assertion, FfiProviderAssertionResult};
+pub use provider::{
+    provider_get_assertion, provider_make_credential, FfiProviderAssertionResult,
+    FfiProviderRegistrationResult,
+};
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real
