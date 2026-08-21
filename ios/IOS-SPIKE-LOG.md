@@ -1663,6 +1663,61 @@ empirically re-verified against a real device-sleep cycle in either fix pass (do
 requires suspending the host Mac mid-session, which neither pass automated unattended) — carried
 forward as a `human_verification_required` item on both REVIEW.md iterations.
 
+**AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): this record's own
+requested falsifier arrived, live, on Bartek's real iPhone 16 (iOS 27) — `kern.bootsessionuuid` is
+UNREADABLE from this app's sandboxed process, on every call, unconditionally, regardless of
+entitlements.** The paragraph above already flagged this `[ASSUMED]`/UNVERIFIED and asked for a
+real-device falsifier "if `kern.bootsessionuuid` is unreachable or unstable inside the `.appex`
+sandbox, this record must be amended in place, not quietly worked around" — this is that amendment,
+prompted by a production bug report rather than a planned verification task. L-35's own simulator
+measurement (below) was correct as far as it went; it simply could never have caught this, because
+the simulator's own `kern.bootsessionuuid` resolves to the HOST MAC's boot session, not a
+per-app-sandbox value, so the simulator was never capable of exercising "the sysctl fails" at all.
+
+**Consequence, and the fix:** before this amendment, `SessionLifecycle.recordHostUnlock()` papered
+over a `nil` `currentBootSessionId()` with a fake `"unknown-boot-session"` placeholder string on
+write, and `checkAndExpireIfNeeded` treated a `nil` `currentBootSessionId()` on READ as a genuine,
+evaluated boot-identity refusal (falling into the same branch as an actual mismatch) — on real
+hardware, where the sysctl fails on EVERY call, this made every foreground check read `.expired`
+unconditionally, regardless of whether the session was otherwise perfectly healthy. Routed through
+`ContentView`'s own `.expired` → `performLock()` handling (d8d9c9b, the FIRST Face-ID-loop fix,
+which remains correct and necessary but was not sufficient for this device), this produced an
+infinite Face-ID relock loop: unlock → marker written with the placeholder → foreground check reads
+it back, cannot confirm the boot leg, wrongly reads `.expired` → relock → auto-prompt → unlock →
+repeat forever. Confirmed live, verbatim, in Bartek's own Xcode console capture.
+
+**`LockMarker.bootSessionId` is `Optional<String>` as of this fix** — `nil` now means exactly "this
+leg is unavailable", never a placeholder that LOOKS like real boot-continuity data.
+`LockMarker.isValid(currentBootSessionId:...)` refuses on the boot-identity leg ONLY when BOTH the
+stored and current values are present AND disagree — a missing value on either side now falls
+through to `isUnlockedLazily`'s own idle-window/absolute-ceiling arithmetic instead, never treated
+as a positive expiry verdict on its own. This is the identical principle `LockState.mustRelock`
+already established at the ROUTING layer (d8d9c9b) — applied one layer down, at the INPUT to
+`LockState` itself: a missing input must never be misclassified as a positive verdict, wherever in
+the pipeline it occurs.
+
+**What still detects a real reboot when the boot-id leg is unavailable, and what does not, stated
+plainly:** `LockMarker.monotonicNow()` is backed by `mach_continuous_time()`, which resets to ~0 on
+every boot — so a STORED monotonic anchor (`monotonicAtUnlock`/`hostUnlockUptime`) greater than the
+CURRENT `now` reading is independent proof a reboot occurred (no in-boot reading can ever exceed a
+later one), and `isUnlockedLazily`'s own existing rewound-clock guard (T-41-35) already implements
+exactly this comparison — it was simply never previously understood as ALSO serving as a reboot
+detector, only as a rewound-`Date()` guard, since at the time it was written `bootSessionId` was
+assumed reliable and this guard's reboot-detecting role never had to carry weight on its own. This
+signal has a real, honest, and NAMED asymmetry: it can PROVE a reboot happened (`now` less than the
+stored anchor) but cannot prove one did NOT happen — a device that reboots and then stays up longer
+than the stored anchor's own magnitude before the next check passes this arithmetic as if nothing
+happened. **This is a genuine, accepted weakening of DR-41-C's original cross-reboot guarantee,
+specifically and only in the boot-leg-unavailable case (i.e. real hardware, as things stand today)**
+— stated here rather than silently assumed away, per this record's own established discipline.
+Investigated, per the debugging session's own instruction, whether `sysctl kern.boottime` (a
+DIFFERENT sysctl — the wall-clock boot timestamp, not the per-boot UUID) might be readable from a
+sandboxed real-iOS process where `kern.bootsessionuuid` is not: no real device was available in
+this debugging session to test it empirically, and no prior evidence exists in this log either way.
+Deliberately NOT added as a new dependency in this fix specifically because it could not be
+verified here — a conservative choice, not a claim that it would fail. A candidate for a future,
+properly device-tested plan, not this one.
+
 ### Restated success criteria for Phase 41
 
 Both restatements are forced by `41-RESEARCH.md` F1 (SC3) and Pitfall 4 (SC2). Quoted verbatim first,
@@ -4016,6 +4071,23 @@ value. 41-06-SUMMARY.md records this honestly rather than letting E41-6's PASS b
 DR-41-C's cross-reboot design; Plan 41-07's own clock legs (already flagged `[ASSUMED]`/UNVERIFIED
 in `ios/IOS-SPIKE-LOG.md` §1i) are the section that must carry this caveat forward, not this one.
 
+**AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21) — the real-device half
+this finding's own point 2 flagged as unmeasured is now measured, and the inference drawn from the
+simulator side alone was wrong.** On a real iPhone 16 (iOS 27), `kern.bootsessionuuid` is not merely
+"changes on a real reboot where the simulator's copy would not" (the framing this landmine used) —
+it is UNREADABLE from this app's sandboxed process, full stop: `sysctlbyname("kern.bootsessionuuid",
+...)` fails on EVERY call, every entry point, confirmed live via `recordHostUnlock()`'s own
+`PVLOCK|stage=host-unlock bootSessionId=unknown-boot-session` log line (the pre-fix fallback
+placeholder) appearing on every single real unlock in Bartek's device capture. The simulator
+resolving this sysctl successfully (to the host Mac's own boot session) was never evidence the
+sysctl is READABLE in a real app-extension-style sandbox at all — the simulator process is not
+sandboxed the way a real device app is, so this landmine's own point 2 could only ever have measured
+"does the VALUE change", never "is the READ even possible", and the two turned out to have different
+answers on real hardware. The fix this amendment accompanies
+(`.planning/debug/faceid-relock-loop-bootsession.md`, DR-41-C's own §1i amendment above) makes
+`LockMarker.bootSessionId` optional and treats an unreadable boot leg as a missing input, never a
+verdict — see that record for the full mechanism and the fix.
+
 ### L-36 -- `TEST_RUNNER_<VAR>` does not reach the XCTest UI-runner process on this toolchain; `xcodebuild test`'s per-run env-var passthrough for XCUITest scenario switching does not work the way its name implies
 
 **Found 2026-08-20, Phase 41, Plan 41-07, Task 2 (E41-4).** `xcodebuild test ... TEST_RUNNER_PV_UITEST_E41_4_EXPECT=expired` is Apple's documented mechanism for injecting an env var into the XCTest RUNNER process (distinct from `XCUIApplication.launchEnvironment`, which only reaches the LAUNCHED APP under test, not the test bundle's own process) — the naming and Apple's own docs both say this SHOULD let one test method branch its own assertion per invocation. Measured directly: a test method that read
@@ -4076,6 +4148,89 @@ was ever written (E2(a)), and the installed hook file itself was then executed d
 that branches its behaviour on branch name, worktree path, or a `$PWD` string match. That shape
 cannot generalise to a hooks directory shared by worktrees it does not know about in advance, and
 is the exact defect class this landmine documents avoiding.
+
+### L-40 -- "a missing input classified as a verdict" is now a TWICE-recurring defect shape in the
+### lock-session subsystem alone, at two different layers of the same computation
+
+**Found 2026-08-21, `.planning/debug/faceid-relock-loop-bootsession.md`, the SECOND Face-ID relock
+loop root-caused in this subsystem in as many days.** d8d9c9b (`.planning/debug/faceid-unlock-loop.md`,
+2026-08-20) fixed `checkAndExpireIfNeeded` collapsing its own tri-state `LockState`
+(`.unlocked`/`.expired`/`.indeterminate`) to a `Bool` at the ROUTING layer — an unreadable marker
+(`.indeterminate`, a missing INPUT to the routing decision) was treated identically to a genuine,
+evaluated `.expired` verdict, and both drove `performLock()`. This debug session found the
+IDENTICAL shape one layer INSIDE that same function, at the INPUT to `LockState` itself: a `nil`
+`LockMarker.currentBootSessionId()` (a missing input to the boot-identity comparison, real on
+hardware where `kern.bootsessionuuid` is unreadable) was treated identically to a genuine,
+both-sides-present mismatch, and both produced a positive `.expired` verdict. Same class of bug,
+same subsystem, same symptom (an infinite Face-ID relock loop), found and fixed twice, one layer
+apart, within 24 hours.
+
+**Why this recurred instead of being caught once:** the first fix's own review discipline
+(WR-03/REQUIRED FIX #1, `.planning/debug/faceid-unlock-loop.md`) explicitly named the PRINCIPLE
+("failing CLOSED on an unreadable marker ... is correct; DELETING the key artifact on an
+inconclusive read is not") but the fix itself was scoped to the ONE call site that principle was
+found to be violated at (`checkAndExpireIfNeeded`'s own return value). The principle was never
+generalised into a standing check applied to every OTHER place in the same function (or file, or
+subsystem) where an `Optional` result feeds a binary decision — `currentBootSessionId()`'s own `nil`
+case, sitting three lines below the exact code the first fix touched, was not re-examined against
+the very principle that fix had just established.
+
+**The generalisable check, named so it can be applied prophylactically rather than rediscovered a
+third time:** wherever a function returns `Optional` (or any tri-state/richer type collapsing to
+"unknown"), and that result feeds a binary/verdict-producing decision, ask explicitly: **does the
+"could not determine" case take the SAME branch as either genuine outcome, or does it have its own,
+distinct handling?** If a missing input silently rides along one of the two positive branches,
+that is this defect shape, regardless of which layer of the computation it occurs at. Both
+instances in this subsystem were caught only by a REAL device log — neither was caught by review,
+by a type system (both were `Bool`/`String`, not `Optional`/enum, until each fix made them so), or
+by a test (the simulator cannot reproduce either: `.indeterminate` requires an unresolvable App
+Group, `nil` boot-id requires a real device sandbox — neither exists on the simulator, L-35's own
+finding above). The recurrence guard is now `Optional<String>` on `bootSessionId` itself plus the
+two DEBUG-only force-unavailable test seams (`forceSharedContainerUnresolvableForTesting`,
+`forceBootSessionIdUnavailableForTesting`) that make BOTH missing-input cases deterministically
+reproducible without real hardware — see `LockMarkerTests.swift`'s own coverage of both.
+
+**Also examined from the same live device log, recorded rather than left to ride along silently
+(orchestrator's own instruction):**
+
+1. **`PVFILL|E41-2|stage=build-identity status=skipped-unparseable-url` ×5 on every republish.**
+   Live-probed `OriginNormalize.host(fromURLString:)` against every realistic input this line can
+   see: bare host, `host:port` (WR-04's own fix, already correct), an IP and IP:port, `mailto:` —
+   all parse correctly. The cases that legitimately return `nil` are NOT parser bugs: an empty/blank
+   URL on a `.login` item (`identitySources(from:)`, `VaultStore.swift`, already excludes every
+   other content case — `.note`/`.totp`/`.card`/`.identity` — upstream, so a blank-URL skip here is
+   specifically a login item with no URL filled in) and a non-http(s) custom URL scheme with no
+   domain-shaped authority (`otpauth://`, `steam://`, a bespoke app callback) that could never be an
+   `ASCredentialServiceIdentifier(type: .domain)` in the first place — and `.totp` items never even
+   reach this code path (filtered upstream by content case, confirmed by reading `ItemFields.swift`).
+   Both are routine, not defects. **Fixed:** `IdentityStoreSync.swift`'s own log line downgraded
+   `.log` → `.debug` — still diagnosable, no longer reading as if 5 of Bartek's 323 real items were
+   silently failing something.
+
+2. **`republish status=ok count=323 mode=incremental` on EVERY foreground transition, resaving all
+   323 identities each time.** Read `IdentityStoreSync.republishIncremental` in full: it already
+   diffs REMOVALS correctly (`previousKeys.subtracting(desiredKeys)`, only removing what actually
+   disappeared) but unconditionally calls `saveWithRetry(desired)` with the ENTIRE current set
+   every time, never computing the SAME diff (`desiredKeys.subtracting(previousKeys)`) on the
+   ADD/SAVE side — the infrastructure for a cheap fix already exists (the `PublishedKey` `Set`
+   this file already persists), the diffing logic is a straightforward mirror of what removals
+   already do, and `PublishedKey` already deliberately excludes `rank` from identity (this file's
+   own doc comment), so the same exclusion applies consistently on both sides. **Not implemented in
+   this debug session**, deliberately: zero existing unit-test coverage exercises
+   `republishIncremental` at all (`ASCredentialIdentityStore.shared.state().isEnabled` is false in
+   every unit-test process, confirmed by reading `IdentityStoreSyncPendingFlagTests.swift`), so
+   verifying a change here safely requires a full live `AutoFillIdentityStoreUITests`/E41-2 harness
+   run, which this session's own scope (the relock loop) did not warrant extending into. Filed here,
+   with the exact fix shape identified, as a scoped candidate for a future dedicated plan — not a
+   silent omission.
+
+3. **Favicon fetch to `https://192.168.9.4/favicon.ico` fails with "Local network prohibited".**
+   `FaviconLoader.swift`'s own header already documents this class of failure as expected and
+   silent (falls back gracefully, `favicon(forHostname:)`'s own doc comment: "a missing/broken
+   favicon is an entirely expected, silent case"). A self-hosted vault reachable only via a LAN IP
+   will always hit this without the Local Network permission — a known, inherent limitation of
+   fetching favicons for LAN-only hosts on iOS, not a new defect. Filed as a known limitation per
+   the orchestrator's own instruction; not chased further this session.
 
 ## 3a. The visual layer was never verified — open gaps as of 2026-08-17
 

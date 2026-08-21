@@ -48,7 +48,17 @@ public struct LockMarker: Codable, Equatable {
     /// `kern.bootsessionuuid` at WRITE time -- a UUID that changes every boot. A mismatch against
     /// `currentBootSessionId()` at READ time means the device has rebooted since this marker was
     /// written; DR-41-C treats that as expired (a defensible default, not a defect).
-    public let bootSessionId: String
+    ///
+    /// AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): `Optional`,
+    /// not a bare `String`, as of this fix. `kern.bootsessionuuid` is UNREADABLE from a sandboxed
+    /// app process on a real iOS device (confirmed live, Bartek's iPhone 16, iOS 27) -- before
+    /// this fix, `recordHostUnlock()` papered over that with a fake `"unknown-boot-session"`
+    /// placeholder, which made a marker that carries NO real boot-continuity information look
+    /// exactly like one that does. `nil` now means exactly what it says: this leg is unavailable,
+    /// never "compare against the literal string". See `isValid(currentBootSessionId:...)` below
+    /// for how a missing value on EITHER side of the comparison is now handled -- it must never,
+    /// on its own, produce the same verdict as a genuine, both-sides-present mismatch.
+    public let bootSessionId: String?
 
     /// WR-07 (41-REVIEW.md iteration 2): renamed from `systemUptimeAtUnlock` -- CR-04 changed the
     /// clock this field carries FROM `ProcessInfo.processInfo.systemUptime` (excludes sleep) TO
@@ -75,7 +85,7 @@ public struct LockMarker: Codable, Equatable {
     /// own (a value ONLY a reader can compare against what a writer logged, E41-7's ACC-07 leg).
     public let writer: String
 
-    public init(bootSessionId: String, monotonicAtUnlock: Double, hostUnlockUptime: Double, writer: String) {
+    public init(bootSessionId: String?, monotonicAtUnlock: Double, hostUnlockUptime: Double, writer: String) {
         self.bootSessionId = bootSessionId
         self.monotonicAtUnlock = monotonicAtUnlock
         self.hostUnlockUptime = hostUnlockUptime
@@ -131,6 +141,20 @@ public struct LockMarker: Codable, Equatable {
     /// production code never sets this.
     #if DEBUG
     static var forceSharedContainerUnresolvableForTesting = false
+    #endif
+
+    /// TEST-ONLY (`.planning/debug/faceid-relock-loop-bootsession.md`): forces
+    /// `currentBootSessionId()` below to return `nil` unconditionally -- the real symptom
+    /// observed live on Bartek's real iPhone 16 (iOS 27): `kern.bootsessionuuid` is unreadable
+    /// from a sandboxed app process there, on EVERY call, regardless of entitlements (this is a
+    /// platform/sandbox restriction, not an App-Group/provisioning-profile question -- that
+    /// question was already settled separately, `ios/IOS-SPIKE-LOG.md` §3b CORRECTION
+    /// 2026-08-20). The simulator cannot reproduce this on its own: there the sysctl always
+    /// succeeds, resolving to the HOST MAC's own boot session (L-35, `ios/IOS-SPIKE-LOG.md`).
+    /// `false` (the default) means "behave normally". Never reachable outside DEBUG builds;
+    /// production code never sets this.
+    #if DEBUG
+    static var forceBootSessionIdUnavailableForTesting = false
     #endif
 
     /// WR-12 (41-REVIEW.md): resolves the CALLER-supplied `UserDefaults` override if present,
@@ -271,12 +295,28 @@ public struct LockMarker: Codable, Equatable {
     // MARK: - Clock: the CURRENT boot's session identifier
 
     /// Darwin's `kern.bootsessionuuid` sysctl -- a UUID string that changes every boot.
-    /// `[ASSUMED]`/UNVERIFIED accessibility and stability from an app-extension sandbox on this
-    /// iOS/toolchain combination (DR-41-C's own honesty note, `ios/IOS-SPIKE-LOG.md` §1i) --
-    /// Plan 41-07's clock legs (a real `simctl shutdown`+`boot` cycle) are the falsifier. Returns
-    /// `nil` if the sysctl is unreachable, which this type's callers treat as "cannot establish
-    /// the current boot identity" -- never as "matches every marker".
+    ///
+    /// AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): DR-41-C's own
+    /// honesty note (`ios/IOS-SPIKE-LOG.md` §1i) flagged this `[ASSUMED]`/UNVERIFIED from an
+    /// app-extension sandbox and asked for a real-device falsifier. That falsifier arrived as a
+    /// live production bug, not a planned test: on a real iPhone (iOS 27), this sysctl is
+    /// UNREADABLE from this app's sandboxed process -- `sysctlbyname` fails on EVERY call, every
+    /// entry point, unconditionally, regardless of entitlements (a platform/sandbox restriction,
+    /// not an App-Group/provisioning-profile question -- that question was settled separately,
+    /// `ios/IOS-SPIKE-LOG.md` §3b). L-35's own simulator measurement (`ios/IOS-SPIKE-LOG.md`) was
+    /// correct as far as it went -- the sysctl DOES resolve on the simulator, but to the HOST
+    /// MAC's own boot session, not a per-app-sandbox value, so the simulator was never capable of
+    /// exercising this failure mode at all, in either direction.
+    ///
+    /// Returns `nil` if the sysctl is unreachable, which this type's callers treat as "cannot
+    /// establish the current boot identity" -- never as "matches every marker", and, as of this
+    /// fix, never as "refuses every marker" either (see `isValid(currentBootSessionId:...)`
+    /// below): a missing INPUT must never be misclassified as a positive verdict in either
+    /// direction. This is now the ROUTINE case on real hardware, not an edge case.
     public static func currentBootSessionId() -> String? {
+        #if DEBUG
+        if forceBootSessionIdUnavailableForTesting { return nil }
+        #endif
         let name = "kern.bootsessionuuid"
         var size = 0
         guard sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 else { return nil }
@@ -299,6 +339,21 @@ public struct LockMarker: Codable, Equatable {
     /// A `now` earlier than either anchor (a rewound clock, or a marker from the future) is
     /// treated as expired, never as "unlocked forever" -- T-41-35's own guard: a clock a user can
     /// move backward must never be able to resurrect a session by making `elapsed` negative.
+    ///
+    /// AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): this guard
+    /// does DOUBLE duty and was previously documented as only the first. `monotonicNow()` is
+    /// backed by `mach_continuous_time()`, which resets to ~0 on every boot (it is uptime, not a
+    /// persisted clock) -- so a STORED anchor (`monotonicAtUnlock`/`hostUnlockUptime`) greater
+    /// than the CURRENT `now` reading is not only "a rewound clock", it is also, independently,
+    /// PROOF a reboot happened between write and read: no in-boot monotonic reading can ever
+    /// exceed a later one. This makes this guard the ONLY reboot signal still available when
+    /// `bootSessionId`/`currentBootSessionId()` is unavailable on real hardware (see `isValid`
+    /// below) -- with a named, honest asymmetry: it can PROVE a reboot occurred (`now` less than
+    /// the stored anchor) but cannot prove one did NOT occur (a device that reboots and stays up
+    /// longer than the stored anchor's own magnitude before the next check will pass this
+    /// arithmetic as if nothing happened). That is a real, accepted weakening of DR-41-C's
+    /// original cross-reboot guarantee specifically in the boot-leg-unavailable case -- stated
+    /// here rather than silently assumed away.
     public func isUnlockedLazily(now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval) -> Bool {
         guard now >= monotonicAtUnlock, now >= hostUnlockUptime else { return false }
         let idleElapsed = now - monotonicAtUnlock
@@ -315,10 +370,27 @@ public struct LockMarker: Codable, Equatable {
     /// different boot identity" as a plain value, with no process/sysctl dependency at all.
     /// `isUnlockedLazily` above remains available separately (41-03's own design) for testing the
     /// idle/ceiling arithmetic in isolation from the boot-identity check.
+    ///
+    /// AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): both
+    /// `bootSessionId` (`self`, WRITE-time) and `currentBootSessionId` (this parameter, READ-time)
+    /// are now `Optional` -- `kern.bootsessionuuid` is unreadable on real hardware (this file's
+    /// own `currentBootSessionId()` header). Before this fix, a missing `currentBootSessionId`
+    /// (the `if let` this function's own former caller used) fell through to the SAME `else`
+    /// branch as a genuine mismatch, both producing `.expired` -- misclassifying a missing INPUT
+    /// as a positive verdict, live, on Bartek's real device, on EVERY foreground check, which is
+    /// what produced the infinite Face-ID relock loop this fix closes. This function now refuses
+    /// on the boot-identity leg ONLY when BOTH sides are present AND disagree -- a genuine,
+    /// evaluated reboot detection, unweakened from before. When EITHER side is missing, this leg
+    /// contributes NOTHING (neither a pass nor a refusal) and the verdict falls through entirely
+    /// to `isUnlockedLazily`'s own idle-window/absolute-ceiling arithmetic, which (per that
+    /// function's own amendment above) still carries an independent, if imperfect, reboot signal
+    /// via the monotonic-rollback guard.
     public func isValid(
-        currentBootSessionId: String, now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval
+        currentBootSessionId: String?, now: TimeInterval, idleWindow: TimeInterval, absoluteCeiling: TimeInterval
     ) -> Bool {
-        guard bootSessionId == currentBootSessionId else { return false }
+        if let stored = bootSessionId, let current = currentBootSessionId, stored != current {
+            return false
+        }
         return isUnlockedLazily(now: now, idleWindow: idleWindow, absoluteCeiling: absoluteCeiling)
     }
 }

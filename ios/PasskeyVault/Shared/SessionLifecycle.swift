@@ -140,27 +140,43 @@ enum SessionLifecycle {
         let now = LockMarker.monotonicNow()
         let state: LockState
         if let marker = LockMarker.read(defaults: defaults) {
-            if
-                let currentBootSessionId = LockMarker.currentBootSessionId(),
-                marker.isValid(
-                    currentBootSessionId: currentBootSessionId, now: now,
-                    // WR-09 (41-REVIEW.md iteration 2): thread the SAME injected `defaults`
-                    // override through to the idle-window read too -- before this fix, only the
-                    // MARKER read/write/clear calls in this function honored `defaults`;
-                    // `configuredIdleWindowSeconds()` (no argument) always resolved
-                    // `AutoLockPolicy.sharedDefaults`, the REAL App Group container, so a test
-                    // that forced expiry via a bogus `bootSessionId` never actually proved the
-                    // idle-window arithmetic itself was reading from the injected suite.
-                    idleWindow: configuredIdleWindowSeconds(defaults: defaults ?? AutoLockPolicy.sharedDefaults),
-                    absoluteCeiling: absoluteCeilingSeconds
-                )
-            {
+            // AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): this
+            // used to be `if let currentBootSessionId = LockMarker.currentBootSessionId(),
+            // marker.isValid(...) { .unlocked } else { .expired }` -- a nil `currentBootSessionId()`
+            // (the REAL device symptom: `kern.bootsessionuuid` is unreadable from a sandboxed
+            // process on real hardware, this file's own `LockMarker.currentBootSessionId()`
+            // header) made the `if let` chain fail and fall into the SAME `else` as a genuine
+            // mismatch or a real idle/ceiling expiry -- both producing `.expired`. The comment
+            // that used to sit in that `else` branch asserted "either way this is a genuine,
+            // evaluated refusal, not a missing-input non-verdict" -- Bartek's own real device log
+            // falsified that claim directly: the input WAS missing, on every single call, and
+            // treating it as a positive verdict is exactly what produced the infinite Face-ID
+            // relock loop this fix closes (the SAME defect shape `LockState.mustRelock`'s own
+            // header already named for `.indeterminate` vs `.expired` at the ROUTING layer --
+            // this is that same principle, one layer down, at the INPUT to `LockState` itself).
+            // `isValid` itself now owns the "boot leg unavailable must never refuse on its own"
+            // distinction (see that function's own amendment) -- this call site simply passes
+            // whatever `currentBootSessionId()` returns, `nil` included, and trusts `isValid` to
+            // do the right thing with it.
+            if marker.isValid(
+                currentBootSessionId: LockMarker.currentBootSessionId(), now: now,
+                // WR-09 (41-REVIEW.md iteration 2): thread the SAME injected `defaults`
+                // override through to the idle-window read too -- before this fix, only the
+                // MARKER read/write/clear calls in this function honored `defaults`;
+                // `configuredIdleWindowSeconds()` (no argument) always resolved
+                // `AutoLockPolicy.sharedDefaults`, the REAL App Group container, so a test
+                // that forced expiry via a bogus `bootSessionId` never actually proved the
+                // idle-window arithmetic itself was reading from the injected suite.
+                idleWindow: configuredIdleWindowSeconds(defaults: defaults ?? AutoLockPolicy.sharedDefaults),
+                absoluteCeiling: absoluteCeilingSeconds
+            ) {
                 state = .unlocked
             } else {
-                // A marker WAS read (a real, positive expiry determination is possible) --
-                // `currentBootSessionId()` returning `nil` here (sysctl unreachable) is treated as
-                // "cannot confirm this boot", which `isValid` would have refused anyway; either
-                // way this is a genuine, evaluated refusal, not a missing-input non-verdict.
+                // A marker WAS read, and `isValid` returned `false` -- either a genuine,
+                // both-sides-present boot-identity mismatch, or a genuine idle-window/absolute-
+                // ceiling breach (including the monotonic-rollback reboot signal, `isUnlockedLazily`'s
+                // own amendment) -- never merely "the boot leg could not be evaluated" on its own,
+                // which `isValid` now excludes from this branch entirely. A real, evaluated refusal.
                 state = .expired
             }
         } else {
@@ -239,8 +255,18 @@ enum SessionLifecycle {
     /// choke point both `AuthView` and `LockView` funnel every successful unlock through).
     /// Resets EVERY field, including `hostUnlockUptime` -- the ONLY thing that may move the
     /// absolute ceiling forward.
+    ///
+    /// AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21): this used to
+    /// write `LockMarker.currentBootSessionId() ?? "unknown-boot-session"` -- a fake placeholder
+    /// string standing in for "the sysctl failed", which made a marker that carries NO real
+    /// boot-continuity information look, at the type level, exactly like one that does (a bare
+    /// `String`, indistinguishable from a real UUID by any caller). On real hardware, where
+    /// `currentBootSessionId()` fails on EVERY call, this placeholder was written EVERY time --
+    /// confirmed live, Bartek's own device log: `PVLOCK|stage=host-unlock
+    /// bootSessionId=unknown-boot-session`. Writes the honest `nil` now; `LockMarker.bootSessionId`
+    /// is `Optional` as of this same fix specifically so this call site can stop lying.
     static func recordHostUnlock(defaults: UserDefaults? = nil) {
-        let bootSessionId = LockMarker.currentBootSessionId() ?? "unknown-boot-session"
+        let bootSessionId = LockMarker.currentBootSessionId()
         // CR-04 (41-REVIEW.md): `LockMarker.monotonicNow()`, NOT `ProcessInfo.processInfo
         // .systemUptime` -- see that function's own header for why the old clock under-counted
         // real elapsed time (fail-open) across a device sleep.
@@ -248,7 +274,7 @@ enum SessionLifecycle {
         LockMarker.write(LockMarker(
             bootSessionId: bootSessionId, monotonicAtUnlock: now, hostUnlockUptime: now, writer: "host"
         ), defaults: defaults)
-        logger.log("PVLOCK|stage=host-unlock bootSessionId=\(bootSessionId, privacy: .public)")
+        logger.log("PVLOCK|stage=host-unlock bootSessionId=\(bootSessionId ?? "unavailable", privacy: .public)")
     }
 
     /// The explicit lock -- HOST-ONLY ("Lock now" / sign-out, `ContentView.performLock()`/

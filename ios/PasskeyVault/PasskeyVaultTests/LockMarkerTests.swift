@@ -32,7 +32,7 @@ struct LockMarkerTests {
     private static let bootB = "22222222-BBBB-BBBB-BBBB-222222222222"
 
     private static func marker(
-        boot: String = bootA, unlockedAt: TimeInterval = 1_000, hostUnlockAt: TimeInterval? = nil, writer: String = "host"
+        boot: String? = bootA, unlockedAt: TimeInterval = 1_000, hostUnlockAt: TimeInterval? = nil, writer: String = "host"
     ) -> LockMarker {
         LockMarker(
             bootSessionId: boot, monotonicAtUnlock: unlockedAt,
@@ -110,6 +110,54 @@ struct LockMarkerTests {
         let m = Self.marker(boot: Self.bootA, unlockedAt: 1_000)
         #expect(m.isValid(
             currentBootSessionId: Self.bootA, now: 1_300,
+            idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours
+        ))
+    }
+
+    // MARK: - REQUIRED FIX (`.planning/debug/faceid-relock-loop-bootsession.md`): a MISSING
+    // boot-session id on EITHER side must never, on its own, produce the same refusal as a
+    // genuine, both-sides-present mismatch -- `kern.bootsessionuuid` is unreadable from a
+    // sandboxed real-iOS process (confirmed live, Bartek's iPhone 16, iOS 27), so this is now the
+    // ROUTINE case on real hardware, not an edge case.
+
+    @Test
+    func aMissingCurrentBootSessionIdNeverRefusesOnItsOwnWhenTheStoredMarkerIsOtherwiseValid() {
+        let m = Self.marker(boot: Self.bootA, unlockedAt: 1_000)
+        #expect(m.isValid(
+            currentBootSessionId: nil, now: 1_300,
+            idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours
+        ), "the READ-side boot leg being unavailable (the real device symptom) must fall through to idle/ceiling arithmetic, never refuse on its own")
+    }
+
+    @Test
+    func aMissingStoredBootSessionIdNeverRefusesOnItsOwnWhenTheCurrentBootIsKnown() {
+        let m = Self.marker(boot: nil, unlockedAt: 1_000)
+        #expect(m.isValid(
+            currentBootSessionId: Self.bootA, now: 1_300,
+            idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours
+        ), "the WRITE-side boot leg being unavailable (an honest marker written after this fix, on a device where the sysctl fails) must fall through to idle/ceiling arithmetic, never refuse on its own")
+    }
+
+    @Test
+    func bothBootSessionIdsMissingStillHonestlyEvaluatesIdleWindowArithmetic() {
+        let m = Self.marker(boot: nil, unlockedAt: 1_000)
+        #expect(m.isValid(currentBootSessionId: nil, now: 1_300, idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours))
+        #expect(
+            !m.isValid(currentBootSessionId: nil, now: 1_300, idleWindow: 100, absoluteCeiling: Self.twelveHours),
+            "an unavailable boot leg on both sides must never mask a genuine idle-window breach -- REQUIRED FIX #2, 'evaluate what you can; refuse only on positive evidence' cuts both ways"
+        )
+    }
+
+    @Test
+    func aGenuineBootMismatchWithBothSidesPresentStillRefusesRegardlessOfElapsedTime() {
+        // Regression guard: the fix narrows the boot-id check, it must not accidentally weaken
+        // it -- a REAL reboot, detected via a genuine both-sides-present disagreement, must still
+        // refuse exactly as before this fix (unchanged from
+        // `aMarkerFromADifferentBootIsNeverValidRegardlessOfElapsedTime` above, restated here
+        // under this fix's own section so a future regression in either area is caught by name).
+        let m = Self.marker(boot: Self.bootA, unlockedAt: 1_000)
+        #expect(!m.isValid(
+            currentBootSessionId: Self.bootB, now: 1_000,
             idleWindow: Self.sixtyMinutes, absoluteCeiling: Self.twelveHours
         ))
     }
@@ -397,6 +445,97 @@ struct LockMarkerTests {
         #expect(
             state == .unlocked,
             "a single-process session must still be trackable via the .standard fallback when the App Group container cannot be resolved -- before this fix, an unresolvable container made every read return nil forever (.indeterminate), which REQUIRED FIX #1 alone would have left permanently unable to confirm a session even for a healthy single-process host"
+        )
+    }
+
+    // MARK: - REQUIRED FIX (`.planning/debug/faceid-relock-loop-bootsession.md`): the SECOND
+    // Face-ID-loop root cause, found live on Bartek's real device via `d8d9c9b`'s own fix already
+    // shipped -- `LockMarker.currentBootSessionId()` returns `nil` on EVERY call there
+    // (`kern.bootsessionuuid` unreadable from a sandboxed real-iOS process), which the PRE-FIX
+    // `checkAndExpireIfNeeded` treated as a genuine, evaluated `.expired` verdict rather than an
+    // unavailable input -- this test drives the REAL production path
+    // (`recordHostUnlock` -> `checkAndExpireIfNeeded`) with `forceBootSessionIdUnavailableForTesting`
+    // standing in for that real, unrepeatable-on-the-simulator device condition.
+
+    @Test
+    func aFreshMarkerWithTheBootLegUnavailableStaysUnlocked() {
+        let defaults = Self.freshDefaults()
+        LockMarker.forceBootSessionIdUnavailableForTesting = true
+        defer { LockMarker.forceBootSessionIdUnavailableForTesting = false }
+
+        SessionLifecycle.recordHostUnlock(defaults: defaults)
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "bootleg-fresh-test", deleteKeyArtifact: { true }, defaults: defaults
+        )
+        #expect(
+            state == .unlocked,
+            "a freshly-unlocked marker must stay unlocked when the boot-session leg cannot be evaluated at all -- pre-fix this read .expired on EVERY foreground check, the exact infinite Face-ID loop mechanism Bartek's real device log captured"
+        )
+    }
+
+    @Test
+    func recordHostUnlockNoLongerWritesAFakePlaceholderWhenTheBootLegIsUnavailable() {
+        // The WRITE-side half of the same fix: before this fix, `recordHostUnlock` wrote the
+        // literal string `"unknown-boot-session"` whenever `currentBootSessionId()` failed --
+        // confirmed live in Bartek's own device log (`PVLOCK|stage=host-unlock
+        // bootSessionId=unknown-boot-session`). `bootSessionId` must now be honestly `nil`.
+        let defaults = Self.freshDefaults()
+        LockMarker.forceBootSessionIdUnavailableForTesting = true
+        defer { LockMarker.forceBootSessionIdUnavailableForTesting = false }
+
+        SessionLifecycle.recordHostUnlock(defaults: defaults)
+        #expect(
+            LockMarker.read(defaults: defaults)?.bootSessionId == nil,
+            "a marker written while the boot leg is unavailable must record that honestly as nil, never a placeholder string that looks like real boot-continuity data"
+        )
+    }
+
+    @Test
+    func anElapsedIdleWindowWithTheBootLegUnavailableStillExpires() {
+        let defaults = Self.freshDefaults()
+        AutoLockPolicy.write(1, defaults: defaults) // 1-minute idle window
+        LockMarker.forceBootSessionIdUnavailableForTesting = true
+        defer { LockMarker.forceBootSessionIdUnavailableForTesting = false }
+
+        LockMarker.write(
+            LockMarker(
+                bootSessionId: nil,
+                monotonicAtUnlock: LockMarker.monotonicNow() - 120, // 120s ago -- past the 1-minute window
+                hostUnlockUptime: LockMarker.monotonicNow(),
+                writer: "host"
+            ),
+            defaults: defaults
+        )
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "bootleg-idle-test", deleteKeyArtifact: { true }, defaults: defaults
+        )
+        #expect(
+            state == .expired,
+            "a genuinely elapsed idle window must still expire the session even when the boot leg is unavailable -- REQUIRED FIX #2's own instruction: this fix narrows the boot-id check, it must never blanket-refuse-to-expire and silently disable ACC-06"
+        )
+    }
+
+    @Test
+    func anExceededAbsoluteCeilingWithTheBootLegUnavailableStillExpires() {
+        let defaults = Self.freshDefaults()
+        LockMarker.forceBootSessionIdUnavailableForTesting = true
+        defer { LockMarker.forceBootSessionIdUnavailableForTesting = false }
+
+        LockMarker.write(
+            LockMarker(
+                bootSessionId: nil,
+                monotonicAtUnlock: LockMarker.monotonicNow() - 1, // idle window trivially satisfied
+                hostUnlockUptime: LockMarker.monotonicNow() - (13 * 60 * 60), // 13h ago -- past the 12h ceiling
+                writer: "host"
+            ),
+            defaults: defaults
+        )
+        let state = SessionLifecycle.checkAndExpireIfNeeded(
+            entryPoint: "bootleg-ceiling-test", deleteKeyArtifact: { true }, defaults: defaults
+        )
+        #expect(
+            state == .expired,
+            "the 12h absolute ceiling must still expire the session even when the boot leg is unavailable and the idle window alone would look fine"
         )
     }
 

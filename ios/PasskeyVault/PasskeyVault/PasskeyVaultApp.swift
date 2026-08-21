@@ -44,7 +44,12 @@ struct PasskeyVaultApp: App {
         // logs the marker's own numeric fields (T-41-38) -- only `writer` and whether the boot
         // session still matches.
         if let marker = LockMarker.read() {
-            let bootMatches = marker.bootSessionId == (LockMarker.currentBootSessionId() ?? "")
+            // `.planning/debug/faceid-relock-loop-bootsession.md`: `bootSessionId` is now
+            // `Optional` -- a missing value on either side is NOT a match (a stricter reading
+            // than plain `Optional` equality, which would treat two "unavailable"s as equal;
+            // this diagnostic line specifically means "boot continuity is CONFIRMED", not
+            // "neither side could tell either way").
+            let bootMatches = marker.bootSessionId != nil && marker.bootSessionId == LockMarker.currentBootSessionId()
             Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill").log(
                 "PVLOCK|stage=host-launch-read writer=\(marker.writer, privacy: .public) bootMatch=\(bootMatches, privacy: .public)"
             )

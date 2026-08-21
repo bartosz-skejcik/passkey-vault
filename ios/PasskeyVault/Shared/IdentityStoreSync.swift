@@ -421,7 +421,25 @@ enum IdentityStoreSync {
                     // `serviceHost(fromURLString:)`'s own header. Logged so a real user's item
                     // with a genuinely unparseable URL is visible in diagnostics rather than
                     // silently absent from QuickType with no trace.
-                    logger.log("PVFILL|E41-2|stage=build-identity status=skipped-unparseable-url")
+                    //
+                    // AMENDMENT (`.planning/debug/faceid-relock-loop-bootsession.md`, 2026-08-21):
+                    // downgraded from `.log` to `.debug`. Live-probed `OriginNormalize` against
+                    // every realistic input this line's own `url` can carry -- bare host,
+                    // `host:port`, an IP and IP:port, `mailto:` -- all parse correctly (WR-04's
+                    // `looksSchemeless` fix already covers the `host:port` case this line's own
+                    // history names). The cases that legitimately reach `nil` here are NOT parser
+                    // bugs: an empty/blank URL string (a `.login` item with no URL filled in --
+                    // `identitySources(from:)`'s own filter already excludes `.note`/`.totp`/every
+                    // other non-login content case upstream, so this is specifically a login item
+                    // with a blank URL field) and a non-http(s) custom URL scheme with no
+                    // domain-shaped authority (`otpauth://`, `steam://`, a bespoke app callback
+                    // scheme) that could never be registered as an `ASCredentialServiceIdentifier
+                    // (type: .domain)` in the first place. Both are ROUTINE, not defects --
+                    // `.debug` keeps this diagnosable (still visible via `log stream --level debug`
+                    // or Console with debug messages enabled) without it reading, at the DEFAULT
+                    // `.log` level every other line in this file uses for genuine outcomes, as if 5
+                    // out of Bartek's 323 real items were silently failing something.
+                    logger.debug("PVFILL|E41-2|stage=build-identity status=skipped-unparseable-url")
                     continue
                 }
                 let identity = ASPasswordCredentialIdentity(
