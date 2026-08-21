@@ -54,3 +54,11 @@ uuid.workspace = true
 # graph, never a production runtime dependency (mirrors webauthn-rs/uuid's
 # own dev-dependency-only precedent immediately above).
 sha2 = "0.10"
+# 43-04 Task 1's own attestation-object CBOR-decode assertion (a throwaway
+# `ciborium::de::from_reader` per this task's own acceptance_criteria) --
+# not a new external audit: `ciborium 0.2.2` is already resolved
+# transitively (Cargo.lock, via `coset`/`passkey-types`), this only makes it
+# a direct dev-only dependency of THIS crate's own test code, never a
+# production runtime dependency (same precedent as sha2/webauthn-rs/uuid
+# immediately above).
+ciborium = "0.2"

@@ -21,13 +21,14 @@
 //! typosquat-style name confusion — verdict OK) per D-18's pre-approval;
 //! see 12-01-SUMMARY.md for the recorded outcome.
 
+use coset::iana;
 use passkey_authenticator::{extensions::HmacSecretConfig, Authenticator};
 use passkey_client::{Client, DefaultClientData};
 use passkey_types::{
     ctap2::{self, Aaguid},
     webauthn::{
         CredentialCreationOptions, CredentialRequestOptions, PublicKeyCredentialDescriptor,
-        PublicKeyCredentialType,
+        PublicKeyCredentialParameters, PublicKeyCredentialType,
     },
     Passkey,
 };
@@ -364,6 +365,216 @@ pub fn get_assertion_ctap2(
     Ok(GetAssertionCtap2Result { credential_id, user_handle, signature, authenticator_data })
 }
 
+/// Result of `make_credential_ctap2`. `attestation_object` is the CBOR-encoded
+/// WebAuthn `attestationObject` (public, `fmt`/`authData`/`attStmt`) -- PUBLIC
+/// WebAuthn response material, never raw private-key bytes. `new_passkey_json`
+/// mirrors `CreateProviderResult.new_passkey_json`'s existing secrecy contract
+/// (local-use only, the caller MUST re-encrypt it immediately and never
+/// surface it to any UI layer) but NOT its `credential_response_json` field --
+/// iOS needs the raw CBOR `attestationObject`, not a WebAuthn JSON response.
+#[derive(Debug)]
+pub struct MakeCredentialCtap2Result {
+    pub credential_id: Vec<u8>,
+    pub attestation_object: Vec<u8>,
+    pub new_passkey_json: String,
+}
+
+/// CTAP2-level registration entry point for iOS's `ASCredentialProviderViewController`
+/// (OPT-03, `43-RESEARCH.md` Finding 2, Open Question 3) -- the registration
+/// counterpart to `get_assertion_ctap2` above, completing the matched pair
+/// 43-RESEARCH.md Pitfall 7 flags as a phase-scope failure if shipped alone.
+///
+/// Same `PvCredentialStore`/`PvUserValidation` types as every other entry
+/// point in this file -- never a second store implementation. Unlike
+/// `get_assertion_ctap2`, this function DOES take `existing_credentials_json`
+/// (a deviation from this plan's originally-authored signature, recorded in
+/// 43-04-SUMMARY.md): CTAP2's `exclude_list` check
+/// (`passkey_authenticator::Authenticator::make_credential`, step 1) is
+/// resolved via `self.store().find_credentials(exclude_list, rp_id, ...)` --
+/// against an EMPTY store, `find_credentials` always returns
+/// `Ctap2Error::NoCredentials`, which `make_credential` treats as "nothing to
+/// exclude" (vendored source, `authenticator/make_credential.rs`), making
+/// `exclude_list` a structural no-op exactly as `create_provider_credential`'s
+/// own doc comment above already documents for the WebAuthn-client path. This
+/// function's own `must_haves.truths`/`<behavior>` contract requires the
+/// exclude-list to be HONORED, not silently ignored -- which is only possible
+/// if the caller's existing passkeys for this `rp_id` are actually present in
+/// the store, the same reason `get_assertion_ctap2`/`get_provider_assertion`
+/// both already take an `existing_credentials_json` parameter. A SECOND,
+/// independent finding (also recorded in 43-04-SUMMARY.md) makes a populated
+/// store necessary but not SUFFICIENT: `passkey_authenticator::Authenticator::
+/// make_credential`'s own exclude-list handling never actually terminates the
+/// ceremony on a match (confirmed against the crate's own test suite, see
+/// this function's body for the full citation) -- so this function performs
+/// its own explicit exclude-list rejection against `existing_credentials_json`
+/// BEFORE calling into the library at all, rather than relying on the
+/// library's (non-functional) enforcement.
+///
+/// Same EXT-10 posture as every other entry point in this file: the
+/// `Authenticator::new(...)` construction below is never opted into
+/// `make_credentials_with_signature_counter(true)` -- no per-item signature
+/// counter is ever tracked for a provider-issued passkey, for the identical
+/// reasons `get_provider_assertion`'s own EXT-10 decision record states above
+/// (a passkey shared across N concurrently active member extensions has no
+/// single authoritative "last counter value" to advance from). Also never
+/// `.hmac_secret(...)` -- OPT-01 (43-RESEARCH.md "Locked Decisions") scopes
+/// PRF entirely out of Phase 43, matching `get_assertion_ctap2`'s identical
+/// narrower construction (no PRF) rather than the two WebAuthn-client-level
+/// functions above (which do enable it).
+///
+/// Only ever issues `fmt: "none"` (no attestation certificate, T-43-05) ES256
+/// (`-7`, T-43-06) credentials -- `supported_algorithms` is checked for `-7`
+/// BEFORE any credential is constructed (fail before allocating, mirroring
+/// WR-11's own "check before you allocate" discipline), and a picky RP
+/// requesting only a different algorithm gets an honest `Err`, never a
+/// wrong-algorithm credential.
+pub fn make_credential_ctap2(
+    rp_id: &str,
+    rp_name: Option<&str>,
+    user_id: Vec<u8>,
+    user_name: &str,
+    user_display_name: Option<&str>,
+    client_data_hash: Vec<u8>,
+    supported_algorithms: &[i64],
+    excluded_credential_ids: &[Vec<u8>],
+    existing_credentials_json: &str,
+) -> Result<MakeCredentialCtap2Result, PvProviderError> {
+    // -7 == coset::iana::Algorithm::ES256 (COSE Algorithms registry) --
+    // checked as a raw i64 here since `supported_algorithms` crosses the
+    // FFI boundary as `Vec<i64>` (iOS's own `ASAuthorizationPublicKeyCredentialParameters`
+    // shape), never assumed to already be a validated `iana::Algorithm`.
+    const ES256_COSE_ALG: i64 = -7;
+    if !supported_algorithms.contains(&ES256_COSE_ALG) {
+        return Err(PvProviderError::InvalidInput(
+            "RP does not accept ES256, the only algorithm this authenticator issues",
+        ));
+    }
+
+    let store = PvCredentialStore::from_passkeys_json(existing_credentials_json)?;
+
+    // CTAP2 §6.1 step 1 enforcement, performed HERE rather than trusting
+    // `passkey_authenticator::Authenticator::make_credential` (=0.5.0) to do
+    // it (Rule 1/Rule 2 deviation, recorded in 43-04-SUMMARY.md): direct
+    // source read of the crate's OWN test suite
+    // (`passkey-authenticator-0.5.0/src/authenticator/make_credential/tests.rs::assert_excluded_credentials`)
+    // shows its exclude-list handling calls
+    // `check_user(UiHint::InformExcludedCredentialFound(...))` as an
+    // informational hint ONLY and then proceeds to create the credential
+    // regardless -- that test's own `.expect("Excluded id gets ignored")`,
+    // with the spec-correct `.expect_err(CredentialExcluded)` assertion
+    // commented out immediately below it, is upstream's own admission that
+    // the CTAP2-mandated "wait for user presence, then terminate ... return
+    // CTAP2_ERR_CREDENTIAL_EXCLUDED" step is not implemented. This
+    // function's own must_haves.truths/<behavior> contract requires the
+    // exclude-list to be HONORED, not silently ignored, so it is checked
+    // against the caller-supplied `existing_credentials_json` before the
+    // library is ever invoked.
+    if !excluded_credential_ids.is_empty() {
+        let already_registered = store.passkeys().iter().any(|pk| {
+            pk.rp_id == rp_id
+                && excluded_credential_ids
+                    .iter()
+                    .any(|id| Vec::from(pk.credential_id.clone()) == *id)
+        });
+        if already_registered {
+            return Err(PvProviderError::Ceremony(
+                "credential excluded: an existing credential for this rp_id is present in \
+                 excluded_credential_ids"
+                    .into(),
+            ));
+        }
+    }
+
+    let mut authenticator = Authenticator::new(Aaguid::new_empty(), store, PvUserValidation);
+    // NEVER .hmac_secret(...) -- OPT-01 scopes PRF out of Phase 43 (see
+    // this function's own doc comment above).
+    // NEVER make_credentials_with_signature_counter(true) -- EXT-10 applies
+    // identically to registration (see this function's own doc comment
+    // above).
+
+    let exclude_list = if excluded_credential_ids.is_empty() {
+        None
+    } else {
+        Some(
+            excluded_credential_ids
+                .iter()
+                .map(|id| PublicKeyCredentialDescriptor {
+                    ty: PublicKeyCredentialType::PublicKey,
+                    id: id.clone().into(),
+                    transports: None,
+                })
+                .collect(),
+        )
+    };
+
+    let request = ctap2::make_credential::Request {
+        client_data_hash: client_data_hash.into(),
+        rp: ctap2::make_credential::PublicKeyCredentialRpEntity {
+            id: rp_id.to_string(),
+            // Open Question 1's own recommended default -- name falls back
+            // to rp_id when the RP omits one, matching
+            // `create_provider_credential`'s existing behavior for that
+            // case.
+            name: Some(rp_name.map(str::to_string).unwrap_or_else(|| rp_id.to_string())),
+        },
+        // `Request.user` is typed `webauthn::PublicKeyCredentialUserEntity`
+        // (required `name`/`display_name`, no `icon_url`) -- NOT the CTAP2
+        // `ctap2::make_credential::PublicKeyCredentialUserEntity` this file's
+        // own `rp` field uses. `passkey-types-0.5.0/src/ctap2/make_credential.rs`
+        // confirmed by direct source read (this task's own deviation note,
+        // 43-04-SUMMARY.md).
+        user: passkey_types::webauthn::PublicKeyCredentialUserEntity {
+            id: user_id.into(),
+            name: user_name.to_string(),
+            display_name: user_display_name
+                .map(str::to_string)
+                .unwrap_or_else(|| user_name.to_string()),
+        },
+        pub_key_cred_params: vec![PublicKeyCredentialParameters {
+            ty: PublicKeyCredentialType::PublicKey,
+            alg: iana::Algorithm::ES256,
+        }],
+        exclude_list,
+        // No PRF/hmac-secret this phase -- see this function's own doc
+        // comment above.
+        extensions: None,
+        options: Default::default(),
+        // CTAP2 PIN protocol is not this crate's concern -- see
+        // `get_assertion_ctap2`'s identical comment above.
+        pin_auth: None,
+        pin_protocol: None,
+    };
+
+    let response = pollster::block_on(authenticator.make_credential(request))
+        .map_err(|e| PvProviderError::Ceremony(format!("{e:?}")))?;
+
+    // `Response::as_webauthn_bytes()` -- passkey-types' OWN CBOR encoding of
+    // the WebAuthn §6.5.4 attestationObject (`{"fmt": "none", "attStmt": {},
+    // "authData": <bytes>}`, WebAuthn string keys, not CTAP2 integer keys),
+    // via `ciborium`'s own `cbor!`/`into_writer` machinery
+    // (vendored source, `passkey-types-0.5.0/src/ctap2/make_credential.rs`).
+    // Deviation from this task's originally-authored action text (recorded
+    // in 43-04-SUMMARY.md): the plan text instructed hand-constructing a
+    // `ciborium::value::Value::Map` with integer keys `1`/`2`/`3` -- but
+    // this crate-provided method already does exactly that (with the
+    // correct WebAuthn STRING keys, which is what a real RP's own
+    // `attestationObject` CBOR parser expects, not CTAP2's integer keys),
+    // making the hand-rolled version both unnecessary AND wrong-shaped.
+    // Using the crate's own method is a STRICTER reading of this file's
+    // "never hand-assembled bytes" convention, not a looser one.
+    let attestation_object: Vec<u8> = response.as_webauthn_bytes().into();
+
+    // Read the new credential back out of the store the SAME way
+    // `create_provider_credential` does.
+    let new_passkey: &Passkey = authenticator.store().passkeys().last().ok_or_else(|| {
+        PvProviderError::Ceremony("registration succeeded but no credential was saved".into())
+    })?;
+    let credential_id = Vec::from(new_passkey.credential_id.clone());
+    let new_passkey_json = passkey_to_json(new_passkey)?;
+
+    Ok(MakeCredentialCtap2Result { credential_id, attestation_object, new_passkey_json })
+}
+
 #[cfg(test)]
 mod ctap2_tests {
     use sha2::{Digest, Sha256};
@@ -508,6 +719,189 @@ mod ctap2_tests {
             "independent webauthn-rs verifier must accept get_assertion_ctap2's real \
              signature over the SAME client_data_hash passed in -- proving the byte-level \
              plumbing, not merely that the call returns Ok",
+        );
+    }
+}
+
+#[cfg(test)]
+mod make_credential_ctap2_tests {
+    use super::*;
+    use crate::credential_store::passkeys_from_json;
+
+    fn fixture_user_id() -> Vec<u8> {
+        vec![7u8; 16]
+    }
+
+    /// Behavior case 1: `supported_algorithms = [-7]` (ES256) succeeds,
+    /// returning an `attestation_object` whose CBOR decode shows
+    /// `fmt == "none"`, `authData` present, `attStmt` an empty map --
+    /// `create_provider_credential`'s existing default, matched exactly
+    /// (T-43-05). Also proves `new_passkey_json` round-trips losslessly
+    /// through `passkeys_from_json` (acceptance_criteria), mirroring
+    /// `credential_store.rs`'s own
+    /// `passkey_round_trip_is_lossless_for_a_fully_populated_passkey` style.
+    #[test]
+    fn make_credential_ctap2_es256_succeeds_with_none_attestation() {
+        let result = make_credential_ctap2(
+            "example.com",
+            Some("Example"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![9u8; 32],
+            &[-7],
+            &[],
+            "[]",
+        )
+        .expect("make_credential_ctap2 with ES256 in supported_algorithms should succeed");
+
+        assert!(!result.credential_id.is_empty());
+
+        // CBOR-decode the attestation object -- a throwaway ciborium value
+        // parse, per this task's own acceptance_criteria.
+        let decoded: ciborium::value::Value =
+            ciborium::de::from_reader(result.attestation_object.as_slice())
+                .expect("attestation_object must be valid CBOR");
+        let map = decoded.as_map().expect("attestation object must CBOR-decode to a map");
+
+        let fmt = map
+            .iter()
+            .find(|(k, _)| k.as_text() == Some("fmt"))
+            .map(|(_, v)| v.as_text().expect("fmt must be a text value"))
+            .expect("attestation object must have a \"fmt\" key");
+        assert_eq!(fmt, "none", "fmt must be \"none\" -- T-43-05, no attestation certificate");
+
+        let auth_data_present = map.iter().any(|(k, _)| k.as_text() == Some("authData"));
+        assert!(auth_data_present, "attestation object must have an \"authData\" key");
+
+        let att_stmt = map
+            .iter()
+            .find(|(k, _)| k.as_text() == Some("attStmt"))
+            .map(|(_, v)| v)
+            .expect("attestation object must have an \"attStmt\" key");
+        assert_eq!(
+            att_stmt.as_map().map(Vec::as_slice),
+            Some(&[][..]),
+            "attStmt must be an empty map -- \"fmt: none\" carries no attestation statement"
+        );
+
+        // new_passkey_json round-trips losslessly.
+        let round_tripped = passkeys_from_json(&format!("[{}]", result.new_passkey_json))
+            .expect("new_passkey_json must parse via passkeys_from_json");
+        assert_eq!(round_tripped.len(), 1, "exactly one passkey must round-trip");
+        assert_eq!(
+            Vec::from(round_tripped[0].credential_id.clone()),
+            result.credential_id,
+            "round-tripped credential_id must match the returned credential_id"
+        );
+    }
+
+    /// Behavior case 2: `supported_algorithms = [-257]` (RS256 only, no
+    /// ES256) is refused cleanly -- never silently issuing an ES256
+    /// credential the RP did not ask for (T-43-06, must_haves.truths).
+    #[test]
+    fn make_credential_ctap2_rejects_when_es256_not_in_supported_algorithms() {
+        let result = make_credential_ctap2(
+            "example.com",
+            Some("Example"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![9u8; 32],
+            &[-257],
+            &[],
+            "[]",
+        );
+        assert!(
+            matches!(result, Err(PvProviderError::InvalidInput(_))),
+            "an RP that excludes ES256/-7 must be refused with InvalidInput, never a \
+             silently-substituted credential -- got: {result:?}"
+        );
+    }
+
+    /// Behavior case 3: an `excluded_credential_ids` list containing the
+    /// credential ID of an already-registered passkey for the SAME `rp_id`
+    /// is honored, not ignored -- proven by first registering a real
+    /// credential, then feeding it back in BOTH as `existing_credentials_json`
+    /// (required for `exclude_list` to have any effect at all -- see this
+    /// function's own doc comment on why an empty store makes exclude_list a
+    /// structural no-op) and as `excluded_credential_ids`.
+    #[test]
+    fn make_credential_ctap2_honors_exclude_list() {
+        let rp_id = "example.com";
+        let first = make_credential_ctap2(
+            rp_id,
+            Some("Example"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![9u8; 32],
+            &[-7],
+            &[],
+            "[]",
+        )
+        .expect("first registration should succeed");
+
+        let existing_credentials_json = format!("[{}]", first.new_passkey_json);
+
+        let second = make_credential_ctap2(
+            rp_id,
+            Some("Example"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![10u8; 32],
+            &[-7],
+            &[first.credential_id.clone()],
+            &existing_credentials_json,
+        );
+
+        assert!(
+            matches!(second, Err(_)),
+            "a second registration whose excluded_credential_ids names an existing \
+             credential for the SAME rp_id must be refused, not silently re-registered -- \
+             got: {second:?}"
+        );
+    }
+
+    /// The exclude-list check is scoped by `rp_id`, mirroring T-43-09's
+    /// existing `rp_id` filter proof for the assertion path
+    /// (`get_assertion_ctap2`'s `wrong_rp_id_rejected` test above): a
+    /// credential excluded for a DIFFERENT rp_id must not block registration
+    /// for this one.
+    #[test]
+    fn make_credential_ctap2_exclude_list_scoped_by_rp_id() {
+        let first = make_credential_ctap2(
+            "example.com",
+            Some("Example"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![9u8; 32],
+            &[-7],
+            &[],
+            "[]",
+        )
+        .expect("first registration should succeed");
+
+        let existing_credentials_json = format!("[{}]", first.new_passkey_json);
+
+        let second = make_credential_ctap2(
+            "other-rp.example",
+            Some("Other"),
+            fixture_user_id(),
+            "user@example.com",
+            Some("User"),
+            vec![10u8; 32],
+            &[-7],
+            &[first.credential_id.clone()],
+            &existing_credentials_json,
+        );
+
+        assert!(
+            second.is_ok(),
+            "excluded_credential_ids from a DIFFERENT rp_id must not block registration -- \
+             got: {second:?}"
         );
     }
 }

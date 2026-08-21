@@ -20,11 +20,13 @@
 //!   briefly produces (`new_passkey_json`/`updated_passkey_json`) never
 //!   crosses the WASM->JS boundary as a return value.
 //! - `crates/pv-ffi` (Phase 43, OPT-03), which wraps [`get_assertion_ctap2`]
-//!   — iOS's CTAP2-LEVEL assertion ceremony — the same way for the Swift
-//!   boundary. See that function's own doc comment
-//!   (`crates/pv-provider/src/ceremony.rs`) for why the WebAuthn-client-level
-//!   functions above cannot serve iOS's provider path at all (iOS hands a
-//!   pre-computed `clientDataHash`, never a WebAuthn options JSON).
+//!   — iOS's CTAP2-LEVEL assertion ceremony — and (43-04) [`make_credential_ctap2`]
+//!   — iOS's CTAP2-LEVEL registration ceremony, completing the matched pair
+//!   43-RESEARCH.md Pitfall 7 names — the same way for the Swift boundary.
+//!   See those functions' own doc comments (`crates/pv-provider/src/ceremony.rs`)
+//!   for why the WebAuthn-client-level functions above cannot serve iOS's
+//!   provider path at all (iOS hands a pre-computed `clientDataHash`, never a
+//!   WebAuthn options JSON).
 //!
 //! D-08 note: this crate introduces ZERO new HKDF domain-separation
 //! contexts. The previously planned ephemeral-wrap module
@@ -39,7 +41,8 @@ mod error;
 
 pub use ceremony::{
     create_provider_credential, get_assertion_ctap2, get_provider_assertion,
-    CreateProviderResult, GetAssertionCtap2Result, GetProviderAssertionResult,
+    make_credential_ctap2, CreateProviderResult, GetAssertionCtap2Result,
+    GetProviderAssertionResult, MakeCredentialCtap2Result,
 };
 pub use credential_store::{PvCredentialStore, PvUserValidation};
 pub use error::PvProviderError;
