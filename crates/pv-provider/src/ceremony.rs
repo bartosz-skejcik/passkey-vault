@@ -24,8 +24,11 @@
 use passkey_authenticator::{extensions::HmacSecretConfig, Authenticator};
 use passkey_client::{Client, DefaultClientData};
 use passkey_types::{
-    ctap2::Aaguid,
-    webauthn::{CredentialCreationOptions, CredentialRequestOptions},
+    ctap2::{self, Aaguid},
+    webauthn::{
+        CredentialCreationOptions, CredentialRequestOptions, PublicKeyCredentialDescriptor,
+        PublicKeyCredentialType,
+    },
     Passkey,
 };
 use url::Url;
@@ -257,4 +260,254 @@ pub fn get_provider_assertion(
     })?;
 
     Ok(GetProviderAssertionResult { credential_response_json, updated_passkey_json })
+}
+
+/// Result of `get_assertion_ctap2`. Every field is a PUBLIC WebAuthn
+/// response value -- credential id, user handle, signature, authenticator
+/// data -- NEVER raw private-key bytes. This is the T-43-02 mitigation
+/// (43-02-PLAN.md's threat register): `pv-ffi`'s `provider_get_assertion`
+/// returns this struct verbatim (via a 1:1 `FfiProviderAssertionResult`
+/// mirror), so this struct's own shape IS the enforcement point, not a
+/// downstream filter that could be forgotten.
+#[derive(Debug)]
+pub struct GetAssertionCtap2Result {
+    pub credential_id: Vec<u8>,
+    pub user_handle: Option<Vec<u8>>,
+    pub signature: Vec<u8>,
+    pub authenticator_data: Vec<u8>,
+}
+
+/// CTAP2-level assertion entry point for iOS's `ASCredentialProviderViewController`
+/// (OPT-03, `43-RESEARCH.md` Finding 2). iOS hands a credential provider a
+/// pre-computed `clientDataHash` -- never a full WebAuthn options JSON --
+/// so `get_provider_assertion` above (which builds/hashes `clientData`
+/// itself, internally, via `passkey_client::Client::authenticate`) CANNOT
+/// be reused for this path: SHA-256 is not invertible, so there is no way
+/// to recover the JSON `Client::authenticate` expects from a hash alone
+/// (43-RESEARCH.md "Anti-patterns to avoid", first bullet). This function
+/// instead calls `passkey_authenticator::Authenticator::get_assertion`
+/// directly -- one layer BELOW `passkey_client::Client`, and the only layer
+/// in this dependency graph whose `Request` type takes `client_data_hash:
+/// Bytes` as a first-class field
+/// (`passkey-types-0.5.0/src/ctap2/get_assertion.rs:33`, vendored source).
+///
+/// Same `PvCredentialStore`/`PvUserValidation` types as
+/// `get_provider_assertion` above -- never a second store implementation --
+/// and the SAME EXT-10 posture: the `Authenticator::new(...)` construction
+/// below is never opted into `make_credentials_with_signature_counter(true)`,
+/// for the identical reasons `get_provider_assertion`'s own EXT-10 decision
+/// record states above (no counter is ever tracked for a provider-issued
+/// passkey; see `tests/ctap2_ceremony.rs` for this function's own
+/// fast-regression proof of that property on raw wire bytes). Unlike both
+/// existing entry points, this authenticator is never given
+/// `.hmac_secret(...)` either -- OPT-01 (43-RESEARCH.md "Locked Decisions")
+/// scopes PRF entirely out of Phase 43, so this construction is narrower
+/// than either of the two functions above it in this file, not merely a
+/// CTAP2-shaped rewrite of them.
+pub fn get_assertion_ctap2(
+    rp_id: &str,
+    client_data_hash: Vec<u8>,
+    allow_credential_id: Option<Vec<u8>>,
+    existing_credentials_json: &str,
+) -> Result<GetAssertionCtap2Result, PvProviderError> {
+    let store = PvCredentialStore::from_passkeys_json(existing_credentials_json)?;
+    let mut authenticator = Authenticator::new(Aaguid::new_empty(), store, PvUserValidation);
+
+    let request = ctap2::get_assertion::Request {
+        rp_id: rp_id.to_string(),
+        client_data_hash: client_data_hash.into(),
+        allow_list: allow_credential_id.map(|id| {
+            vec![PublicKeyCredentialDescriptor {
+                ty: PublicKeyCredentialType::PublicKey,
+                id: id.into(),
+                transports: None,
+            }]
+        }),
+        // No PRF/hmac-secret this phase -- OPT-01 scopes it out entirely,
+        // mirroring the two functions above never opting this authenticator
+        // into HmacSecretConfig either.
+        extensions: None,
+        options: Default::default(),
+        // CTAP2 PIN protocol is not this crate's concern -- user
+        // presence/verification is already asserted unconditionally by
+        // `PvUserValidation` (real consent already happened via the
+        // popup/confirmation UI before this function is ever called, same
+        // ordering guarantee `PvUserValidation`'s own doc comment states).
+        pin_auth: None,
+        pin_protocol: None,
+    };
+
+    let response = pollster::block_on(authenticator.get_assertion(request))
+        .map_err(|e| PvProviderError::Ceremony(format!("{e:?}")))?;
+
+    // `Response::credential` is documented as "may be omitted if the
+    // allowList has exactly one Credential" -- but this crate's own
+    // `Authenticator::get_assertion` (passkey-authenticator=0.5.0) always
+    // populates it (`Some(credential.as_credential_descriptor(None))`,
+    // vendored source), so treating an absent value as a ceremony failure
+    // (rather than silently falling back to the request's own
+    // `allow_credential_id`) surfaces a real upstream-behavior change loudly
+    // instead of masking it.
+    let credential_id: Vec<u8> = response.credential.map(|c| Vec::from(c.id)).ok_or_else(|| {
+        PvProviderError::Ceremony(
+            "get_assertion succeeded but returned no credential descriptor".into(),
+        )
+    })?;
+    let user_handle = response.user.map(|u| Vec::from(u.id));
+    let signature: Vec<u8> = response.signature.into();
+    // `AuthenticatorData::to_vec()` -- the SAME raw-byte encoding
+    // `response_shape.rs`'s own EXT-10 test decodes off the base64url wire
+    // field for the WebAuthn-client-level path; here it is already plain
+    // bytes, no base64url unwrap needed (`tests/ctap2_ceremony.rs`, Task 2).
+    let authenticator_data = response.auth_data.to_vec();
+
+    Ok(GetAssertionCtap2Result { credential_id, user_handle, signature, authenticator_data })
+}
+
+#[cfg(test)]
+mod ctap2_tests {
+    use sha2::{Digest, Sha256};
+    use webauthn_rs::prelude::{
+        Passkey as WebauthnRsPasskey, PublicKeyCredential, RegisterPublicKeyCredential, Uuid,
+        WebauthnBuilder,
+    };
+
+    use super::*;
+
+    /// Mirrors `crates/pv-provider/src/lib.rs`'s own `fixture_create_request`
+    /// (private to that file's `#[cfg(test)] mod tests`, not importable from
+    /// here) -- duplicated per this crate's own fixture-owning precedent
+    /// (`tests/response_shape.rs`, `tests/real_rp_verification.rs`'s own
+    /// headers).
+    fn fixture_create_request(rp_id: &str) -> String {
+        let public_key = serde_json::json!({
+            "rp": { "id": rp_id, "name": "Example" },
+            "user": {
+                "id": passkey_types::encoding::base64url(&[1u8; 16]),
+                "name": "user@example.com",
+                "displayName": "User",
+            },
+            "challenge": passkey_types::encoding::base64url(&[2u8; 16]),
+            "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+        });
+        serde_json::to_string(&serde_json::json!({ "publicKey": public_key })).unwrap()
+    }
+
+    /// `get_assertion_ctap2` against an EMPTY credential store returns the
+    /// SAME `Ctap2Error::NoCredentials` shape `PvCredentialStore::
+    /// find_credentials` already produces for the WebAuthn-client-level
+    /// path -- there is no credential to assert with.
+    #[test]
+    fn empty_store_rejected() {
+        let result = get_assertion_ctap2("example.com", vec![0u8; 32], None, "[]");
+        assert!(
+            matches!(result, Err(PvProviderError::Ceremony(_))),
+            "an empty credential store must be rejected with a Ceremony error -- got: {result:?}"
+        );
+    }
+
+    /// `find_credentials`'s existing `rp_id` filter (T-43-09) is exercised
+    /// THROUGH the new entry point, never bypassed: a store seeded for a
+    /// DIFFERENT rp_id than the one requested must still be rejected.
+    #[test]
+    fn wrong_rp_id_rejected() {
+        let create_result =
+            create_provider_credential(&fixture_create_request("example.com"), "https://example.com")
+                .expect("create_provider_credential should succeed");
+        let existing_credentials_json = format!("[{}]", create_result.new_passkey_json);
+
+        let result = get_assertion_ctap2(
+            "other-rp.example",
+            vec![0u8; 32],
+            None,
+            &existing_credentials_json,
+        );
+        assert!(
+            matches!(result, Err(PvProviderError::Ceremony(_))),
+            "a store seeded for a different rp_id must be rejected, not silently matched -- \
+             got: {result:?}"
+        );
+    }
+
+    /// The byte-level plumbing proof: `get_assertion_ctap2`'s `signature`
+    /// verifies, using a REAL third-party `webauthn-rs` verifier, against
+    /// the SAME `client_data_hash` passed in and the seeded credential's
+    /// public key. `get_assertion_ctap2` itself never sees or produces a
+    /// `clientDataJSON` (that is the entire reason this entry point
+    /// exists) -- so this test builds its OWN `clientDataJSON` embedding a
+    /// genuine `webauthn-rs`-issued challenge, hashes it exactly like an
+    /// OS-level caller would before invoking this function, and then
+    /// reconstructs a `webauthn-rs` `PublicKeyCredential` from the CTAP2
+    /// result plus that same JSON to hand to the SAME independent verifier
+    /// `tests/real_rp_verification.rs` uses.
+    #[test]
+    fn signature_verifies_against_independent_webauthn_rs() {
+        let rp_id = "example.com";
+        let rp_origin = "https://example.com";
+        let webauthn = WebauthnBuilder::new(rp_id, &Url::parse(rp_origin).unwrap())
+            .unwrap()
+            .build()
+            .unwrap();
+
+        // Seed a real credential the SAME way real_rp_verification.rs does
+        // -- driven by a genuine webauthn-rs CreationChallengeResponse,
+        // verified by webauthn-rs's own finish_passkey_registration, never
+        // a hand-rolled Passkey.
+        let (ccr, reg_state) = webauthn
+            .start_passkey_registration(Uuid::new_v4(), "qa@example.com", "T-43-02", None)
+            .expect("start_passkey_registration should succeed");
+        let create_request_json = serde_json::to_string(&ccr).unwrap();
+        let create_result = create_provider_credential(&create_request_json, rp_origin)
+            .expect("create_provider_credential should succeed");
+        let reg: RegisterPublicKeyCredential =
+            serde_json::from_str(&create_result.credential_response_json).unwrap();
+        let webauthn_rs_passkey: WebauthnRsPasskey = webauthn
+            .finish_passkey_registration(&reg, &reg_state)
+            .expect("independent webauthn-rs verifier must accept the seed registration");
+
+        // A genuine webauthn-rs challenge, embedded in a clientDataJSON this
+        // test builds itself and hashes -- exactly the split an OS-level
+        // caller (iOS) performs: the hash crosses into pv-provider, the
+        // JSON stays on the caller's side.
+        let (rcr, auth_state) = webauthn
+            .start_passkey_authentication(&[webauthn_rs_passkey])
+            .expect("start_passkey_authentication should succeed");
+        let challenge_bytes: &[u8] = &rcr.public_key.challenge;
+        let challenge_b64 = passkey_types::encoding::base64url(challenge_bytes);
+        let client_data_json = serde_json::json!({
+            "type": "webauthn.get",
+            "challenge": challenge_b64,
+            "origin": rp_origin,
+        })
+        .to_string();
+        let client_data_hash = Sha256::digest(client_data_json.as_bytes()).to_vec();
+
+        let existing_credentials_json = format!("[{}]", create_result.new_passkey_json);
+        let result =
+            get_assertion_ctap2(rp_id, client_data_hash, None, &existing_credentials_json)
+                .expect("get_assertion_ctap2 should succeed against a seeded credential");
+
+        let response_json = serde_json::json!({
+            "id": passkey_types::encoding::base64url(&result.credential_id),
+            "rawId": passkey_types::encoding::base64url(&result.credential_id),
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": passkey_types::encoding::base64url(client_data_json.as_bytes()),
+                "authenticatorData": passkey_types::encoding::base64url(&result.authenticator_data),
+                "signature": passkey_types::encoding::base64url(&result.signature),
+                "userHandle": result
+                    .user_handle
+                    .as_ref()
+                    .map(|h| passkey_types::encoding::base64url(h)),
+            },
+        });
+        let pkc: PublicKeyCredential = serde_json::from_value(response_json)
+            .expect("reconstructed PublicKeyCredential JSON must deserialize");
+
+        webauthn.finish_passkey_authentication(&pkc, &auth_state).expect(
+            "independent webauthn-rs verifier must accept get_assertion_ctap2's real \
+             signature over the SAME client_data_hash passed in -- proving the byte-level \
+             plumbing, not merely that the call returns Ok",
+        );
+    }
 }

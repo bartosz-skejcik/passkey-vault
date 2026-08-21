@@ -86,6 +86,7 @@
 //! | `FfiInviteChannel::proof_for_redemption` | `Vec<u8>` (BEZ `Result`) | NIE — HKDF, ten sam kształt (40-04) |
 //! | `FfiInviteChannel::wrap_collection_key` | `Result<String,_>` | serde_json — złapane jako `Err` (40-04) |
 //! | `FfiInviteChannel::unwrap_collection_key` | `Result<Arc<FfiCollectionKey>,_>` | serde_json/AAD mismatch — złapane jako `Err` (40-04) |
+//! | `provider_get_assertion`        | `Result<FfiProviderAssertionResult,_>` | — `?`-propagowane tylko z `pv_provider::get_assertion_ctap2`, ten sam kształt co `wrap_user_key` (43-02) |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -165,6 +166,16 @@ pub use sharing::{
     wrap_identity_secret_key, FfiCollectionKey, FfiIdentityKey, FfiIdentityPublicKey,
     FfiInviteChannel,
 };
+
+// Phase 43 (warunkowe-passkeys-tylko-jesli-tanie), Plan 43-02: `pv-ffi`'s
+// FIRST dependency edge into `pv-provider` -- the CTAP2-level passkey
+// ASSERTION entry point for iOS's `ASCredentialProviderViewController`
+// (OPT-03). See that module's own header for the T-43-02 threat mitigation
+// (no raw key material in `FfiProviderAssertionResult`) and why this needed
+// a NEW `From<pv_provider::PvProviderError> for FfiError` impl
+// (`error.rs`), the exact conversion the IOS-06 decision record anticipated.
+pub mod provider;
+pub use provider::{provider_get_assertion, FfiProviderAssertionResult};
 
 // TEST-ONLY (`#[cfg(test)]`): observes what this crate actually hands back
 // to the allocator, so the CR-01 zeroization regression is asserted on real

@@ -3,14 +3,28 @@
 //! provider ceremony (Phase 12, PROV-01/PROV-02/PROV-04).
 //!
 //! This crate is the ONLY place `passkey-authenticator`/`passkey-client`/
-//! `passkey-types` are used — never `pv-core`, never `pv-wasm` directly, and
-//! never the extension's MAIN-world page-bridge (D-02/D-05). It is itself
-//! only ever called from `crates/pv-wasm` (Task 2), which wraps
-//! [`create_provider_credential`]/[`get_provider_assertion`] with
-//! `pv-core`'s existing `encrypt_item`/`decrypt_item` so the plaintext
-//! private key material this crate briefly produces (`new_passkey_json`/
-//! `updated_passkey_json`) never crosses the WASM->JS boundary as a return
-//! value.
+//! `passkey-types` are used — never `pv-core` directly, and never the
+//! extension's MAIN-world page-bridge (D-02/D-05). That invariant is
+//! UNCHANGED by this crate's Phase 43 addition (see
+//! `43-RESEARCH.md`'s "The exception this phase must ask for").
+//!
+//! This crate has TWO callers, not one (the "only ever called from
+//! `crates/pv-wasm`" sentence below was stale as of Phase 43 -- only the
+//! caller-COUNT was wrong, the passkey-crate-usage invariant above still
+//! holds exactly as written):
+//!
+//! - `crates/pv-wasm` (Task 2), which wraps [`create_provider_credential`]/
+//!   [`get_provider_assertion`] — the browser extension's WebAuthn-CLIENT-
+//!   level ceremonies — with `pv-core`'s existing `encrypt_item`/
+//!   `decrypt_item` so the plaintext private key material this crate
+//!   briefly produces (`new_passkey_json`/`updated_passkey_json`) never
+//!   crosses the WASM->JS boundary as a return value.
+//! - `crates/pv-ffi` (Phase 43, OPT-03), which wraps [`get_assertion_ctap2`]
+//!   — iOS's CTAP2-LEVEL assertion ceremony — the same way for the Swift
+//!   boundary. See that function's own doc comment
+//!   (`crates/pv-provider/src/ceremony.rs`) for why the WebAuthn-client-level
+//!   functions above cannot serve iOS's provider path at all (iOS hands a
+//!   pre-computed `clientDataHash`, never a WebAuthn options JSON).
 //!
 //! D-08 note: this crate introduces ZERO new HKDF domain-separation
 //! contexts. The previously planned ephemeral-wrap module
@@ -24,8 +38,8 @@ mod credential_store;
 mod error;
 
 pub use ceremony::{
-    create_provider_credential, get_provider_assertion, CreateProviderResult,
-    GetProviderAssertionResult,
+    create_provider_credential, get_assertion_ctap2, get_provider_assertion,
+    CreateProviderResult, GetAssertionCtap2Result, GetProviderAssertionResult,
 };
 pub use credential_store::{PvCredentialStore, PvUserValidation};
 pub use error::PvProviderError;

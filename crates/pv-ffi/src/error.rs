@@ -37,3 +37,19 @@ impl From<pv_core::CryptoError> for FfiError {
         }
     }
 }
+
+/// 43-02: the `From<PvProviderError> for FfiError` impl the IOS-06 decision
+/// record anticipated ("plus `From<PvProviderError> for FfiError` if/when
+/// `pv-provider` is touched" — `ios/IOS-SPIKE-LOG.md` §1). There is no
+/// dedicated `FfiError::Ceremony` variant and this impl does not add one —
+/// `InvalidInput` already carries an arbitrary message, matching
+/// `wrap_user_key_json`'s own JSON-decode-error mapping style (`lib.rs`).
+/// Every `PvProviderError` variant (`Ceremony`/`InvalidInput`/`Serde`) maps
+/// here identically: the distinction that matters to a Swift caller is
+/// "the call failed, here is why", not which Rust-side enum variant
+/// produced it.
+impl From<pv_provider::PvProviderError> for FfiError {
+    fn from(e: pv_provider::PvProviderError) -> Self {
+        FfiError::InvalidInput(e.to_string())
+    }
+}

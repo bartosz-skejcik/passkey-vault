@@ -92,6 +92,14 @@ kdf-probe = []
 # entirely"). `.udl`/traditional mode is the only mode that needs a build.rs.
 [dependencies]
 pv-core = { path = "../pv-core" }
+# 43-02: `provider.rs`'s `provider_get_assertion` thinly delegates to
+# `pv_provider::get_assertion_ctap2` -- pv-ffi's FIRST dependency edge into
+# pv-provider (see that crate's own lib.rs header, which now names
+# `crates/pv-ffi` as its second caller alongside `crates/pv-wasm`). No
+# version pin needed beyond the workspace's own internal-path-dep
+# convention (mirrors `pv-core` above) -- both crates are workspace
+# members, never published (`publish = false`, root Cargo.toml).
+pv-provider = { path = "../pv-provider" }
 uniffi = { version = "=0.32.0", features = ["cli"] }
 serde_json.workspace = true
 zeroize = { version = "1", features = ["derive"] }

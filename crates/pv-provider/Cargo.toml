@@ -45,3 +45,12 @@ url = "2"
 [dev-dependencies]
 webauthn-rs = "0.5"
 uuid.workspace = true
+# T-43-02's own signature-verification test (ceremony.rs::ctap2_tests)
+# needs to hash a `clientDataJSON` it builds itself into a `client_data_hash`
+# -- the exact split an OS-level caller (iOS) performs before calling
+# `get_assertion_ctap2`. Not a new external audit: `sha2 = "0.10"` is
+# already pinned workspace-wide (Cargo.lock: 0.10.9), used by pv-core and
+# pv-server today -- this only adds it to THIS crate's dev-only dependency
+# graph, never a production runtime dependency (mirrors webauthn-rs/uuid's
+# own dev-dependency-only precedent immediately above).
+sha2 = "0.10"
