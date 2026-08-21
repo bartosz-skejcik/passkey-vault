@@ -5020,3 +5020,32 @@ lookup table (the `EXPECTED_CLASSES`/`GUARD_PATTERNS` shape this phase's own scr
 should use parallel indexed arrays instead, or explicitly shebang `#!/opt/homebrew/bin/bash` /
 equivalent AND verify that path exists on the target machine before relying on bash-4+ features --
 this machine has no Homebrew bash installed today (`which -a bash` -> `/bin/bash` only).
+
+## 8d. Phase 42 — human-verify backlog (2026-08-20, orchestrator disposition)
+
+`42-VERIFICATION.md` closed 10/10 must-haves with the verifier re-running every gate, independently
+falsifying the register gate on scratch copies, and spot-checking 10 register rows across phases
+36-41 (zero overstatements found). Owed to a human:
+
+1. **L-14 IS THE MILESTONE'S SHIP BLOCKER AND IT IS BARTEK'S CALL.** Re-probed live twice today:
+   `xcodebuild -configuration Release` still exits 65 with the same `swift-frontend` infinite
+   recursion (`EarlyPerfInliner` on `UniffiHandleMap…deinit`, pass #982547) as the 2026-08-16
+   finding. Phase 42 discharged its own obligation by recording it unsoftened — DR-42-C decided
+   "record, don't repair" BEFORE the audit, and no `-Onone` workaround was committed. But every one
+   of the register's 150 evidence rows is Debug-only, so the product cannot ship until one of
+   L-14's three recorded options is chosen (bump the UniFFI pin; isolate the generated bindings into
+   their own `-Onone` module; report upstream + pin the toolchain).
+2. **F-1 (verifier's own new finding, warning):** `git archive HEAD` into a scratch tree makes
+   `check-ios-gate.sh` exit 1 — 139 of 267 register refs point into `.planning/`, which QA-05
+   forbids committing. So "one command runs every gate green" is true in this worktree and FALSE on
+   the committed branch. It fails loudly, never vacuously, but it compounds H-04: the composer is
+   not merely un-wired to CI, it is currently un-wirable without either committing `.planning/` or
+   re-anchoring those refs at committed artifacts (`ios/evidence/`, `ios/IOS-SPIKE-LOG.md`).
+3. **Three unclaimed gap rows** (H-04, H-08, H-10) — each carries a reason, which satisfies 42-07's
+   own prohibition on parking work, but they are homeless now that Phase 43 is decision-gated.
+4. **Gap #25:** the disclosed `.domain` fill-time limitation (WINDOWS #17) — a product call, not a
+   defect.
+5. **Sampling level:** 10 of 150 register rows were spot-checked. Accepting that level is a
+   judgement call; the register's own resolvability gate cannot catch a semantically wrong row that
+   cites a real line (verifier's R5 boundary).
+6. §8c items 1-5 carried forward unchanged.
