@@ -1986,6 +1986,16 @@ green twice); `LocalAccountRestoreTests.swift` (8 cases: `localAccount()`'s Keyc
 structure, `unlockLocally`'s real-crypto round trip / wrong-password rejection /
 `noCachedCredentials` fallback signal, and the envelope-cache merge-never-blanks contract).
 
+**Numbering note (added Phase 42, Plan 42-05):** the `DR-42-A` label above is the ONLY `DR-42-A` --
+this is the decision it names. Plan 42-05 (`ios/QA-AUDIT-v1.0.md`) needed a "the audit records, it
+does not repair" decision and its own planning material called it "DR-42-A" too, written before
+anyone checked this section for a collision; that decision is recorded as **DR-42-C** instead (the
+next free `DR-42-*` letter), with its own numbering note, per the same renumber-forward convention
+this file already used for L-12/L-15/L-33/L-39. One already-committed record, `42-03-SUMMARY.md`
+(quoted nearby in this file's WR-10 discussion), made the same collision one plan earlier and was
+left as-is rather than rewritten; a reader following that reference should understand it to mean
+DR-42-C, not this section's DR-42-A.
+
 ---
 
 ## 1l. QA-05 enforcement mechanism — IOS-07, 2026-08-20
@@ -4972,3 +4982,40 @@ the sub-gate. Any future caller chaining a plain `scripts/build-ios.sh` run imme
 first-attempt failure and either retry once with the same narrow signature check, or insert a
 `--with-panic-probe` (or otherwise matching-variant) rebuild between the two steps to avoid the
 transition entirely.
+
+### L-42 -- `declare -A` silently mis-parses under macOS's stock bash 3.2, throwing "unbound variable" on a word INSIDE the key string
+
+**Found 2026-08-21, Phase 42, Plan 42-05, Task 1, empirically, while writing `scripts/qa-audit-
+inventory.sh`.** Every other gate script in this repo (`scripts/check-ios-gate.sh`,
+`scripts/audit-ffi-opaque-handles.sh`, `scripts/build-ios.sh`) avoids `declare -A` entirely; this
+plan discovered why. `/usr/bin/env bash` on this machine resolves to `GNU bash, version
+3.2.57(1)-release (arm64-apple-darwin25)` -- Apple has shipped bash 3.2 as the system bash since
+GPLv3 licensing changes in 2007 and has never updated it; associative arrays (`declare -A`) are a
+bash-4.0+ feature. A `declare -A` whose key string contains a space or a parenthesis does not error
+at the `declare` line itself -- it fails LATER, at first use, with a message naming an unrelated WORD
+FROM INSIDE the key string as an "unbound variable":
+
+```
+$ bash -c 'set -euo pipefail
+declare -A GUARD_PATTERNS=(
+  ["slice gate (scripts/build-ios.sh)"]="build-ios"
+)
+echo done'
+bash: line 1: gate: unbound variable
+```
+
+The error names `gate` (a word from inside the key `"slice gate (scripts/build-ios.sh)"`), which
+reads exactly like a real unset-variable bug in unrelated code, not a keyword/version mismatch --
+this is the trap. No `bash --version` check, no `shopt` probe, and no syntax highlighter catches it;
+`bash -n` (syntax-only check) also passes cleanly, since the parse is syntactically valid bash-3.2
+grammar, just not the grammar the author intended.
+
+**Fix used:** parallel indexed arrays (`GUARD_NAMES=(...)` / `GUARD_REGEXES=(...)`, same index) instead
+of one associative array -- works identically on bash 3.2 and any later bash, and is the pattern this
+repo's other gate scripts already use without anyone having needed to write this down before now.
+
+**Consequence:** any FUTURE gate script in this repo that reaches for `declare -A` for a "self-control"
+lookup table (the `EXPECTED_CLASSES`/`GUARD_PATTERNS` shape this phase's own scripts use repeatedly)
+should use parallel indexed arrays instead, or explicitly shebang `#!/opt/homebrew/bin/bash` /
+equivalent AND verify that path exists on the target machine before relying on bash-4+ features --
+this machine has no Homebrew bash installed today (`which -a bash` -> `/bin/bash` only).
