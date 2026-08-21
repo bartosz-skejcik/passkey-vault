@@ -311,7 +311,24 @@ for i in "${!CALL_SITE_LABELS[@]}"; do
     continue
   fi
 
-  window_end=$((anchor_line + window))
+  # A fixed line window is a proximity heuristic wearing a contract's clothes: on 2026-08-20 the
+  # post-fill self-heal site went RED purely because an unrelated commit added comment lines,
+  # pushing its (unchanged, correct) `upsertOne(` call from line 140 to 147 past its own anchor.
+  # The honest extent of a call site is its ENCLOSING FUNCTION, so end the window at the next
+  # declaration at the same indentation instead -- `window` survives only as an upper bound, so a
+  # runaway search can still never wander into the next screenful of an unusually long file.
+  next_decl_offset=$(awk -v start="$anchor_line" '
+    NR > start && /^[[:space:]]*(private |fileprivate |internal |public )?(static )?func /  { print NR - start; exit }
+  ' "$STRIPPED")
+  if [ -n "$next_decl_offset" ]; then
+    # The enclosing function's real extent is authoritative -- LONGER than the old fixed window as
+    # well as shorter. Capping it at `window` here is what produced the 2026-08-20 false positive.
+    window_end=$((anchor_line + next_decl_offset - 1))
+  else
+    # No further declaration in the file: the site is the last function, so fall back to the
+    # bounded window rather than reading to EOF.
+    window_end=$((anchor_line + window))
+  fi
   window_text=$(sed -n "${anchor_line},${window_end}p" "$STRIPPED")
   if ! printf '%s\n' "$window_text" | grep -qF "$required_call"; then
     VIOLATIONS_B="${VIOLATIONS_B}${label} (${file}, declared at line ${anchor_line}) -- no ${required_call} call found within ${window} lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)"$'\n'
