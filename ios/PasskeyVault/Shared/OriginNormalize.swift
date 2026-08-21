@@ -86,4 +86,29 @@ enum OriginNormalize {
     static func host(fromURLString raw: String) -> String? {
         components(fromURLString: raw)?.host
     }
+
+    /// True when `host` has the SHAPE of a reverse-DNS app package identifier
+    /// (`com.xiaomi.smarthome`, `com.contextlogic.wish` -- real values pulled from a real device
+    /// log of an imported vault, 2026-08-21) rather than a real DNS hostname. A genuine hostname
+    /// always carries its TLD LAST (`xiaomi.com`); a bundle identifier carries a TLD-looking word
+    /// FIRST. This is the one shape difference distinguishing the two without a network
+    /// round-trip -- used to fail closed BOTH in `IdentityStoreSync` (stop registering a package
+    /// name as a `.domain` identity that can never match a real page) and in `FaviconLoader` (stop
+    /// issuing a DNS lookup that can never return a favicon; see that file's own header).
+    ///
+    /// `host` is expected pre-normalized (lowercased, no scheme, no port) -- `components(fromURLString:)`'s
+    /// own output already satisfies that; callers with a raw value should route through that
+    /// function first rather than duplicating its parsing here.
+    static func looksLikeAppPackageName(_ host: String) -> Bool {
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, let first = labels.first?.lowercased(), !first.isEmpty else { return false }
+        return packageNameFirstLabels.contains(first)
+    }
+
+    /// Deliberately small and specific (not a general TLD list) -- these are the prefixes that
+    /// show up as the FIRST label of a real-world app bundle identifier (`com.`, `net.`, `org.`,
+    /// `io.`, `app.`); a real hostname practically never begins with one of these AND has 2+ more
+    /// labels after it (a real `io.example.com` is vanishingly rare next to the volume of
+    /// `com.example.app`-shaped package names an imported vault can carry).
+    private static let packageNameFirstLabels: Set<String> = ["com", "net", "org", "io", "app"]
 }

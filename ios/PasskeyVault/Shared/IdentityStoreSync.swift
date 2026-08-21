@@ -415,7 +415,21 @@ enum IdentityStoreSync {
         for (sourceIndex, source) in sources.enumerated() {
             guard !source.username.isEmpty, !source.itemId.isEmpty else { continue }
             for url in source.urls {
-                guard let host = serviceHost(fromURLString: url) else {
+                let host: String
+                switch serviceHost(fromURLString: url) {
+                case let .host(resolvedHost):
+                    host = resolvedHost
+                case .notADomain:
+                    // 2026-08-21 privacy fix: an imported vault entry whose URL field holds an
+                    // Android app package name (`com.xiaomi.smarthome`) used to sail through the
+                    // https-assumption below and get registered as a real `.domain` identity --
+                    // `serviceHost` now rejects it via `OriginNormalize.looksLikeAppPackageName`
+                    // (see that function's own header). Distinguished from the genuine-parse-
+                    // -failure case below by NAME, not lumped into the same status, so a future
+                    // reader is not left wondering which of the two this run's skip actually was.
+                    logger.debug("PVFILL|E41-2|stage=build-identity status=skipped-not-a-domain")
+                    continue
+                case .unparseable:
                     // WR-09 (41-REVIEW.md): fails CLOSED (skip) rather than registering the raw,
                     // un-parseable string as a permanent junk `.domain` entry -- see
                     // `serviceHost(fromURLString:)`'s own header. Logged so a real user's item
@@ -439,6 +453,14 @@ enum IdentityStoreSync {
                     // or Console with debug messages enabled) without it reading, at the DEFAULT
                     // `.log` level every other line in this file uses for genuine outcomes, as if 5
                     // out of Bartek's 323 real items were silently failing something.
+                    //
+                    // CORRECTION (2026-08-21, same privacy fix as above): those 5 items were
+                    // RE-CHECKED against this predicate specifically -- none of them are the
+                    // `com.xiaomi.smarthome` / `com.contextlogic.wish` package-name entries. Those
+                    // two previously landed in the `.host(...)` case above (a bare package name
+                    // parses fine as an https-assumed host) and are what `.notADomain` now catches
+                    // instead. The 5 `skipped-unparseable-url` items remain the blank-URL and
+                    // non-http(s)-custom-scheme cases this comment already described.
                     logger.debug("PVFILL|E41-2|stage=build-identity status=skipped-unparseable-url")
                     continue
                 }
@@ -454,6 +476,16 @@ enum IdentityStoreSync {
         return identities
     }
 
+    /// Distinguishes WHY a URL string failed to become a registrable service host -- a genuine
+    /// parse failure vs. a value that parsed fine but has the shape of an app package name, not a
+    /// domain -- purely so `buildIdentities` can log the two under different, honestly-named
+    /// `status=` values instead of one generic bucket.
+    private enum ServiceHostResult {
+        case host(String)
+        case notADomain
+        case unparseable
+    }
+
     /// `ASCredentialServiceIdentifier(type: .domain)` matching is host-based (F3,
     /// `41-RESEARCH.md`) -- QuickType matches by the CURRENT PAGE'S host, never by the raw string
     /// an item happened to store. Handles both a bare host ("example.com") and a full URL
@@ -465,8 +497,20 @@ enum IdentityStoreSync {
     /// again. WR-09 (41-REVIEW.md): a value that fails to parse even after the https-assumption is
     /// a genuine parse failure, and the registrar fails CLOSED (`nil`, skip) rather than
     /// registering the raw, un-parseable string as a permanent junk `.domain` entry.
-    private static func serviceHost(fromURLString raw: String) -> String? {
-        OriginNormalize.host(fromURLString: raw)
+    ///
+    /// 2026-08-21 privacy fix: a SECOND fail-closed case, same shape of problem. Before this, an
+    /// imported vault entry whose URL field held an Android app package name
+    /// (`com.xiaomi.smarthome`) parsed FINE here -- a bare reverse-DNS-shaped string is
+    /// indistinguishable from a bare hostname to `URL(string:)`, so the https-assumption above
+    /// happily produced `host: "com.xiaomi.smarthome"` and this file registered it as a real
+    /// `.domain` identity that could never match any page QuickType would ever show. Routed
+    /// through `OriginNormalize.looksLikeAppPackageName` (the SAME predicate `FaviconLoader` now
+    /// uses to refuse the identical values before a DNS lookup) rather than inventing a second
+    /// shape check.
+    private static func serviceHost(fromURLString raw: String) -> ServiceHostResult {
+        guard let host = OriginNormalize.host(fromURLString: raw) else { return .unparseable }
+        guard !OriginNormalize.looksLikeAppPackageName(host) else { return .notADomain }
+        return .host(host)
     }
 
     // MARK: - Rebuild-pending / published-set persistence

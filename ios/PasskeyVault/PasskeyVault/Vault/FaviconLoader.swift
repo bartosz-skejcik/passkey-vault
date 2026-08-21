@@ -33,6 +33,7 @@
 //
 
 import Foundation
+import Network
 
 @MainActor
 final class FaviconLoader {
@@ -80,6 +81,21 @@ final class FaviconLoader {
         if failedHosts.contains(hostname) {
             return nil
         }
+        // 2026-08-21 privacy fix (real device log, Bartek's own vault): an imported entry whose
+        // URL field held an Android app package name (`com.xiaomi.smarthome`,
+        // `com.contextlogic.wish`) was being treated as a hostname and resolved on EVERY list
+        // render that showed the row -- `-1003 could not be found` in the log is Foundation
+        // failing the DNS lookup, not the app declining to attempt one. That lookup is ALL COST,
+        // NO BENEFIT: it can never return a favicon (a package name is not a website), while it
+        // DOES hand the presence of a vault entry to whatever resolver the device is using --
+        // exactly the leak this file's own header says the zero-knowledge favicon rule accepts
+        // only ONE deliberate instance of (a direct request to an item's OWN real domain). Reuse
+        // the SAME failed-host cache as an ordinary favicon failure below -- this is a silent,
+        // routine empty state (falls back to the monochrome glyph tile), never an error surface.
+        guard Self.isPlausibleDNSHostname(hostname) else {
+            failedHosts.insert(hostname)
+            return nil
+        }
         guard let url = URL(string: "https://\(hostname)/favicon.ico") else {
             failedHosts.insert(hostname)
             return nil
@@ -109,5 +125,57 @@ final class FaviconLoader {
     /// state via mirrors.
     var isConfiguredWithNoDiskCache: Bool {
         session.configuration.urlCache == nil
+    }
+
+    // MARK: - Hostname plausibility (the DNS-leak-that-can-never-return-a-favicon guard)
+
+    /// True only for a value that could plausibly be a real, DNS-resolvable hostname -- the gate
+    /// `favicon(forHostname:)` checks BEFORE issuing any network request. Rejects, at minimum:
+    ///   - a non-http(s) scheme (`androidapp://`, `otpauth://`) -- never a web origin regardless
+    ///     of what authority it carries;
+    ///   - a single-label name (`localhost`, or a bare package name with no dot at all) -- no
+    ///     `favicon.ico` request to it could ever be meaningful;
+    ///   - the reverse-DNS app-package SHAPE (`com.xiaomi.smarthome`) via
+    ///     `OriginNormalize.looksLikeAppPackageName` -- reused rather than duplicated, so the
+    ///     favicon path and the identity-store registrar (`IdentityStoreSync.serviceHost`) can
+    ///     never drift onto two different definitions of "not a domain".
+    /// An IP literal (v4 or v6), with or without a port, is explicitly ALLOWED -- self-hosted/LAN
+    /// entries are legitimate vault items; whether a LAN address is actually fetchable is a
+    /// separate, already-filed limitation, not this predicate's concern.
+    nonisolated static func isPlausibleDNSHostname(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        if trimmed.contains("://") {
+            guard let scheme = URL(string: trimmed)?.scheme?.lowercased(), scheme == "http" || scheme == "https"
+            else { return false }
+        }
+
+        let withoutPort = stripPort(trimmed)
+
+        if IPv4Address(withoutPort) != nil || IPv6Address(withoutPort) != nil {
+            return true
+        }
+
+        let labels = withoutPort.split(separator: ".", omittingEmptySubsequences: false)
+        guard labels.count >= 2, labels.allSatisfy({ !$0.isEmpty }) else { return false }
+
+        return !OriginNormalize.looksLikeAppPackageName(withoutPort.lowercased())
+    }
+
+    /// Strips a trailing `:port` so the shape/IP checks above see just the host part. Bracketed
+    /// IPv6-with-port (`[::1]:8080`) is unwrapped explicitly; a bare IPv6 literal is left alone --
+    /// it is ALL colons, so the "exactly one colon, all-digit suffix" rule below never fires on it
+    /// by construction.
+    private nonisolated static func stripPort(_ value: String) -> String {
+        if value.hasPrefix("["), let closeBracket = value.firstIndex(of: "]") {
+            return String(value[value.index(after: value.startIndex)..<closeBracket])
+        }
+        guard value.filter({ $0 == ":" }).count == 1, let colonIndex = value.firstIndex(of: ":") else {
+            return value
+        }
+        let portPart = value[value.index(after: colonIndex)...]
+        guard !portPart.isEmpty, portPart.allSatisfy(\.isNumber) else { return value }
+        return String(value[..<colonIndex])
     }
 }
