@@ -5173,3 +5173,54 @@ falsifying the register gate on scratch copies, and spot-checking 10 register ro
    judgement call; the register's own resolvability gate cannot catch a semantically wrong row that
    cites a real line (verifier's R5 boundary).
 6. §8c items 1-5 carried forward unchanged.
+
+## 9. Phase 43, Plan 43-02 — CTAP2 assertion entry point, Rust/FFI half of the tracer (2026-08-21)
+
+`get_assertion_ctap2` (`crates/pv-provider/src/ceremony.rs`) and its `pv-ffi` export
+`provider_get_assertion` (`crates/pv-ffi/src/provider.rs`) are committed
+(`8241c56`/`2bf35a4`). This is the deliberate Rust/FFI-only half of the phase's tracer
+(43-PLAN-CHECK.md B5 split, 43-02-PLAN.md) — Plan 43-03 owns the Swift `.passkeyAssertion` branch,
+the RP fixture, and the live Safari proof.
+
+**Why `get_provider_assertion` (the existing WebAuthn-client-level entry point) cannot serve this
+path:** iOS hands a credential provider a pre-computed `clientDataHash` (`ASPasskeyCredentialRequest.
+clientDataHash`, header ground truth per 43-RESEARCH.md), never a full WebAuthn options JSON.
+`get_provider_assertion` builds/hashes `clientData` internally via `passkey_client::Client::
+authenticate` — SHA-256 is not invertible, so there is no way to recover the JSON that function
+expects from a hash alone. `get_assertion_ctap2` instead calls `passkey_authenticator::
+Authenticator::get_assertion` directly, one layer below `passkey_client::Client`, whose `ctap2::
+get_assertion::Request` takes `client_data_hash: Bytes` as a first-class field.
+
+**Proof shape, not just "compiles":** `ceremony::ctap2_tests::
+signature_verifies_against_independent_webauthn_rs` builds its own `clientDataJSON` embedding a
+GENUINE `webauthn-rs`-issued challenge, hashes it exactly like an OS-level caller would, calls
+`get_assertion_ctap2`, then reconstructs a `webauthn-rs` `PublicKeyCredential` from the CTAP2
+result's raw bytes and hands it to the SAME independent, cross-vendor verifier
+`tests/real_rp_verification.rs` (QA-03) uses — a real ECDSA signature check, not a shape/`.ok`
+assertion. Falsified once (corrupted signature byte → genuine failure) before being trusted; full
+transcripts at `ios/evidence/43/43-02-rust-ffi-transcripts.md`.
+
+**T-43-02 (Information Disclosure) closed structurally, not by review discipline alone:**
+`FfiProviderAssertionResult` carries only `credential_id`/`user_handle`/`signature`/
+`authenticator_data` — no handle-typed field at all, so
+`scripts/audit-ffi-opaque-handles.sh` needs no new allow-list entry for it; a PASS against the
+freshly rebuilt bindings is itself the proof no raw-byte accessor was introduced.
+
+**EXT-10 extended, not re-litigated:** the new `Authenticator::new(...)` construction in
+`get_assertion_ctap2` never opts into `make_credentials_with_signature_counter(true)`, same as the
+two existing entry points. `tests/ctap2_ceremony.rs` (new file, `pub(crate)` fixture helper for
+Plans 43-04/43-09 to reuse) asserts this on raw `authenticator_data` bytes at the documented
+signCount offset (33..37), for a single call and across two consecutive calls against the same
+seeded store — falsified once before being trusted.
+
+**IOS-06's anticipated conversion landed:** `impl From<pv_provider::PvProviderError> for FfiError`
+(`crates/pv-ffi/src/error.rs`) is the exact impl that decision record's own text named as owed
+"if/when `pv-provider` is touched" — this plan is that touch, first FFI dependency edge from
+`pv-ffi` into `pv-provider`.
+
+**Full-gate confirmation:** `scripts/check-ios-gate.sh` (all six sub-gates: qa05, ffi_build,
+ffi_falsifiable, ffi_opaque, swift_tests, qa_register) exits 0 against this plan's changes —
+`swift_tests` hit the already-documented L-41 bindings-transition retry (not a regression) and
+passed on retry with all 5 required FFI identifiers matched. No `ios/PasskeyVault*` Swift file was
+touched by this plan; the scoped Swift test lane exercises the app target linking the freshly
+rebuilt XCFramework as a structural confirmation only.
