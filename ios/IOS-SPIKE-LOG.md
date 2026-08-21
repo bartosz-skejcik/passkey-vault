@@ -5473,3 +5473,12 @@ made, no functional change.
 This plan builds MACHINERY only, per its own explicit scope boundary; the registration override
 that actually calls `upsertOnePasskey` lands in Plan 43-07, which also extends assertion (B)'s
 `CALL_SITE_*` arrays once that call site exists to enumerate.
+
+**Full-gate confirmation:** `scripts/check-ios-gate.sh` (all six sub-gates: qa05, ffi_build,
+ffi_falsifiable, ffi_opaque, swift_tests, qa_register) exits 0 against this plan's changes --
+`swift_tests` hit the already-documented L-41 bindings-transition retry (not a regression) and
+passed on retry, executed-test count 5, all 5 required FFI identifiers matched. No pv-ffi source
+was touched by this plan; `ffi_build`/`ffi_falsifiable`/`ffi_opaque` ran as part of the composite
+gate's own standing checks, same posture as 43-02's/43-04's own entries above. Parallel simulator
+clones purged after both this run and the earlier scoped `IdentityStoreSyncPasskeyTests` run,
+leaving only the base `PV-iPhone16` booted. Transcript: `ios/evidence/43/43-05-check-ios-gate.log`.
