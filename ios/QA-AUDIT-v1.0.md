@@ -4,9 +4,15 @@
 42-06 (phases 35–38) and 42-07 (phases 39–41), which also resolves the 13 pre-seeded hazards below
 and delivers the closing verdict.
 
-**Audit-script baseline:** `<PENDING — set by 42-05 Task 3 after scripts/qa-audit-inventory.sh,
-scripts/check-qa-audit-register.sh and scripts/check-ios-gate.sh are committed; see that task's
-`git log -1 --format=%H -- <the three scripts>` output, quoted verbatim in 42-05-SUMMARY.md>`
+**Audit-script baseline:** `25d3a1cda079095c765c0184d23cf02701f4937f` — the commit that last touched
+`scripts/qa-audit-inventory.sh`, `scripts/check-qa-audit-register.sh`, and `scripts/check-ios-gate.sh`,
+captured via `git log -1 --format=%H -- scripts/check-ios-gate.sh scripts/check-qa-audit-register.sh
+scripts/qa-audit-inventory.sh` after all three were committed. **42-07 must diff the three scripts
+against this exact sha** (`git diff 25d3a1cda079095c765c0184d23cf02701f4937f -- <the three scripts>`,
+expected empty) as its own proof that the gate went green by evidence, not by editing the gate — 42-07
+is forbidden to touch these three scripts at all. A bare `git diff` (no reference point) compares the
+working tree against the index and is empty either way, which is why a pinned sha is required here
+rather than a live `git merge-base`/`HEAD` recomputation.
 
 ## Why this file lives under `ios/`, not `.planning/`
 
