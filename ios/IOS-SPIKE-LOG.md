@@ -25,8 +25,12 @@ file is the bug.
 
 **Milestone.** The spike graduated into milestone **v1.0 iOS — Vault w kieszeni** on 2026-08-11.
 Scope agreed with Bartek: full app UI + **password** AutoFill provider + biometric (Face ID / Touch ID)
-unlock + family management. Passkey provider and PRF unlock are **deferred and conditional** — they
-ship only if they turn out cheap, and "not done, deferred, here is why" is an acceptable outcome.
+unlock + family management. **The passkey-provider question below is now DECIDED, not conditional —
+see `## 1m. OPT-01` for the full record (2026-08-21):** GO for a third-party passkey provider
+(OPT-03, NordPass-parity scope), vault-PRF-unlock (OPT-02) REJECTED on product grounds (Face ID
+unlock already covers it), and PRF served through the provider (OPT-04) DEFERRED with reason. The
+original "ships only if cheap, deferred is an acceptable outcome" framing is superseded by that
+record for the parts it resolves.
 
 iOS was explicitly lifted out of `PROJECT.md`'s *Out of Scope* (where it sat as "v2"), because the two
 assumptions that put it there — that the crypto core might not build for Apple targets, and that PRF
@@ -2081,6 +2085,126 @@ replace a real CI runner") anticipates.
 
 Full transcripts: `.planning/phases/42-standard-dowodu-bramka-qa-i-ci-dla-ios/42-02-SUMMARY.md`
 (not committed from this worktree by the standing convention this record itself documents).
+
+---
+
+## 1m. OPT-01 — Passkey provider scope and cost, 2026-08-21
+
+### OPT-01 — Passkey provider scope and cost: **DECIDED — GO for OPT-03, scoped narrowly; OPT-02 product-rejected; OPT-04 deferred**
+
+Recorded in the `KEY-05`/`IOS-06`/`ACC-03` style: a decision is stated, rejected alternatives are
+named and rejected on their own merits (never merely omitted), and residual risk is stated plainly
+rather than softened. Full research behind every clause below:
+`.planning/phases/43-warunkowe-passkeys-tylko-je-li-tanie/43-RESEARCH.md`.
+
+**1. Decision: GO for OPT-03**, scoped exactly to registration (`make_credential`) and assertion
+(`get_assertion`) for third-party relying parties, offered through the system's own passkey UI
+surfaces (`ASCredentialProviderViewController`'s existing app/Safari entry points — the SAME
+target and entitlement Phase 36/41 already ship). No PRF, no attestation format beyond `"none"`,
+no signature-counter tracking.
+
+Cost basis: this reuses the SAME `AUTOFILL_CREDENTIAL_PROVIDER` entitlement Phase 36/41 already
+embed. Verified directly against Apple's own portal capability metadata
+(`DVTPortalCachedPortalCapabilities.json`, re-derived live this session, 43-RESEARCH.md "The
+Associated-Domains question, settled directly from Apple's own capability table"):
+`AUTOFILL_CREDENTIAL_PROVIDER` lists exactly one boolean entitlement and has no dependency field on
+Associated Domains or any other capability — a provider identifies credentials by `rpId` supplied
+fresh on every request, never by an entitlement-enumerated domain list, so the domain-binding
+capability that gates an app acting as its own WebAuthn RP client is structurally irrelevant to the
+provider role. This also reuses the SAME `pv-provider`/`pv-ffi` infrastructure pattern Phase 35
+already proved live.
+
+The one genuinely new Rust surface: `pv-provider`'s two EXISTING public functions
+(`create_provider_credential`/`get_provider_assertion`) are WebAuthn-**client**-level — they build
+and hash `clientData` internally from a full `{"publicKey": …}` options JSON. iOS instead hands a
+credential provider a pre-computed `clientDataHash` and expects a raw CTAP2-shaped exchange
+(43-RESEARCH.md Finding 2). Those two shapes do not meet, which is why two NEW entry points
+(`get_assertion_ctap2`/`make_credential_ctap2`) are the real remaining cost — plumbing between OS
+shapes and CTAP2 shapes, reusing the SAME `passkey-authenticator=0.5.0` dependency and the SAME
+`PvCredentialStore`/`PvUserValidation` this crate already has, not new cryptography.
+
+**2. The UI scope fence, stated as a locked boundary, not an open question.** The product ask is
+literal NordPass parity: iOS itself asks "use a passkey from Passkey Vault?" — no bespoke
+multi-credential picker view is in scope. PV renders only what
+`ASCredentialProviderViewController` requires: a registration-confirmation screen. The assertion
+path needs no UI PV draws at all, mirroring the password fill path's own QuickType surface. Where a
+screen IS unavoidable it follows `ios/brand/screens-vault.html` and `Core/StatusCallout.swift`
+patterns, PV* tokens only, security copy always plain — never playful. This resolves
+43-RESEARCH.md's Open Question 4 with its own default assumption A3 (the system surface suffices
+for the common case; PV only needs the registration-confirmation screen the ROADMAP explicitly
+names) — stated here as the answer, not left open.
+
+**3. Decision: OPT-02 (PRF unlock of the vault itself) is REJECTED on PRODUCT grounds.** Bartek's own
+words, quoted verbatim (`ROADMAP.md`, 2026-08-20, "### Phase 43" block): "passkey provider dla
+cudzych stron. u nas jest faceid unlock więc to wystarcza." This is a product decision, not a
+technical no-go: Face ID unlock is the product's stated sufficient answer, and that is the entire
+and only reason. Nothing about entitlement gating, deployment topology, or implementation
+difficulty is the reason — the reason is that the product owner decided the existing biometric
+unlock already covers this need.
+
+**4. Decision: PRF served through the provider to third-party relying parties (`largeBlob`
+included) is DEFERRED, with reason.** Most RPs never request the `prf`/`largeBlob` WebAuthn
+extensions; building partial support for a rarely-requested capability contradicts this project's
+own "not done, deferred, here is why" standard. `largeBlob` was never in scope at any point,
+distinct from `prf` extension support (which at least has SDK-availability precedent from the
+superseded research). §4 Open Question 2 (does a real-world flow ever need the passkey-aware
+picker-list override, `prepareCredentialListForServiceIdentifiers:requestParameters:`, versus the
+direct-fill path Phase 41 already proved) stays open and is named here as still open — it is not
+resolved by this record.
+
+**5. Rejected alternative: treating this as still bundled with the superseded PRF-scoped go/no-go.**
+That earlier research spent its budget on two hard unknowns: whether a non-`XCODE_FREE_PROGRAM`
+capability row blocks the domain-binding entitlement a native RP client needs for its own vault's
+PRF unlock, and a genuinely unresolved raw-vs-hashed PRF salt question for a PRF-enabled provider
+path. Both are now structurally irrelevant to a provider-only, PRF-free scope: the first question
+belongs to OPT-02's scope, rejected on product grounds above (see item 3), and the second
+belongs to an extension surface this record defers above (see item 4) — neither unknown has any
+analogue in the narrower GO scope decided in item 1 (43-RESEARCH.md Finding 1, Summary paragraph
+1). Reopening either question would require reopening a scope decision already made elsewhere in
+this record, not adding new research here.
+
+**6. Rejected alternative: reusing `create_provider_credential`/`get_provider_assertion` for the
+iOS path.** Impossible, not merely inconvenient — SHA-256 is not invertible, and iOS never gives PV
+the WebAuthn options JSON those functions require, only the finished hash (43-RESEARCH.md
+"Anti-patterns to avoid," first bullet). Building a fake `{"publicKey": ...}` JSON around a hash to
+force-fit the existing functions is not a shortcut; it is a sign the wrong layer was chosen.
+
+**7. Residual risks, named rather than softened, each assigned to the concrete task that will
+settle it empirically:**
+- Open Question 1 (does a fresh registration's `ASPasskeyCredentialIdentity` carry the RP's real
+  `user.name`/`user.displayName`, or a placeholder) — assigned to **Plan 43-07**'s registration
+  wiring task, settled by a live log-line experiment before that plan's own SC4 proof is trusted as
+  final.
+- Open Question 3 (does `ciborium`'s `fmt:"none"` attestation object satisfy a real RP verifier) —
+  assigned to **Plan 43-04**'s registration CTAP2 task, settled by an independent `webauthn-rs`
+  verification extending `crates/pv-provider/tests/real_rp_verification.rs`'s own pattern.
+- Assumption A1 (does `request.supportedAlgorithms` always include ES256/-7 for a real RP) —
+  accepted as low risk; registration fails cleanly (never substitutes an algorithm) if a real RP's
+  list excludes it, per **Plan 43-04**'s own algorithm-negotiation task.
+
+**8. Discrepancy note (C8), and fix applied.** `.planning/REQUIREMENTS.md`'s OPT-02 line (~line
+102) reads as an open, undecided cost question — stale relative to this 2026-08-20 product
+decision. `ROADMAP.md`'s Phase 43 block is the fresher, authoritative artifact (explicitly dated,
+carries Bartek's verbatim words) and this record treats it as controlling. A verbatim-cited
+amendment has been appended directly to that `REQUIREMENTS.md` line in this worktree's local copy
+(never committed from this worktree, per IOS-07/QA-05 above), marking it product-rejected rather
+than editing away the original text.
+
+**Update to the spike-status framing above.** The "Status of the spike" table's Milestone paragraph
+(top of this file) previously stated passkey provider and PRF unlock as jointly "deferred and
+conditional." That framing is now superseded by this record: the passkey **provider** for
+third-party sites (OPT-03) is DECIDED GO (scoped as above), OPT-02 is DECIDED REJECTED (product
+grounds), and OPT-04 (PRF-through-the-provider) is DECIDED DEFERRED (item 4 above) — see this entry
+for the authoritative, current framing.
+
+**Verification, re-run at commit time.** `! grep -rq "get_assertion_ctap2\|make_credential_ctap2"
+crates/pv-provider/src crates/pv-ffi/src` and `! grep -rlq "ASPasskeyCredentialRequest\|
+prepareInterfaceForPasskeyRegistration\|ProvidesPasskeys" ios/PasskeyVault/PasskeyVaultAutoFill`
+both hold immediately before and after this commit — no passkey-provider code exists anywhere in
+this worktree yet. This entry is this task's own, standalone commit, landing before any commit
+that adds `crates/pv-provider/src/ceremony.rs` CTAP2 code, `crates/pv-ffi/src/provider.rs`, or any
+`ASPasskey*`-touching Swift line, per SC1's commit-order requirement (mirrors `35-01`'s own
+verification discipline for `IOS-06`).
 
 ---
 
