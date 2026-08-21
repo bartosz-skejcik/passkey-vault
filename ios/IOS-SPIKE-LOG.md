@@ -5660,3 +5660,109 @@ the allow-list → FAIL under assertion (A); both reverted → PASS.
 
 **Full-gate confirmation:** `scripts/check-ios-gate.sh` (all six sub-gates) exits 0 against this
 plan's changes. Transcript: `ios/evidence/43/43-07-check-ios-gate.log`.
+
+## 15. Phase 43, Plan 43-08, Task 1 -- SC2 harness scaffold: `PasskeyVaultHarness`, the REAL Coolify/Traefik AASA mechanism, and a `codesign -d --entitlements` red herring (2026-08-22)
+
+`ios/PasskeyVaultHarness` (new Xcode app target, `524CDFDE.../9AB3CA3E...` object IDs, `commit
+0ca2c19`) is the phase's FIRST use of AuthenticationServices' REQUESTING side
+(`ASAuthorizationController`/`ASAuthorizationPlatformPublicKeyCredentialProvider`) -- every prior
+plan (43-02/43-03/43-07) used the PROVIDER side (`ASPasskey*`). Its ONE screen fetches a real
+challenge from `crates/rp-fixture`'s `/challenge/assert?rp_id=vault.blonie.cloud` FIRST (the
+fixture is authoritative for the challenge, never this app -- 43-PLAN-CHECK.md N2), then runs the
+ceremony and POSTs the (possibly `-PVCorruptSignature`-flipped) result to the fixture's own
+`/assert/finish` -- the falsification's owning branch lives IN the app (43-PLAN-CHECK.md N3), a
+shell script cannot intercept a `URLSession` call.
+
+**Landmine (L-1/L-43 family, new instance): `ASAuthorizationPublicKeyCredentialAssertion.signature`
+imports into Swift as `Data!`, not `Data`, unlike its four siblings on the SAME protocol.** A
+`swiftc -typecheck` probe using `_ = assertion.signature` (assigning to `_`) and one using `let c:
+Data = assertion.signature` (an explicit target type) BOTH compiled cleanly and gave false
+confidence -- an implicitly-unwrapped optional auto-unwraps silently in both those shapes. Only a
+REAL `xcodebuild`, hitting `var signatureBytes = assertion.signature` with NO explicit annotation
+(Swift's own "IUO decays to plain `Optional` on bare assignment" rule), surfaced 4 `Data?`
+diagnostics. Root cause, confirmed by reading the ACTUAL header:
+`ASAuthorizationPublicKeyCredentialAssertion.h` (declaring `signature`/`rawAuthenticatorData`/
+`userID`) has NO `NS_ASSUME_NONNULL_BEGIN`/`NS_HEADER_AUDIT_BEGIN(nullability, ...)` wrapper, while
+its sibling `ASPublicKeyCredential.h` (declaring `credentialID`/`rawClientDataJSON`) DOES --
+`rawAuthenticatorData`/`userID` still imported as plain `Data` regardless (their own probe showed
+no error), so the unaudited-region theory alone does not fully explain why only `signature`
+tripped this; recorded as CONFIRMED-BY-REAL-COMPILE, not fully explained by header inspection
+alone -- exactly the caution L-1's own amendment already names ("check BOTH representations and
+reconcile them; neither is ground truth on its own"). Fixed with an explicit `var signatureBytes:
+Data = assertion.signature` annotation, which forces the IUO auto-unwrap visibly at that one line
+instead of letting it decay silently.
+
+**A second red herring, more consequential -- `codesign -d --entitlements :-` reads EMPTY for
+EVERY Simulator-built target in this project, shipping ones included, and is NOT evidence the
+entitlement is missing.** Investigating whether `PasskeyVaultHarness`'s Simulator build actually
+carried `com.apple.developer.associated-domains` (needed for Task 3's own live proof), `codesign -d
+--entitlements :- PasskeyVaultHarness.app` printed `<dict></dict>` -- empty. Before treating this
+as a real gap, the SAME check was run against the ALREADY-WORKING, already-shipping
+`PasskeyVaultAutoFill.appex` (`autofill-credential-provider` + `application-groups`, proven live
+across Phases 36-43's own many passing ceremonies) -- **also empty**, on the SAME simulator. This
+means `codesign -d --entitlements` cannot be evidence of a real gap here: it reads the CMS
+signature slot of a "Sign to Run Locally" ad-hoc-signed binary, which Xcode leaves genuinely empty
+for Simulator builds regardless of what the source `.entitlements` file requests. The GROUND-TRUTH
+check, confirmed via `otool -s __TEXT __entitlements`/`strings -a` on the raw Mach-O binary (not
+its code signature): the harness's `PasskeyVaultHarness.app/PasskeyVaultHarness` binary DOES embed
+`com.apple.developer.associated-domains` / `webcredentials:vault.blonie.cloud` in its linked
+`__TEXT,__entitlements` section (from `-Xlinker -sectcreate ... PasskeyVaultHarness.app-Simulated
+.xcent`, a build-setting-generated file DISTINCT from the CMS-signed `.app.xcent`), and the SAME
+`strings -a` check against `PasskeyVaultAutoFill`'s own binary shows its two entitlements present
+the identical way -- the Simulator's own runtime evidently reads this raw section, not the CMS
+entitlements slot, which is why every capability-gated feature in this project has worked on the
+Simulator despite `codesign -d --entitlements` reading empty for every target, this plan's
+included. **Carry forward for Task 3 and any future entitlement-presence check in this project:
+verify via `strings -a <binary> | grep <entitlement-key>` against the raw Simulator binary, never
+via `codesign -d --entitlements` alone -- the latter is a vacuous-looking-but-wrong check for this
+toolchain's Simulator signing path.**
+
+**A genuinely separate, real gap this same investigation surfaced and fixed: registering
+`cloud.blonie.PasskeyVaultHarness` as an App ID with Apple.** A NEW bundle id has no registered
+capabilities on Apple's developer portal until Xcode registers it -- confirmed live: a Simulator-
+only build (`xcodebuild ... -destination "platform=iOS Simulator,..."`, even with
+`-allowProvisioningUpdates`) never triggers this registration (Simulator needs no real
+provisioning profile at all). ONE `xcodebuild build ... -destination "generic/platform=iOS"
+-allowProvisioningUpdates` (no physical device needed -- `generic/platform=iOS` only requires
+signing RESOLUTION, not an attached device) genuinely created "iOS Team Provisioning Profile:
+cloud.blonie.PasskeyVaultHarness" against team `4S7F2M7YLW` and registered the Associated Domains
+capability with Apple -- confirmed via THAT build's own `codesign -d --entitlements` (a REAL
+device/profile-backed identity, "Apple Development: bartek@paczesny.pl (UZNWZA484N)", DOES populate
+the CMS entitlements slot correctly, unlike ad-hoc Simulator signing) showing the full, correct
+entitlements dict. This one-time registration is a genuine, permanent, harmless side effect (a new
+App ID + Development provisioning profile on this project's existing paid team) -- not something
+later plans need to repeat.
+
+**The real `vault.blonie.cloud` reverse-proxy mechanism, investigated (never assumed) via read-only
+`ssh oracle` (`docker ps`, `docker inspect`, a `GET /api/v1/applications/...` against Coolify's own
+API -- no writes):** Traefik (`traefik:v3.6`, container `coolify-proxy`), confirmed Coolify's own
+default, IS what fronts `vault.blonie.cloud` -- routing is Docker-label-driven
+(`--providers.docker=true`), the `passkey-vault` app's own container already carries its router's
+labels directly. `custom_nginx_configuration` is confirmed `null` for this app (a `build_pack:
+"dockerfile"` app -- Coolify's nginx-config panel does not apply here, confirmed via the API
+response, not assumed absent). A SECOND, also-confirmed mechanism: Traefik's own file provider
+(`--providers.file.directory=/traefik/dynamic/`, backed by `/data/coolify/proxy/` on the host) --
+documented as a viable Coolify-native alternative in `AASA-DEPLOY.md` Section 5, not used as the
+primary recommendation (the Docker-label sidecar mirrors `passkey-vault`'s own router style
+byte-for-byte and needs no extra file). Full real-deployment steps (a NEW, separate `nginx:1-alpine`
+sidecar container on the `coolify` network, Traefik-labeled with `priority=1000` to win over the
+app's own `PathPrefix(`/`)` router for exactly one path, reusing the ALREADY-issued Let's Encrypt
+cert via `tls.certresolver=letsencrypt`) are in `ios/PasskeyVaultHarness/AASA-DEPLOY.md` Section 4
+-- Task 2's own job, never applied by this session's own automation (43-08-PLAN.md's own
+prohibition -- production infra, human-gated).
+
+**A blocking issue (Rule 3), fixed at its actual source, never in `crates/pv-server`:**
+`web/public/harness/passkey-native-rp.html` is served from `https://vault.blonie.cloud` but
+`fetch()`es `crates/rp-fixture`'s own `http://localhost:8900` cross-origin -- the Mixed Content
+spec's own "potentially trustworthy" exception for `localhost` permits the REQUEST despite the
+scheme mismatch, but `crates/rp-fixture` had no CORS headers at all, so the RESPONSE would have
+been unreadable. Fixed by adding a permissive `tower_http::cors::CorsLayer` to `crates/rp-fixture`
+ONLY (a TEST-ONLY, loopback-only fixture with no secret to protect -- T-43-18's own posture,
+`Cargo.toml`'s own doc comment states the rationale) -- `crates/pv-server` was never touched
+(`git diff --stat -- crates/pv-server` empty throughout, confirmed after this change too).
+
+**A plan-text correction, confirmed against the real fixture source before use:** `crates/rp-
+fixture`'s own multi-rp_id override flag is `--origin <rp_id>=<origin>` (`crates/rp-fixture/src/
+main.rs`'s own `parse_args`), NOT `--rp-origin` as this plan's own action text assumed for Task 3 --
+recorded here so Task 3's own harness-script invocation uses the REAL flag name, not the plan's
+guessed one.
