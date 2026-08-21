@@ -1,0 +1,53 @@
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.rbXMBAiD9e for the full transcript
+    t =    23.73s Find the Any (Element at index 0)
+    t =    23.81s Find the Application 'com.apple.springboard'
+    t =    24.03s Added attachment named 'continue-found-poll1-screenshot'
+    t =    24.04s Requesting snapshot of accessibility hierarchy for app with pid 85603
+    t =    24.59s Requesting snapshot of accessibility hierarchy for app with pid 85603
+    t =    24.70s Added attachment named 'continue-found-poll1-hierarchy'
+    t =    24.71s Tap "Continue" StaticText
+    t =    24.71s     Wait for com.apple.springboard to idle
+    t =    24.71s     Find the "Continue" StaticText
+    t =    24.78s     Check for interrupting elements affecting "Continue" StaticText
+    t =    24.86s     Synthesize event
+    t =    25.17s     Wait for com.apple.springboard to idle
+    t =    25.18s Find the Application 'com.apple.mobilesafari'
+    t =    25.38s Added attachment named 'poll-1-screenshot'
+    t =    25.38s Requesting snapshot of accessibility hierarchy for app with pid 99224
+    t =    25.65s Requesting snapshot of accessibility hierarchy for app with pid 99224
+    t =    25.70s Added attachment named 'poll-1-hierarchy'
+    t =    28.72s Find the Application 'com.apple.mobilesafari'
+    t =    28.86s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-screenshot'
+    t =    28.86s Requesting snapshot of accessibility hierarchy for app with pid 99224
+    t =    29.00s Requesting snapshot of accessibility hierarchy for app with pid 99224
+    t =    29.03s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-hierarchy'
+    t =    29.03s Tear Down
+Test Case '-[PasskeyVaultUITests.AutoFillPasskeyTracerUITests testPasskeyAssertionAgainstRpFixture]' passed (29.272 seconds).
+Test Suite 'AutoFillPasskeyTracerUITests' passed at 2026-08-21 10:03:31.262 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 29.272 (29.273) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-21 10:03:31.262 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 29.272 (29.274) seconds
+Test Suite 'Selected tests' passed at 2026-08-21 10:03:31.263 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 29.272 (29.275) seconds
+2026-08-21 22:03:31.601 xcodebuild[98823:11763365] [MT] IDETestOperationsObserverDebug: 32.423 elapsed -- Testing started completed.
+2026-08-21 22:03:31.601 xcodebuild[98823:11763365] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-21 22:03:31.601 xcodebuild[98823:11763365] [MT] IDETestOperationsObserverDebug: 32.423 sec, +32.423 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.21_10-02-38-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+
+## crates/rp-fixture stdout, this run
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running `target/debug/rp-fixture --port 8900`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=localhost origin=http://localhost:8900/ status=created
+RPFIXTURE|route=/challenge/register rp_id=localhost user_name=ios-tracer-43-03 status=issued
+RPFIXTURE|route=/register/finish rp_id=localhost ok=true reason=registered
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/challenge/assert rp_id=localhost status=issued
+RPFIXTURE|route=/assert/finish rp_id=localhost ok=false reason=An OpenSSL Error has occurred

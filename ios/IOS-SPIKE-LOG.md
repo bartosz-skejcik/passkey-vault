@@ -5224,3 +5224,85 @@ ffi_falsifiable, ffi_opaque, swift_tests, qa_register) exits 0 against this plan
 passed on retry with all 5 required FFI identifiers matched. No `ios/PasskeyVault*` Swift file was
 touched by this plan; the scoped Swift test lane exercises the app target linking the freshly
 rebuilt XCFramework as a structural confirmation only.
+
+## 11. Phase 43, Plan 43-03 — the `.passkeyAssertion` Swift branch, `crates/rp-fixture`, and the live tracer proof (2026-08-21)
+
+The Swift/fixture/harness half of the phase's tracer (43-PLAN-CHECK.md B5 split, following 43-02's
+Rust/FFI half). A real, browser-extension-shaped passkey now asserts successfully against a NEW
+independent RP fixture in Safari on the pinned simulator, verified receiver-side and shown
+falsifiable — closing the phase's own tracer end-to-end (commits `312e10e`/`8906e32`).
+
+**`crates/rp-fixture` (new workspace member):** a standalone, real `webauthn-rs` (kanidm) Relying
+Party over HTTP — never a static file server, never a shape/`.ok`-only check. Parameterized by
+`rp_id` on every route (`Arc<Mutex<HashMap<String, RpState>>>`), so Plan 43-08's native-app proof
+can reuse this SAME binary for `rp_id=vault.blonie.cloud` via `--origin`, no forked crate. Bound to
+`127.0.0.1:8900` (loopback only, T-43-18). This is the ONE RP fixture Plans 43-04/43-07/43-08/43-09
+must consume by name (this plan's own `must_haves`).
+
+**FINDING 1 (Rule 1, live): WebAuthn needs a real tap.** The fixture's create/get page originally
+fired `navigator.credentials.create()`/`.get()` unconditionally on load — Safari was found, first
+attempt, to silently reject this (no genuine user activation). Fixed by wrapping the ceremony in a
+`#rp-fixture-start` button's click handler.
+
+**FINDING 2 (Rule 2, live — the consequential one): `prepareCredentialList(for:requestParameters:)`
+is the REAL entry point, not the two overrides 43-RESEARCH.md's own diagram named.** With no
+`ASPasskeyCredentialIdentity` registered for a credential (identity-store registration for passkeys
+is explicitly 43-05's job, not this plan's), Safari does NOT route straight to
+`provideCredentialWithoutUserInteraction`/`prepareInterfaceToProvideCredential` the way it does for
+PASSWORDS (Phase 41's own precedent, which the diagram generalized from). Instead it shows its own
+"Sign In" system sheet ("You don't have any passwords or passkeys saved for this website...") with
+an "Other accounts" row naming our provider by icon/name ("More from PasskeyVault..."); selecting
+that row and tapping "Continue" invokes `prepareCredentialList(for
+serviceIdentifiers:requestParameters:)` (`ASCredentialProviderViewController.h:54`,
+`ASPasskeyCredentialRequestParameters` carrying `relyingPartyIdentifier`/`clientDataHash`/
+`allowedCredentials`) instead. Live evidence pinned this down precisely: `log show` confirmed the
+extension process launched and materialized `CredentialProviderViewController` on the FIRST attempt
+(only the two originally-planned overrides implemented), yet ZERO `PVFILL|passkey|` lines ever
+appeared and the fixture's own `/assert/finish` was never called — a permanently blank system sheet,
+confirmed via a live `xcrun simctl io screenshot` taken well after the test completed. Fixed by
+adding the missing override, refactoring the existing single-credential-match logic into a shared
+`performPasskeyAssertion(rpId:clientDataHash:allowedCredentialIds:entryPoint:)` both entry points
+now call (`allowedCredentialIds` unifies `ASPasskeyCredentialIdentity.credentialID` — always one —
+with `ASPasskeyCredentialRequestParameters.allowedCredentials` — a list, empty meaning "any
+credential for this rp_id"). This is exactly the class of architectural gap a tracer exists to
+catch before every later plan in this phase builds on top of it — **43-05's own planning should
+verify empirically, not re-derive from the superseded diagram, what identity-store registration
+actually changes (likely which entry point fires for a QuickType-offered credential, not whether
+assertion is reachable at all — it already is).**
+
+**Seeding (Rule 2, live):** the tracer's own precondition needs a real, fixture-registered passkey
+reachable on the simulator. `crates/pv-provider/examples/ios_seed_passkey.rs` (new, dev-only) runs
+the REAL `create_provider_credential` ceremony (43-02) against the fixture's own real
+`/challenge/register` output, then registers the result with the fixture via `/register/finish`
+(genuine `webauthn-rs` verification — proven this plan by the fixture's own log line
+`ok=true reason=registered`), shelling out to `curl` rather than adding an HTTP-client dependency to
+`pv-provider` for a harness tool. `PasskeyTracerSeeder.swift` (new, `PV_PROBE_E43_TRACER`-gated,
+mirroring `TracerFillSeeder.swift`'s own 41-03 precedent) then stages that real plaintext through
+the REAL production writers (`encryptItemWire`, `AppGroupCiphertextCacheStore().write`) — no
+cryptographic material is synthesized in Swift at all.
+
+**Falsifiable, in the specified order:** `scripts/ios-autofill-e43.sh tracer --corrupt-signature`
+(a `#if DEBUG` harness-side interception flips one byte of the real signature via a marker file,
+mirroring `TracerFillSeeder.shouldMutateRevision()`'s convention) correctly FAILS —
+`RPFIXTURE|route=/assert/finish rp_id=localhost ok=false reason=An OpenSSL Error has occurred`, the
+REAL webauthn-rs signature check genuinely rejecting a corrupted signature — THEN
+`scripts/ios-autofill-e43.sh tracer` (uncorrupted) PASSES —
+`RPFIXTURE|route=/assert/finish rp_id=localhost ok=true reason=verified`. Extension-side
+`PVFILL|passkey|entry=list-passkey stage=fill status=ok` confirms `performPasskeyAssertion` itself
+ran end to end. Full official verify sequence run in order
+(`build-ios.sh && audit-ffi-opaque-handles.sh && tracer --corrupt-signature && tracer`) — all four
+steps PASS. Transcripts: `ios/evidence/43/43-03-tracer.log`, `43-03-tracer-corrupt.log` (+
+`.fixture-stdout` siblings).
+
+**Caveat this plan's own SUMMARY restates and every later plan's own roll-up must restate too
+(C7):** the RP throughout is `crates/rp-fixture`, a project-controlled stand-in SHAPED LIKE a third
+party — never a genuinely external RP.
+
+**Out-of-scope finding, flagged not fixed:** `Dockerfile` never stubs `crates/pv-ffi`'s manifest
+(only `pv-core`/`pv-provider`/`pv-wasm`/`pv-server`(stub) are copied before `cargo build -p
+pv-server --release` runs), which structurally requires every workspace member's manifest on disk
+— meaning a `docker build` of this repo was likely ALREADY broken by 43-02's addition of `pv-ffi` as
+a workspace member, before this plan touched anything. `crates/rp-fixture` adds a further member
+with the same class of gap, which does not make anything worse (already broken) but does not fix it
+either. Not in this plan's `files_modified`, not part of its `<verify>` block — recorded here for
+visibility only.
