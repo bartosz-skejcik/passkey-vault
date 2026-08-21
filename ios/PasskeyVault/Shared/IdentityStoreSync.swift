@@ -607,17 +607,21 @@ enum IdentityStoreSync {
     // sharing `publishedKeysKey` -- mixing the two would risk a password identity computing as a
     // spurious passkey removal or vice versa (this plan's own prohibition).
     //
-    // This plan (43-05) builds the MACHINERY only -- no call site anywhere reaches
-    // `upsertOnePasskey`/`republishPasskeys` yet (Plan 43-07 adds the first one, the registration
-    // override). Known limitation for that future integration, NOT fixed here (out of this
-    // plan's own scope -- the call site is explicitly deferred): on a device where
+    // Plan 43-05 built the MACHINERY only -- no call site reached `upsertOnePasskey`/
+    // `republishPasskeys` yet. Plan 43-07 (the registration override, `CredentialProviderViewController
+    // .prepareInterfaceForPasskeyRegistration`) is the first real caller, via `upsertOnePasskey`
+    // (a single-item write, never the full-replacement branch below). RESOLVED by Plan 43-07: the
+    // known limitation this comment used to describe -- on a device where
     // `state.supportsIncrementalUpdates` is FALSE, both `republish(sources:)` and
     // `republishPasskeys(sources:)` fall back to `replaceCredentialIdentities(with:)`, which
-    // replaces the ENTIRE store, not just the type it was handed -- calling the two independently
-    // on such a device would make each call erase the OTHER's identities. Plan 43-07's own call
-    // site must combine password and passkey sources into ONE full-replacement write on that
-    // branch; this simulator/toolchain reports `supportsIncrementalUpdates == true` today, so the
-    // collision is latent, not exercised, by this plan's own tests.
+    // replaces the ENTIRE store, not just the type it was handed, so calling the two independently
+    // would make each erase the OTHER's identities -- is closed by `republishRebuild(passwordSources:
+    // passkeySources:)` below, the ONE place password and passkey sources are combined before a
+    // full-vault rebuild (`CredentialProviderViewController.runIdentityRebuildIfPending()`'s own
+    // call site, Plan 43-07). This simulator/toolchain still reports `supportsIncrementalUpdates ==
+    // true`, so the collision itself remains latent, never exercised live -- `combinedRebuildIdentities`
+    // is factored out as a PURE function specifically so `PasskeyRegistrationOverrideTests` can prove
+    // the combining logic itself without controlling that real, read-only system property.
 
     private static let identityPublishedPasskeyKeysKey = "cloud.blonie.PasskeyVault.identityPublishedPasskeyKeys"
 
@@ -839,5 +843,73 @@ enum IdentityStoreSync {
     ) async -> Swift.Result<Void, IdentityStoreSyncError> {
         let replacements: [any ASCredentialIdentity] = desired
         return await replaceWithRetry(replacements)
+    }
+
+    // MARK: - Combined full-vault rebuild (Plan 43-07): closes the deferred limitation this file's
+    // own "Passkey identities" section header (above) used to describe as unresolved.
+
+    /// PURE combination step for the non-incremental branch -- exposed (not `private`) so
+    /// `PasskeyRegistrationOverrideTests` can assert BOTH source types survive a single combined
+    /// write, without needing to control `ASCredentialIdentityStore.shared.state()
+    /// .supportsIncrementalUpdates` (a read-only system property this simulator/toolchain always
+    /// reports `true` -- 43-05-SUMMARY.md's own finding -- so the collision `republishRebuild`
+    /// exists to close cannot be exercised end-to-end live on this toolchain; this function is what
+    /// makes the fix itself provable anyway).
+    static func combinedRebuildIdentities(
+        passwordSources: [VaultIdentitySource], passkeySources: [PasskeyIdentitySource]
+    ) -> [any ASCredentialIdentity] {
+        let passwords: [any ASCredentialIdentity] = buildIdentities(from: passwordSources)
+        let passkeys: [any ASCredentialIdentity] = buildPasskeyIdentities(from: passkeySources)
+        return passwords + passkeys
+    }
+
+    /// The combined full-vault rebuild entry point -- the ONE place password and passkey sources
+    /// are handed to this file TOGETHER (`CredentialProviderViewController
+    /// .runIdentityRebuildIfPending()`'s own call site, Plan 43-07). Reads `state` ONCE:
+    ///   - `supportsIncrementalUpdates == true`: delegates to the two EXISTING, independently-safe
+    ///     entry points unchanged (`republish(sources:)`/`republishPasskeys(sources:)`) --
+    ///     `saveCredentialIdentities`/`removeCredentialIdentities` only ever touch the identities
+    ///     they are handed, never the whole store, so no cross-type collision exists on this branch.
+    ///   - `supportsIncrementalUpdates == false`: issues a SINGLE `replaceCredentialIdentities` call
+    ///     carrying BOTH desired sets (`combinedRebuildIdentities`, above) -- the fix itself. Calling
+    ///     `republish`/`republishPasskeys` independently here would each store-wide replace, erasing
+    ///     the other type's identities (the deferred limitation 43-05-SUMMARY.md recorded for this
+    ///     plan to close).
+    @discardableResult
+    static func republishRebuild(
+        passwordSources: [VaultIdentitySource], passkeySources: [PasskeyIdentitySource]
+    ) async -> Swift.Result<Void, IdentityStoreSyncError> {
+        let state = await ASCredentialIdentityStore.shared.state()
+        guard state.isEnabled else {
+            logger.log("PVFILL|E43-7|stage=republish-rebuild status=store-disabled")
+            markRebuildPending(true)
+            return .failure(.storeDisabled)
+        }
+
+        if state.supportsIncrementalUpdates {
+            let passwordResult = await republish(sources: passwordSources)
+            if case .failure = passwordResult { return passwordResult }
+            let passkeyResult = await republishPasskeys(sources: passkeySources)
+            if case .failure = passkeyResult { return passkeyResult }
+            return .success(())
+        }
+
+        let desiredPasswords = buildIdentities(from: passwordSources)
+        let desiredPasskeys = buildPasskeyIdentities(from: passkeySources)
+        let combined: [any ASCredentialIdentity] = desiredPasswords + desiredPasskeys
+        let writeResult = await replaceWithRetry(combined)
+        switch writeResult {
+        case .success:
+            persistPublishedKeys(Set(desiredPasswords.map(PublishedKey.init(identity:))))
+            persistPublishedPasskeyKeys(Set(desiredPasskeys.map(PublishedPasskeyKey.init(identity:))))
+            markRebuildPending(false)
+            clearSelfHealPending()
+            logger.log(
+                "PVFILL|E43-7|stage=republish-rebuild status=ok mode=full passwordCount=\(desiredPasswords.count, privacy: .public) passkeyCount=\(desiredPasskeys.count, privacy: .public)"
+            )
+        case let .failure(error):
+            logger.error("PVFILL|E43-7|stage=republish-rebuild status=fail error=\(error.description, privacy: .public)")
+        }
+        return writeResult
     }
 }

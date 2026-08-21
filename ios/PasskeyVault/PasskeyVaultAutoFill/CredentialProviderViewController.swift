@@ -22,6 +22,7 @@
 
 import AuthenticationServices
 import Foundation
+import SwiftUI
 import UIKit
 import os
 
@@ -581,6 +582,259 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     }
     #endif
 
+    // MARK: - Phase 43, Plan 43-07 -- the passkey REGISTRATION path (OPT-03)
+
+    /// Scans the current account's cached snapshot for existing passkeys matching `rpId`,
+    /// JSON-array-wrapped -- the SAME shape `PvCredentialStore::from_passkeys_json`
+    /// (`crates/pv-provider/src/credential_store.rs`) expects, and the SAME single-element-array
+    /// form `performPasskeyAssertion` above already builds for the assertion path. Needed so
+    /// `make_credential_ctap2`'s own exclude-list enforcement (`crates/pv-provider/src/ceremony.rs`)
+    /// has real data to check `excludedCredentialIds` against -- a vacuous `"[]"` would make an RP's
+    /// `excludeCredentials` list silently unenforceable. Returns `"[]"` on no cache/no match --
+    /// never surfaces a cache-read problem as a registration failure (an unrelated cache miss must
+    /// not block creating a new credential; the RP's own exclude list is then vacuously satisfied).
+    private static func existingPasskeysJson(rpId: String, userKey: FfiUserKey) -> String {
+        let store = AppGroupCiphertextCacheStore()
+        guard
+            let accountMarker = store.currentAccountMarker(),
+            let snapshot = store.readCurrentSnapshot(accountId: accountMarker.accountId, serverBaseURL: accountMarker.serverBaseURL)
+        else {
+            return "[]"
+        }
+        var matches: [String] = []
+        for row in snapshot.items {
+            guard
+                let encKey = Self.decodeRebuildWireKey(row.encKey),
+                let encData = Self.decodeRebuildWireKey(row.encData),
+                let revision32 = UInt32(exactly: row.revision)
+            else { continue }
+            let item = FfiEncryptedItem(encKey: encKey, encData: encData)
+            guard let plaintext = try? decryptItem(userKey: userKey, item: item, itemId: row.id, revision: revision32) else { continue }
+            guard
+                let raw = (try? JSONSerialization.jsonObject(with: Data(plaintext.utf8))) as? [String: Any],
+                raw["type"] == nil,
+                let itemRpId = raw["rp_id"] as? String,
+                itemRpId == rpId
+            else { continue }
+            matches.append(plaintext)
+        }
+        return "[" + matches.joined(separator: ",") + "]"
+    }
+
+    /// Presents `PasskeyRegistrationConfirmView` (the ONE UI screen OPT-01's scope fence permits)
+    /// embedded as a child view controller -- this extension has no storyboard and has never hosted
+    /// a SwiftUI view before this plan; standard `UIHostingController` embedding, pinned to `view`'s
+    /// edges.
+    private func presentRegistrationConfirm(
+        rpId: String, accountName: String, onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void
+    ) {
+        let hosting = UIHostingController(
+            rootView: PasskeyRegistrationConfirmView(rpId: rpId, accountName: accountName, onConfirm: onConfirm, onCancel: onCancel)
+        )
+        addChild(hosting)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        hosting.didMove(toParent: self)
+    }
+
+    /// Plan 43-07 (OPT-03): the registration counterpart to `fillPasskeyOrCancel`/
+    /// `performPasskeyAssertion` above. Runs the SAME unlock-gating sequence BEFORE presenting ANY
+    /// UI (this task's own `<read_first>`: an unauthenticated attacker with physical access to a
+    /// locked device must never see a registration confirmation screen for an unlocked vault's
+    /// contents) -- the algorithm/lock DECISION itself is factored into `PasskeyRegistrationPreflight
+    /// .decide(...)` (`Shared/PasskeyRegistrationPreflight.swift`), a PURE function
+    /// `PasskeyRegistrationOverrideTests` exercises directly: this file compiles only into the
+    /// `PasskeyVaultAutoFill` extension target, which `PasskeyVaultTests`' `@testable import
+    /// PasskeyVault` (the HOST app module) cannot see, so the decision logic itself cannot live only
+    /// here and still be actually run by this plan's own test gate (43-PLAN-CHECK.md C5).
+    ///
+    /// Placement (43-PLAN-CHECK.md C1): this override's own declaration is ABOVE
+    /// `runIdentityRebuildIfPending()` below -- a real, later declaration follows it in the file, so
+    /// `scripts/audit-ios-identity-store-chokepoint.sh`'s assertion (B) measures this override's
+    /// REAL extent (up to its own next `func` declaration) rather than falling back to a generous,
+    /// unmeasured numeric window. Every step from the ceremony onward runs inside ONE `Task { }`
+    /// closure (never a further `private func`), specifically so the required
+    /// `IdentityStoreSync.upsertOnePasskey(` call stays inside THIS declaration's own measured
+    /// extent.
+    override func prepareInterface(forPasskeyRegistration registrationRequest: any ASCredentialRequest) {
+        guard let request = registrationRequest as? ASPasskeyCredentialRequest else {
+            Self.fillLogger.log("PVFILL|passkey-reg|stage=cast status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        // `ASCredentialRequest.credentialIdentity` is declared `id<ASCredentialIdentity>` on the
+        // base protocol (`ASCredentialRequest.h`) -- Swift sees `any ASCredentialIdentity` here even
+        // though `request` is already narrowed to `ASPasskeyCredentialRequest`, so the
+        // passkey-specific fields (`relyingPartyIdentifier`/`userName`/`userHandle`/`credentialID`)
+        // need this ONE explicit downcast, the SAME pattern `fillPasskeyOrCancel` above already
+        // established for the assertion path.
+        guard let passkeyIdentity = request.credentialIdentity as? ASPasskeyCredentialIdentity else {
+            Self.fillLogger.log("PVFILL|passkey-reg|stage=identity-cast status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+
+        let lockState = SessionLifecycle.checkAndExpireIfNeeded(entryPoint: "register", deleteKeyArtifact: SessionKeyReader.delete)
+        let preflight = PasskeyRegistrationPreflight.decide(
+            supportedAlgorithms: request.supportedAlgorithms, isUnlocked: lockState == .unlocked
+        )
+        switch preflight {
+        case .refuseUnsupportedAlgorithm:
+            // <behavior>: refused BEFORE the confirmation screen -- mirrors make_credential_ctap2's
+            // own Rust-side check (crates/pv-provider/src/ceremony.rs), never a UI the user confirms
+            // into a guaranteed failure.
+            Self.fillLogger.log("PVFILL|passkey-reg|stage=preflight status=refused-algorithm")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        case .refuseLocked:
+            // T-43-12: no confirmation screen for an unlocked vault's contents is ever presented to
+            // a locked-device attacker -- mirrors `fillOrCancel`'s own posture: no separate lock UI
+            // of its own to fall back to, cancel and let the system/host handle re-authentication
+            // (this override draws no THIRD unlock surface).
+            Self.fillLogger.log("PVFILL|passkey-reg|stage=preflight status=refused-locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        case .proceed:
+            break
+        }
+        Self.fillLogger.log("PVFILL|passkey-reg|stage=preflight status=ok")
+
+        let userKey: FfiUserKey
+        switch SessionKeyReader.importUserKey() {
+        case let .success(uk):
+            userKey = uk
+        case .failure:
+            Self.fillLogger.log("PVFILL|passkey-reg|stage=sessionkey status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+
+        // Open Question 1 (43-RESEARCH.md): logged BEFORE any transformation, from a REAL
+        // registration request -- settles empirically whether iOS forwards the RP's real
+        // user.name/userHandle for a fresh registration, or synthesizes a placeholder. A permanent
+        // diagnostic, not a temporary probe removed after this task. Lengths are `.public` (safe, no
+        // account data); the values themselves are `.private` (T-41-12/T-41-15's inherited
+        // discipline -- never a real account identifier `.public` in a device-persistent log).
+        Self.fillLogger.log(
+            "PVFILL|passkey-reg|stage=opt-01-oq1 userHandleLen=\(passkeyIdentity.userHandle.count, privacy: .public) userNameLen=\(passkeyIdentity.userName.count, privacy: .public)"
+        )
+        Self.fillLogger.log(
+            "PVFILL|passkey-reg|stage=opt-01-oq1 userHandle=\(passkeyIdentity.userHandle as NSData, privacy: .private) userName=\(passkeyIdentity.userName, privacy: .private)"
+        )
+
+        let rpId = passkeyIdentity.relyingPartyIdentifier
+        let accountName = passkeyIdentity.userName
+        let clientDataHash = request.clientDataHash
+        let supportedAlgorithms = request.supportedAlgorithms
+        let excludedCredentialIds = request.excludedCredentials?.map { $0.credentialID } ?? []
+        let userHandle = passkeyIdentity.userHandle
+
+        presentRegistrationConfirm(
+            rpId: rpId,
+            accountName: accountName,
+            onConfirm: { [weak self] in
+                guard let self else { return }
+                Task {
+                    let itemId = UUID().uuidString.lowercased()
+                    let algorithms = supportedAlgorithms.map { Int64($0.rawValue) }
+                    let existingCredentialsJson = Self.existingPasskeysJson(rpId: rpId, userKey: userKey)
+
+                    let result: FfiProviderRegistrationResult
+                    do {
+                        result = try providerMakeCredential(
+                            rpId: rpId,
+                            rpName: nil,
+                            userId: userHandle,
+                            userName: accountName,
+                            userDisplayName: nil,
+                            clientDataHash: clientDataHash,
+                            supportedAlgorithms: algorithms,
+                            excludedCredentialIds: excludedCredentialIds,
+                            existingCredentialsJson: existingCredentialsJson
+                        )
+                    } catch {
+                        Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=ceremony status=fail")
+                        self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                        return
+                    }
+                    Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=ceremony status=ok")
+
+                    let wire: FfiEncryptedItemWire
+                    do {
+                        wire = try encryptItemWire(userKey: userKey, plaintext: result.newPasskeyJson, itemId: itemId, revision: 1)
+                    } catch {
+                        Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=encrypt status=fail")
+                        self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                        return
+                    }
+                    Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=encrypt status=ok")
+
+                    // <behavior>: marked BEFORE the network attempt -- a process kill mid-POST
+                    // leaves an explicit repair obligation (43-06's `PendingProviderItemStore`),
+                    // mirroring `IdentityStoreSync.markSelfHealPending`'s own mark-before-risk
+                    // discipline.
+                    PendingProviderItemStore.markPending(itemId: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson)
+
+                    if let baseURL = VaultAPI.extensionBaseURL() {
+                        let api = VaultAPI(baseURL: baseURL, tokenProvider: { SessionTokenStore.load() })
+                        do {
+                            _ = try await api.createItem(id: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson)
+                            PendingProviderItemStore.clearPending(itemId: itemId)
+                            Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=network status=ok")
+                        } catch {
+                            // <behavior>: left pending on failure, never cleared here -- self-heal
+                            // (43-06, `ContentView.retryPendingProviderItemsInBackground()`) covers
+                            // eventual server visibility. The ceremony still completes locally below
+                            // -- the RP-facing ceremony must not fail merely because the server POST
+                            // is momentarily unreachable.
+                            Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=network status=fail")
+                        }
+                    } else {
+                        Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=network status=no-server-configured")
+                    }
+
+                    let identitySource = PasskeyIdentitySource(
+                        itemId: itemId, rpId: rpId, credentialId: result.credentialId,
+                        userHandle: userHandle, username: accountName
+                    )
+                    // The NEW required call site this task adds (43-PLAN-CHECK.md B6's assertion
+                    // (B) extension) -- a single-item write, `upsertOnePasskey`, never `republish`/
+                    // `republishPasskeys` (CR-01's invariant, extended identically to the passkey
+                    // side, T-43-07's mitigation).
+                    let identityResult = await IdentityStoreSync.upsertOnePasskey(source: identitySource)
+                    switch identityResult {
+                    case .success:
+                        Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=identity-store status=ok")
+                    case let .failure(error):
+                        Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=identity-store status=fail error=\(error.description, privacy: .public)")
+                    }
+
+                    let credential = ASPasskeyRegistrationCredential(
+                        relyingParty: rpId, clientDataHash: clientDataHash,
+                        credentialID: result.credentialId, attestationObject: result.attestationObject
+                    )
+                    Self.fillLogger.log("PVFILL|passkey-reg|kind=passkey-registration stage=complete status=ok")
+                    self.extensionContext.completeRegistrationRequest(using: credential, completionHandler: nil)
+
+                    // Plan 41-07, Task 1 (ACC-07): the SAME post-fill activity refresh `fillOrCancel`/
+                    // `performPasskeyAssertion` perform -- AutoFill-only usage must not log the user
+                    // out mid-use.
+                    SessionLifecycle.refreshActivity(writer: "extension")
+                }
+            },
+            onCancel: { [weak self] in
+                Self.fillLogger.log("PVFILL|passkey-reg|stage=confirm status=user-cancelled")
+                self?.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
+            }
+        )
+    }
+
     // MARK: - Plan 41-04 (FILL-03) -- the full-rebuild recovery path
 
     /// One cached item's minimal identity-relevant plaintext shape. Deliberately NOT
@@ -661,6 +915,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         }
 
         var sources: [VaultIdentitySource] = []
+        // Plan 43-07: passkey items scanned in the SAME pass, closing the deferred limitation
+        // 43-05-SUMMARY.md recorded -- a full rebuild handed ONLY password sources would, on a
+        // device where `state.supportsIncrementalUpdates` is FALSE, wipe every registered passkey
+        // identity (`IdentityStoreSync.republishRebuild`'s own header explains the fix). Detection
+        // mirrors `performPasskeyAssertion`'s own raw-wire-shape check above (no `type` key,
+        // `credential_id`/`rp_id` present) -- not a second scanning mechanism, the SAME loop.
+        var passkeySources: [PasskeyIdentitySource] = []
         var decodeFailures = 0
         for row in snapshot.items {
             guard
@@ -676,6 +937,20 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 decodeFailures += 1
                 continue
             }
+            if
+                let raw = (try? JSONSerialization.jsonObject(with: Data(plaintext.utf8))) as? [String: Any],
+                raw["type"] == nil,
+                let rpId = raw["rp_id"] as? String,
+                let credentialIdInts = raw["credential_id"] as? [Int]
+            {
+                let credentialId = Data(credentialIdInts.map { UInt8(truncatingIfNeeded: $0) })
+                let userHandle = (raw["user_handle"] as? [Int]).map { Data($0.map { UInt8(truncatingIfNeeded: $0) }) } ?? Data()
+                let username = raw["username"] as? String
+                passkeySources.append(PasskeyIdentitySource(
+                    itemId: row.id, rpId: rpId, credentialId: credentialId, userHandle: userHandle, username: username
+                ))
+                continue
+            }
             guard
                 let payload = try? JSONDecoder().decode(RebuildLoginPayload.self, from: Data(plaintext.utf8)),
                 let username = payload.username, !username.isEmpty
@@ -686,10 +961,13 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             sources.append(VaultIdentitySource(itemId: row.id, username: username, urls: urls))
         }
 
-        let result = await IdentityStoreSync.republish(sources: sources)
+        // Plan 43-07: `republishRebuild`, not `republish` -- the combined entry point that closes
+        // the deferred cross-type full-replacement collision (`IdentityStoreSync.swift`'s own
+        // "Combined full-vault rebuild" section header).
+        let result = await IdentityStoreSync.republishRebuild(passwordSources: sources, passkeySources: passkeySources)
         switch result {
         case .success:
-            fillLogger.log("PVFILL|E41-2|stage=rebuild status=ok count=\(sources.count, privacy: .public) decodeFailures=\(decodeFailures, privacy: .public)")
+            fillLogger.log("PVFILL|E41-2|stage=rebuild status=ok count=\(sources.count, privacy: .public) passkeyCount=\(passkeySources.count, privacy: .public) decodeFailures=\(decodeFailures, privacy: .public)")
         case let .failure(error):
             fillLogger.log("PVFILL|E41-2|stage=rebuild status=fail error=\(error.description, privacy: .public)")
         }
