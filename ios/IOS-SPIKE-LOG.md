@@ -4932,3 +4932,43 @@ script was touched. Full transcripts:
 `.planning/phases/42-standard-dowodu-bramka-qa-i-ci-dla-ios/42-03-SUMMARY.md` (not committed from this
 worktree, per the standing QA-05 convention this record itself documents).
 7. §3b hardware block stands: all AutoFill proof is simulator-only until the paid membership.
+
+### L-41 -- a plain-to-panic-probe pv-ffi bindings TRANSITION fails the FIRST `xcodebuild test` attempt, always succeeds on an immediate retry
+
+**Found 2026-08-21, Phase 42, Plan 42-04, Task 2/3, empirically, reproduced three times.** `gate_ffi_build`
+(scripts/check-ios-gate.sh, 42-03) runs `scripts/build-ios.sh` PLAIN (no `--with-panic-probe`) --
+`ios/PasskeyVault/build/swift-bindings/pv_ffi.swift` on disk afterward carries NO
+`ffi06SyntheticPanicProbe` symbol (confirmed: `grep -c ffi06` on the freshly-written file is 0).
+`PasskeyVault.xcodeproj`'s own "Build pv-ffi XCFramework" Run Script phase then runs AGAIN, automatically,
+the moment ANY `xcodebuild` invocation builds the `PasskeyVault` scheme's Debug configuration -- and
+that phase's own script content (`38-01`'s own `$CONFIGURATION`-derived logic) appends
+`--with-panic-probe` on Debug, regenerating the SAME shared bindings path WITH the symbol this time.
+An `xcodebuild test` invoked immediately after `gate_ffi_build` (i.e. exactly the sequence the composed
+`bash scripts/check-ios-gate.sh` runs, `ffi_build` before `swift_tests`) fails ON THE FIRST ATTEMPT with:
+```
+Cannot find 'uniffi_pv_ffi_checksum_method_ffiuserkey_ffi06_synthetic_panic_probe' in scope
+Testing cancelled because the build failed.
+```
+even though the regenerated header (`ios/PasskeyVault/build/PvFfi.xcframework/ios-arm64-simulator/Headers/pv_ffiFFI.h`)
+was independently confirmed, by direct `grep`, to declare that exact symbol correctly by the time the
+build fails -- the artifact on disk is right; the build that just failed did not see it. An IMMEDIATE
+retry of the exact same `xcodebuild test` command, no changes, succeeded every time (3/3) in this
+session, in well under 30 seconds. This reads as an Xcode incremental-build/module-cache staleness
+artifact specific to the bindings-VARIANT TRANSITION itself (plain -> panic-probe, both writing the
+SAME shared output path -- `scripts/build-ios.sh`'s own documented "whichever variant ran last wins"
+limitation, see that script's header), not a real defect in the FFI boundary, the generated bindings,
+or the test files. Root cause not fully identified (no clean way to inspect Xcode's own module-cache
+invalidation decision from outside); the empirical retry-recovers-100%-of-the-time signature is the
+only thing this session could establish with confidence.
+
+**Consequence:** `gate_swift_tests` (scripts/check-ios-gate.sh, 42-04) retries the `xcodebuild test`
+invocation EXACTLY ONCE, and ONLY when the failure log contains the literal string `Testing cancelled
+because the build failed` -- Xcode's own phrase for a build failure, which a genuine TEST-assertion
+failure (the kind 35-VERIFICATION.md's own mutation testing produced, exit 65 with named failing test
+cases) never prints. This is a narrow, evidence-scoped retry, not a blanket retry-until-green: a real
+compile error in `crates/pv-ffi` or the Swift test files reproduces on the retry too and still fails
+the sub-gate. Any future caller chaining a plain `scripts/build-ios.sh` run immediately before an
+`xcodebuild test` invocation of the `PasskeyVault` scheme's Debug configuration should expect this same
+first-attempt failure and either retry once with the same narrow signature check, or insert a
+`--with-panic-probe` (or otherwise matching-variant) rebuild between the two steps to avoid the
+transition entirely.

@@ -500,14 +500,323 @@ falsify_ffi_opaque() {
   echo "==> NOT proven falsifiable in THIS automated mode: scripts/audit-ffi-opaque-handles.sh's own opaque-handle scan (shapes A/B/C/D). That script has no --verify-falsifiable flag of its own -- its scan's falsifiability is demonstrated by manual source mutation (inject a raw-byte accessor into crates/pv-ffi/src/lib.rs, rebuild, re-audit, revert), recorded as this plan's Task 2 M3 in 42-03-SUMMARY.md, not by this fast composer-level mode. Do not read this invocation's PASS as covering that half."
 }
 
+# --- gate_swift_tests ----------------------------------------------------
+# 42-04: the Swift test lane, added ONLY after settling two unknowns this
+# project has already paid once for on the Rust side (a `cargo test --lib
+# <mod>::` filter matching nothing and reporting green, this handoff's own
+# opening defect). Both are MEASURED, not assumed, and both measurements are
+# wired into this function as enforced behaviour rather than left as a
+# one-time SUMMARY note:
+#
+#   E9 (does the scheme survive a clean checkout?) -- `git archive HEAD |
+#   tar -x` into a scratch dir (contains ONLY tracked files -- xcuserdata/
+#   is gitignored, so this models a fresh checkout exactly, without
+#   registering a worktree a live parallel session could see) then
+#   `xcodebuild -list` there listed `PasskeyVault` under Schemes: Xcode
+#   autocreates it. No `xcshareddata/xcschemes/` commit is needed. That
+#   finding is re-asserted on EVERY invocation below (step 1) via the same
+#   `xcodebuild -list` command against the real project -- never trusted as
+#   a permanent fact from a single measurement -- so a future toolchain
+#   regression on a different machine surfaces as a named FAIL here, not a
+#   silent skip.
+#
+#   E8 (can `xcodebuild test` be green with zero tests?) --
+#   `-only-testing:PasskeyVaultTests/ThisTypeDoesNotExist` exited 0 and
+#   printed `** TEST SUCCEEDED **`, three times, reproducibly (2026-08-21).
+#   This project's oldest defect family (a filter matching zero tests
+#   reported green) IS live on this iOS toolchain -- confirmed independently
+#   of, and consistent with, landmine L-30 (ios/IOS-SPIKE-LOG.md), which
+#   found the same shape at method-level scope. `xcrun xcresulttool get
+#   test-results summary --format json`'s `.totalTestCount` field read 0 for
+#   that run and 5 for a real matching run of both FFI suites -- see
+#   42-04-SUMMARY.md for the raw JSON fragments of both. `.totalTestCount`
+#   is therefore the exact field this sub-gate asserts on below, and the
+#   assertion is INDEPENDENT of xcodebuild's own exit code, by construction
+#   (E8's finding was Outcome B, but the count assertion does not rely on
+#   which outcome a future toolchain produces). Named identifiers appear at
+#   `get test-results tests --format json`'s `.testNodes[].children[]...`
+#   tree, each leaf carrying a `nodeIdentifier` shaped `<Suite>/<method>()`
+#   (trailing parens -- L-30's own method-scoping finding, reused here).
+#   xcresulttool version this was verified against: 24757, schema 0.1.0
+#   (`xcrun xcresulttool version`) -- Apple has churned this interface
+#   across releases; a version bump is a realistic way for the JSON path
+#   below to quietly stop asserting anything, which is exactly why
+#   `--verify-falsifiable`'s F1 re-proves it at any later date rather than
+#   trusting this comment forever.
+#
+# L-41 (new landmine, found writing this task, ios/IOS-SPIKE-LOG.md): a
+# plain `scripts/build-ios.sh` run (no panic probe -- what `gate_ffi_build`
+# above just did) immediately followed by an `xcodebuild test` invocation
+# that internally regenerates bindings WITH the panic probe (this project's
+# own Debug-config default, PasskeyVault.xcodeproj's "Build pv-ffi
+# XCFramework" Run Script phase) fails the FIRST attempt with `Cannot find
+# 'uniffi_pv_ffi_checksum_method_ffiuserkey_ffi06_synthetic_panic_probe' in
+# scope` even though the regenerated header on disk is correct by the time
+# the build fails (verified: `grep` the freshly-written header directly,
+# finds it) -- an Xcode incremental-build/module-cache staleness artifact of
+# the bindings-variant TRANSITION itself, not a real defect in the FFI
+# boundary. Confirmed reproducible three times in this exact plan/task, and
+# confirmed an IMMEDIATE retry of the SAME command with NO changes succeeds
+# every time. Step 3 below retries exactly once, ONLY when the failure
+# carries this exact, narrow signature (`Testing cancelled because the
+# build failed` -- Xcode's own phrase for a build failure, distinct from a
+# genuine test-assertion failure, which never prints that phrase) -- a real
+# regression in `crates/pv-ffi` or the Swift test files still fails this
+# sub-gate after the retry, since a genuine compile error reproduces on
+# every attempt.
+GATE_SWIFT_PROJECT_DEFAULT="ios/PasskeyVault/PasskeyVault.xcodeproj"
+GATE_SWIFT_SCHEME_DEFAULT="PasskeyVault"
+GATE_SWIFT_SIM_UDID_FILE_DEFAULT="/private/tmp/pv16.udid"
+
+gate_swift_tests() {
+  local project="$GATE_SWIFT_PROJECT_DEFAULT"
+  local scheme="$GATE_SWIFT_SCHEME_DEFAULT"
+  local udid_file="$GATE_SWIFT_SIM_UDID_FILE_DEFAULT"
+
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "FAIL[swift_tests]: jq not found on PATH -- required to parse xcresulttool's JSON output" >&2
+    return 1
+  fi
+
+  # 1. Scheme precondition (E9 wired in as an ENFORCED check on every
+  #    invocation, never a one-time note). A missing scheme is a hard FAIL,
+  #    never a silent skip (this file's own header discipline; Pitfall 6,
+  #    42-RESEARCH.md).
+  local list_out list_status
+  list_out=$(xcodebuild -list -project "$project" 2>&1) && list_status=0 || list_status=$?
+  if [ "$list_status" -ne 0 ]; then
+    echo "FAIL[swift_tests]: xcodebuild -list -project $project exited $list_status -- cannot even enumerate schemes" >&2
+    echo "$list_out" | sed 's/^/  /' >&2
+    return 1
+  fi
+  # Scoped to the "Schemes:" section specifically, not the whole listing: a
+  # bare `grep "^[[:space:]]*${scheme}\$"` over the FULL `-list` output
+  # would false-PASS on the "Targets:" section alone (this project's own
+  # app target is also named "PasskeyVault", identical text, different
+  # section) even if no scheme of that name existed at all -- the exact
+  # "matched by position/whole-text instead of the real structural extent"
+  # shape this project's own review discipline watches for. Falsified both
+  # ways in 42-04-SUMMARY.md: a real scheme name matches within this slice,
+  # a name that exists ONLY as a target (never as a scheme) does not.
+  local schemes_block
+  schemes_block=$(echo "$list_out" | awk '/^[[:space:]]*Schemes:/{found=1; next} found')
+  if ! echo "$schemes_block" | grep -qE "^[[:space:]]*${scheme}\$"; then
+    echo "FAIL[swift_tests]: xcodebuild -list -project $project does not list '$scheme' under Schemes -- the E9 clean-checkout autocreation this sub-gate relies on did not happen this time; commit a shared scheme under xcshareddata/xcschemes/ rather than skipping this sub-gate" >&2
+    echo "$list_out" | sed 's/^/  /' >&2
+    return 1
+  fi
+
+  # 2. Destination precondition: a booted-or-bootable simulator, captured
+  #    from a file this repo's own live-proof scripts already write and
+  #    read (scripts/ios-sync-live-proof.sh and siblings), never assumed
+  #    from a hardcoded device name -- confirmed present in `xcrun simctl
+  #    list devices available` before use.
+  if [ ! -f "$udid_file" ]; then
+    echo "FAIL[swift_tests]: no simulator udid recorded at $udid_file -- boot the pinned simulator first" >&2
+    return 1
+  fi
+  local udid
+  udid=$(cat "$udid_file")
+  if [ -z "$udid" ]; then
+    echo "FAIL[swift_tests]: $udid_file is empty -- no simulator udid to target" >&2
+    return 1
+  fi
+  local sim_list sim_status
+  sim_list=$(xcrun simctl list devices available 2>&1) && sim_status=0 || sim_status=$?
+  if [ "$sim_status" -ne 0 ]; then
+    echo "FAIL[swift_tests]: xcrun simctl list devices available exited $sim_status -- cannot confirm $udid is a real, available device" >&2
+    return 1
+  fi
+  if ! echo "$sim_list" | grep -q "$udid"; then
+    echo "FAIL[swift_tests]: udid $udid (from $udid_file) does not appear in 'xcrun simctl list devices available' -- the pinned simulator is not available on this machine" >&2
+    return 1
+  fi
+
+  # 3. Run xcodebuild test: result bundle to a scratch path, output
+  #    redirected to a log file, xcodebuild's OWN exit tested directly --
+  #    never through a pipe into a status check (this file's own header
+  #    discipline; the exact idiom 35-03 already falsified). ONE retry, iff
+  #    the L-41 build-transition signature is present (see the header
+  #    comment above this function) -- never a blanket retry-until-green.
+  local result_bundle log_file
+  result_bundle="$GATE_SCRATCH_ROOT/swift-tests.xcresult"
+  log_file="$GATE_SCRATCH_ROOT/swift-tests.log"
+
+  local -a only_testing_args=()
+  if [ -n "${GATE_SWIFT_ONLY_TESTING_OVERRIDE:-}" ]; then
+    # F1 falsification hook ONLY (set by falsify_swift_tests) -- a real
+    # invocation never sets this.
+    only_testing_args=(-only-testing:"$GATE_SWIFT_ONLY_TESTING_OVERRIDE")
+  else
+    only_testing_args=(
+      -only-testing:PasskeyVaultTests/FfiRoundTripTests
+      -only-testing:PasskeyVaultTests/FfiPanicSafetyTests
+    )
+  fi
+
+  local attempt test_status retried=0
+  for attempt in 1 2; do
+    rm -rf "$result_bundle"
+    if xcodebuild test \
+        -project "$project" \
+        -scheme "$scheme" \
+        -destination "platform=iOS Simulator,id=${udid}" \
+        "${only_testing_args[@]}" \
+        -parallel-testing-enabled NO \
+        -resultBundlePath "$result_bundle" \
+        > "$log_file" 2>&1; then
+      test_status=0
+    else
+      test_status=$?
+    fi
+    if [ "$test_status" -eq 0 ]; then
+      break
+    fi
+    if [ "$attempt" -eq 1 ] && grep -q "Testing cancelled because the build failed" "$log_file"; then
+      echo "RETRY[swift_tests]: attempt 1 hit the L-41 bindings-transition build failure (xcodebuild exit $test_status) -- retrying once (this exact failure is known to be transitional, not a real regression; see this file's own gate_swift_tests header comment)" >&2
+      retried=1
+      continue
+    fi
+    break
+  done
+
+  if [ "$test_status" -ne 0 ]; then
+    echo "FAIL[swift_tests]: xcodebuild test exited $test_status$( [ "$retried" -eq 1 ] && echo " (after one L-41 retry, which did not resolve it -- treat as a genuine failure)" ) -- log tail:" >&2
+    tail -40 "$log_file" >&2
+    return 1
+  fi
+  if [ ! -d "$result_bundle" ]; then
+    echo "FAIL[swift_tests]: xcodebuild test exited 0 but produced no result bundle at $result_bundle -- cannot assert an executed-test count" >&2
+    return 1
+  fi
+
+  # 4. The positive executed-test count -- INDEPENDENT of xcodebuild's own
+  #    exit code (E8: a zero-match filter exits 0 on this toolchain).
+  local summary_json summary_status count
+  summary_json=$(xcrun xcresulttool get test-results summary --path "$result_bundle" --format json 2>&1) \
+    && summary_status=0 || summary_status=$?
+  if [ "$summary_status" -ne 0 ]; then
+    echo "FAIL[swift_tests]: xcrun xcresulttool get test-results summary exited $summary_status against $result_bundle" >&2
+    echo "$summary_json" | sed 's/^/  /' >&2
+    return 1
+  fi
+  count=$(echo "$summary_json" | jq '.totalTestCount' 2>&1)
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    echo "FAIL[swift_tests]: could not parse a numeric .totalTestCount out of the result bundle summary JSON -- got: $count" >&2
+    return 1
+  fi
+  if [ "$count" -le 0 ]; then
+    echo "FAIL[swift_tests]: executed-test count is $count (xcodebuild's own exit was 0) -- a filter that matches zero tests is reported green by this toolchain (E8/L-30); this sub-gate refuses to call that a pass" >&2
+    tail -20 "$log_file" >&2
+    return 1
+  fi
+
+  # 5. Named FFI identifiers must appear in the executed set -- proves the
+  #    real XCFramework was linked and the real FFI was called in THIS
+  #    invocation (QA-01), never merely that some test somewhere was green.
+  #    Literal case names taken from FfiRoundTripTests.swift/
+  #    FfiPanicSafetyTests.swift, never computed.
+  local tests_json tests_status identifiers
+  tests_json=$(xcrun xcresulttool get test-results tests --path "$result_bundle" --format json 2>&1) \
+    && tests_status=0 || tests_status=$?
+  if [ "$tests_status" -ne 0 ]; then
+    echo "FAIL[swift_tests]: xcrun xcresulttool get test-results tests exited $tests_status against $result_bundle" >&2
+    echo "$tests_json" | sed 's/^/  /' >&2
+    return 1
+  fi
+  identifiers=$(echo "$tests_json" | jq -r '.. | .nodeIdentifier? // empty')
+
+  local -a required_ids=()
+  if [ -n "${GATE_SWIFT_REQUIRED_IDS_OVERRIDE:-}" ]; then
+    # F2 falsification hook ONLY (set by falsify_swift_tests) -- a real
+    # invocation never sets this. Newline-delimited.
+    while IFS= read -r _id_line; do
+      [ -n "$_id_line" ] && required_ids+=("$_id_line")
+    done <<< "$GATE_SWIFT_REQUIRED_IDS_OVERRIDE"
+  else
+    required_ids=(
+      "FfiRoundTripTests/fullRoundTripOnLiteralBytes()"
+      "FfiRoundTripTests/embeddedNulByteSurvivesExportImportRoundTrip()"
+      "FfiRoundTripTests/embeddedNulByteInNonceIsNotTruncated()"
+      "FfiPanicSafetyTests/nonSentinelInputReturnsNormally()"
+      "FfiPanicSafetyTests/sentinelInputThrowsCatchableDiscriminatedErrorAndHandleSurvives()"
+    )
+  fi
+
+  local -a missing=()
+  local req_id
+  for req_id in "${required_ids[@]}"; do
+    if ! echo "$identifiers" | grep -qF "$req_id"; then
+      missing+=("$req_id")
+    fi
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "FAIL[swift_tests]: required FFI test identifier(s) NOT found in the executed set: ${missing[*]} -- executed identifiers were:" >&2
+    echo "$identifiers" | sed 's/^/  /' >&2
+    return 1
+  fi
+
+  echo "PASS[swift_tests]: scheme '$scheme' present (E9 autocreated); xcodebuild test exit=0$( [ "$retried" -eq 1 ] && echo " (after 1 L-41 retry)" ); executed-test count=$count (> 0, E8's zero-count trap did not fire); matched all required FFI identifiers: ${required_ids[*]}"
+}
+
+# --- gate_swift_tests falsification --------------------------------------
+falsify_swift_tests() {
+  echo "==> --verify-falsifiable: swift_tests"
+
+  echo "--- F1: zero-match filter -- the positive executed-count assertion's FAIL branch ---"
+  local out status
+  set +e
+  out=$(GATE_SWIFT_ONLY_TESTING_OVERRIDE="PasskeyVaultTests/ThisTypeDoesNotExist" gate_swift_tests 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: swift_tests F1 falsification FAILED -- gate_swift_tests with a zero-match -only-testing filter exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "executed-test count is 0"; then
+    echo "ERROR: swift_tests F1 falsification FAILED -- exited non-zero (exit=$status) but did not name the zero count" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_swift_tests with a zero-match -only-testing filter exited $status and named the observed (zero) count -- this is E8's own finding (xcodebuild itself exits 0 on this filter) confirmed NOT sufficient to pass this sub-gate:"
+  echo "$out" | grep "executed-test count" | sed 's/^/      /'
+  echo "==> PASS: F1 -- the positive-count assertion's FAIL branch is reachable"
+
+  echo
+  echo "--- F2: missing identifier -- the named-FFI-identifier assertion's FAIL branch ---"
+  set +e
+  out=$(GATE_SWIFT_REQUIRED_IDS_OVERRIDE=$'FfiRoundTripTests/fullRoundTripOnLiteralBytes()\nFfiRoundTripTests/thisMethodDoesNotExist()' gate_swift_tests 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: swift_tests F2 falsification FAILED -- gate_swift_tests with a bogus required identifier exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "thisMethodDoesNotExist()"; then
+    echo "ERROR: swift_tests F2 falsification FAILED -- exited non-zero (exit=$status) but did not name the missing identifier" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_swift_tests with one genuine identifier plus one bogus required identifier exited $status and named the missing one specifically (proving the check is per-identifier, not a vacuous whole-list match):"
+  echo "$out" | grep "NOT found in the executed set" | sed 's/^/      /'
+  echo "==> PASS: F2 -- the named-identifier assertion's FAIL branch is reachable"
+}
+
 # --- composer: sub-gate dispatch table ----------------------------------
 # 42-01 supplied qa05. 42-03 appends the three FFI sub-gates above, in the
 # order build -> falsifiable-slice-gate -> opaque-handle audit (each depends
-# on the one before it having produced fresh artifacts). Later plans in this
-# phase append further to GATES and add a matching
-# gate_<name>/falsify_<name> pair; nothing about the frame below should need
-# rewriting.
-GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque)
+# on the one before it having produced fresh artifacts). 42-04 appends
+# swift_tests LAST, deliberately: it runs `xcodebuild test`, which -- per
+# this project's own Debug-config default -- rebuilds pv-ffi's bindings a
+# SECOND time (WITH the panic probe), on top of whatever `ffi_build` just
+# left on disk (WITHOUT it); `gate_swift_tests`'s own header comment records
+# why that specific transition needed a bounded, narrowly-scoped retry
+# (L-41, ios/IOS-SPIKE-LOG.md). Later plans in this phase append further to
+# GATES and add a matching gate_<name>/falsify_<name> pair; nothing about
+# the frame below should need rewriting.
+GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests)
 
 ONLY=""
 VERIFY_FALSIFIABLE=0
