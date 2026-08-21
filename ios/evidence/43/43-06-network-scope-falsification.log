@@ -1,0 +1,25 @@
+=== 1. Baseline (no injection) ===
+PASS: the AutoFill extension constructs VaultAPI ONLY from the reviewed allow-list (<empty>), and every such construction site calls ONLY .createItem( (T-43-10, DR-43-A)
+exit=0
+
+=== 2. Injected unauthorized VaultAPI( construction (outside allow-list) ===
+FAIL: extension network-scope violation(s) found (T-43-10):
+-- Assertion (A), VaultAPI construction outside the allow-list:
+ios/PasskeyVault/PasskeyVaultAutoFill/ScratchNetworkScopeInjection.swift:9:        let api = VaultAPI(baseURL: URL(string: )!, tokenProvider: { nil }) [VaultAPI construction OUTSIDE the allow-list]
+
+exit=1
+
+=== 3. Reverted (injection file removed) ===
+PASS: the AutoFill extension constructs VaultAPI ONLY from the reviewed allow-list (<empty>), and every such construction site calls ONLY .createItem( (T-43-10, DR-43-A)
+exit=0
+
+=== 4. Assertion (B) isolation: scratch file added to ALLOWLIST, calls .sync( (non-createItem) ===
+FAIL: extension network-scope violation(s) found (T-43-10):
+-- Assertion (B), a non-createItem VaultAPI method called from an allow-listed file:
+ios/PasskeyVault/PasskeyVaultAutoFill/ScratchNetworkScopeInjection.swift:10:        _ = try? await api.sync(since: 0) [VaultAPI method call OTHER than .createItem( from an allow-listed file]
+
+exit=1
+
+=== 5. Reverted (scratch file removed, ALLOWLIST restored empty) ===
+PASS: the AutoFill extension constructs VaultAPI ONLY from the reviewed allow-list (<empty>), and every such construction site calls ONLY .createItem( (T-43-10, DR-43-A)
+exit=0

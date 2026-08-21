@@ -1,0 +1,4 @@
+=== Negative control: swap ciphertext args for plaintext fixtures (expect FAIL) ===
+** TEST FAILED **
+Test case 'VaultAPILeakProofTests/createItemPostBodyContainsCiphertextOnlyNeverPlaintextOrUserKeyBytes()' failed on 'Clone 1 of PV-iPhone16 - PasskeyVault (69884)' (0.024 seconds)
+Test case 'VaultAPILeakProofTests/createItemPostBodyContainsCiphertextOnlyNeverPlaintextOrUserKeyBytes()' failed on 'Clone 1 of PV-iPhone16 - PasskeyVault (69884)' (0.014 seconds)
