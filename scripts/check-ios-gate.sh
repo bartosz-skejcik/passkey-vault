@@ -244,11 +244,270 @@ falsify_qa05() {
   echo "==> qa05 falsification: BOTH proofs passed (F1 absence-assertion reachability, F2 positive-control abort) -- zero refs/branches/worktrees/index entries touched in either worktree"
 }
 
+# --- gate_ffi_build / gate_ffi_falsifiable / gate_ffi_opaque -----------
+# 42-03: composes the two shell gates Phase 35 already built --
+# scripts/build-ios.sh (plain, and its own --verify-falsifiable mode), and
+# scripts/audit-ffi-opaque-handles.sh -- by INVOKING them, never by
+# reimplementing their logic (the slice-check and the opaque-handle scan
+# each stay in exactly one place). The one structural hole this composer
+# closes by construction, that neither existing script closes on its own
+# (35-REVIEW.md WR-05): scripts/audit-ffi-opaque-handles.sh audits whatever
+# generated bindings an EARLIER build happened to leave on disk -- ios/**/
+# build/ is gitignored, so adding a raw-byte accessor to the FFI source and
+# running the audit without rebuilding prints PASS over stale bindings.
+# gate_ffi_opaque below asserts, POSITIVELY, that no source under
+# crates/pv-ffi/src/ is newer than the generated bindings BEFORE consulting
+# the audit's verdict, rather than only checking that some bindings file
+# happens to exist.
+#
+# Every path below is overridable via an environment variable, exactly
+# mirroring gate_qa05's own QA05_CONTROL_PATH idiom -- so this composer's own
+# --verify-falsifiable mode can drive each sub-gate's FAIL path against a
+# deliberately-wrong path with ZERO mutation of any real script, build
+# artifact, or source file. Every real invocation (no override set) uses the
+# default.
+FFI_BUILD_SCRIPT_DEFAULT="scripts/build-ios.sh"
+FFI_XCFRAMEWORK_DEFAULT="ios/PasskeyVault/build/PvFfi.xcframework"
+FFI_BINDINGS_DIR_DEFAULT="ios/PasskeyVault/build/swift-bindings"
+FFI_AUDIT_SCRIPT_DEFAULT="scripts/audit-ffi-opaque-handles.sh"
+
+# gate_ffi_build -- invokes scripts/build-ios.sh (no args): builds both real
+# iOS triples, generates Swift bindings, assembles the XCFramework, and runs
+# that script's OWN slice gate. A missing/unreadable script is exit 1 naming
+# it, never a skip (per this file's own header discipline and
+# audit-ffi-opaque-handles.sh's "WARN and skip is NOT an option" precedent).
+gate_ffi_build() {
+  local script="${FFI_BUILD_SCRIPT:-$FFI_BUILD_SCRIPT_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[ffi_build]: $script not found or not readable -- cannot run the pv-ffi build" >&2
+    return 1
+  fi
+
+  if ! bash "$script"; then
+    echo "FAIL[ffi_build]: $script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[ffi_build]: $script completed (both triples built, Swift bindings generated, XCFramework assembled, its own slice gate ran)"
+}
+
+# gate_ffi_falsifiable -- invokes scripts/build-ios.sh --verify-falsifiable,
+# which does NOT rebuild (that script's own header) and requires the
+# XCFramework already on disk from a prior plain invocation. That ordering
+# dependency is encoded explicitly here rather than assumed from GATES list
+# order or caller discipline: a caller running `--only ffi_falsifiable`
+# alone (no prior ffi_build in the same invocation) gets a named FAIL up
+# front, not a confusing failure from deep inside build-ios.sh.
+gate_ffi_falsifiable() {
+  local script="${FFI_BUILD_SCRIPT:-$FFI_BUILD_SCRIPT_DEFAULT}"
+  local xcframework="${XCFRAMEWORK_PATH:-$FFI_XCFRAMEWORK_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[ffi_falsifiable]: $script not found or not readable -- cannot run its --verify-falsifiable mode" >&2
+    return 1
+  fi
+
+  if [ ! -d "$xcframework" ]; then
+    echo "FAIL[ffi_falsifiable]: $xcframework not found -- $script --verify-falsifiable does not rebuild; the ffi_build sub-gate (a plain '$script' run) must run first in this invocation" >&2
+    return 1
+  fi
+
+  if ! bash "$script" --verify-falsifiable; then
+    echo "FAIL[ffi_falsifiable]: $script --verify-falsifiable exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[ffi_falsifiable]: $script --verify-falsifiable proved both slice-gate halves (device+simulator) and the WR-03 pv-ffi-object guard can genuinely fail"
+}
+
+# gate_ffi_opaque -- two steps, in order:
+#   1. The freshness precondition (WR-05), asserted POSITIVELY: the
+#      generated Swift bindings file must exist and be non-empty, AND no
+#      *.rs under crates/pv-ffi/src/ may be newer than it. `find ... -print
+#      -quit` throughout, never `find ... | head` (this file's own header,
+#      Two landmines section -- the SIGPIPE reason is scripts/build-ios.sh's
+#      own extract_pv_ffi_object comment).
+#   2. scripts/audit-ffi-opaque-handles.sh itself, only once (1) holds.
+#
+# E5 discipline (mirrors gate_qa05's own comment on this): this function
+# runs as the direct target of `if ! "gate_$g"` in run_gates, and bash
+# disables `set -e` for a function's ENTIRE body when invoked that way -- so
+# every `find` here that could itself error (missing directory, etc.) must
+# have its exit status checked explicitly, never inferred from whether its
+# captured output happens to be empty. An errored freshness query read as
+# "found nothing stale" would be exactly the empty-read-as-pass trap this
+# whole phase exists to police.
+gate_ffi_opaque() {
+  local audit_script="${FFI_AUDIT_SCRIPT:-$FFI_AUDIT_SCRIPT_DEFAULT}"
+  local bindings_dir="${BINDINGS_DIR_PATH:-$FFI_BINDINGS_DIR_DEFAULT}"
+
+  if [ ! -f "$audit_script" ] || [ ! -r "$audit_script" ]; then
+    echo "FAIL[ffi_opaque]: $audit_script not found or not readable -- cannot run the FFI-02 opaque-handle audit" >&2
+    return 1
+  fi
+
+  local bindings_file bf_status
+  bindings_file=$(find "$bindings_dir" -maxdepth 1 -name '*.swift' -print -quit 2>/dev/null) && bf_status=0 || bf_status=$?
+  if [ "$bf_status" -ne 0 ] || [ -z "$bindings_file" ] || [ ! -s "$bindings_file" ]; then
+    echo "FAIL[ffi_opaque]: no non-empty generated Swift bindings file found under $bindings_dir (find exit=$bf_status) -- run the ffi_build sub-gate (a plain '$FFI_BUILD_SCRIPT_DEFAULT' run) first" >&2
+    return 1
+  fi
+
+  local stale stale_status
+  stale=$(find crates/pv-ffi/src -name '*.rs' -newer "$bindings_file" -print -quit 2>/dev/null) && stale_status=0 || stale_status=$?
+  if [ "$stale_status" -ne 0 ]; then
+    echo "FAIL[ffi_opaque]: the freshness query itself errored (find exit=$stale_status) -- treating an error as a broken query, never as a fresh result" >&2
+    return 1
+  fi
+  if [ -n "$stale" ]; then
+    echo "FAIL[ffi_opaque]: $bindings_file is STALE -- $stale (under crates/pv-ffi/src/) is newer than the generated bindings, so the audit's verdict below would be about code that is no longer there. Re-run the ffi_build sub-gate to regenerate bindings, then re-run this sub-gate." >&2
+    return 1
+  fi
+  echo "OK[ffi_opaque]: freshness precondition holds -- $bindings_file exists, is non-empty, and no source under crates/pv-ffi/src/ is newer than it"
+
+  if ! bash "$audit_script"; then
+    echo "FAIL[ffi_opaque]: $audit_script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[ffi_opaque]: bindings provably fresh (see OK line above), and $audit_script reports zero raw-byte accessors outside its sanctioned exceptions"
+}
+
+# --- gate_ffi_* falsification -------------------------------------------
+# Each proves its own FAIL path is genuinely reachable via the overridable
+# path variables above -- ZERO mutation of any real script, build artifact,
+# or source file (the same "no ref/branch/worktree/index mutation" standard
+# falsify_qa05 already holds itself to, adapted to plain paths). Where a
+# sub-gate delegates to an already-self-falsifying underlying mode
+# (gate_ffi_falsifiable -> `scripts/build-ios.sh --verify-falsifiable`),
+# this DELEGATES to that mode rather than duplicating its corruption logic.
+# scripts/audit-ffi-opaque-handles.sh has no such built-in mode of its own --
+# its own opaque-handle SCAN is proven falsifiable only by manual source
+# mutation (this plan's Task 2, M3; recorded in 42-03-SUMMARY.md), and
+# falsify_ffi_opaque says so explicitly rather than claiming coverage this
+# fast mode does not have.
+falsify_ffi_build() {
+  echo "==> --verify-falsifiable: ffi_build"
+  local out status
+  set +e
+  out=$(FFI_BUILD_SCRIPT="scripts/build-ios-does-not-exist.sh" gate_ffi_build 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: ffi_build falsification FAILED -- gate_ffi_build with a deliberately missing script path exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "not found or not readable"; then
+    echo "ERROR: ffi_build falsification FAILED -- exited non-zero (exit=$status) but did not name the missing-script guard" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_ffi_build with a missing script path exited $status and named the missing-script guard:"
+  echo "$out" | sed 's/^/      /'
+  echo "==> PASS: ffi_build's missing-prerequisite FAIL path is reachable, zero mutation of the real script or any build artifact"
+  echo "NOTE: ffi_build's other FAIL path (a genuine build error from a real compile) is not exercised by this fast mode -- corrupting a real cross-compile is expensive and out of scope here; it is proven manually as this plan's Task 2 M1a mutation (see 42-03-SUMMARY.md)."
+}
+
+falsify_ffi_falsifiable() {
+  echo "==> --verify-falsifiable: ffi_falsifiable"
+
+  echo "--- ordering-dependency FAIL path (zero mutation -- overridden path only) ---"
+  local out status
+  set +e
+  out=$(XCFRAMEWORK_PATH="ios/PasskeyVault/build/PvFfi-does-not-exist.xcframework" gate_ffi_falsifiable 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: ffi_falsifiable falsification FAILED -- gate_ffi_falsifiable with a deliberately absent XCFramework path exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "must run first"; then
+    echo "ERROR: ffi_falsifiable falsification FAILED -- exited non-zero (exit=$status) but did not name the ordering dependency" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_ffi_falsifiable with an absent XCFramework path exited $status and named the ordering dependency:"
+  echo "$out" | sed 's/^/      /'
+  echo "==> PASS: the ordering-dependency FAIL path is reachable, zero mutation of any real artifact"
+
+  echo
+  echo "--- delegated proof: the underlying slice gate's OWN self-falsification mode (not duplicated here) ---"
+  local xcframework="${FFI_XCFRAMEWORK_DEFAULT}"
+  if [ ! -d "$xcframework" ]; then
+    echo "ERROR: cannot delegate -- $xcframework is absent; run the ffi_build sub-gate (a plain scripts/build-ios.sh) first" >&2
+    exit 1
+  fi
+  bash scripts/build-ios.sh --verify-falsifiable
+  echo "==> PASS: scripts/build-ios.sh --verify-falsifiable's own proof (both slice-gate halves + the WR-03 pv-ffi-object guard) delegated to, not reimplemented"
+}
+
+falsify_ffi_opaque() {
+  echo "==> --verify-falsifiable: ffi_opaque"
+
+  echo "--- missing-bindings FAIL path (zero mutation -- overridden path only) ---"
+  local out status
+  set +e
+  out=$(BINDINGS_DIR_PATH="ios/PasskeyVault/build/swift-bindings-does-not-exist" gate_ffi_opaque 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: ffi_opaque falsification FAILED -- gate_ffi_opaque with a deliberately absent bindings dir exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "no non-empty generated Swift bindings"; then
+    echo "ERROR: ffi_opaque falsification FAILED -- exited non-zero (exit=$status) but did not name the missing-bindings guard" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_ffi_opaque with an absent bindings dir exited $status and named the missing-bindings guard:"
+  echo "$out" | sed 's/^/      /'
+  echo "==> PASS: the missing-bindings FAIL path is reachable, zero mutation of any real artifact"
+
+  echo
+  echo "--- staleness FAIL path (a SCRATCH COPY of the real bindings file, dated 2000-01-01 -- zero mutation of the real bindings or of crates/pv-ffi/src/) ---"
+  local real_bindings
+  real_bindings=$(find "$FFI_BINDINGS_DIR_DEFAULT" -maxdepth 1 -name '*.swift' -print -quit)
+  if [ -z "$real_bindings" ]; then
+    echo "ERROR: cannot stage the staleness proof -- no real bindings file present under $FFI_BINDINGS_DIR_DEFAULT; run the ffi_build sub-gate first" >&2
+    exit 1
+  fi
+  local scratch_stale_dir scratch_bindings
+  scratch_stale_dir="$GATE_SCRATCH_ROOT/ffi-opaque-staleness"
+  mkdir -p "$scratch_stale_dir"
+  scratch_bindings="$scratch_stale_dir/$(basename "$real_bindings")"
+  cp "$real_bindings" "$scratch_bindings"
+  touch -t 200001010000 "$scratch_bindings"
+  set +e
+  out=$(BINDINGS_DIR_PATH="$scratch_stale_dir" gate_ffi_opaque 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: ffi_opaque falsification FAILED -- gate_ffi_opaque against an artificially stale (2000-01-01) bindings copy exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "STALE"; then
+    echo "ERROR: ffi_opaque falsification FAILED -- exited non-zero (exit=$status) but did not name staleness" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    gate_ffi_opaque against a scratch bindings copy dated 2000-01-01 exited $status and named staleness:"
+  echo "$out" | sed 's/^/      /'
+  echo "==> PASS: the freshness precondition's FAIL path is reachable, against a real (copied, never mutated in place) bindings file"
+
+  echo
+  echo "==> NOT proven falsifiable in THIS automated mode: scripts/audit-ffi-opaque-handles.sh's own opaque-handle scan (shapes A/B/C/D). That script has no --verify-falsifiable flag of its own -- its scan's falsifiability is demonstrated by manual source mutation (inject a raw-byte accessor into crates/pv-ffi/src/lib.rs, rebuild, re-audit, revert), recorded as this plan's Task 2 M3 in 42-03-SUMMARY.md, not by this fast composer-level mode. Do not read this invocation's PASS as covering that half."
+}
+
 # --- composer: sub-gate dispatch table ----------------------------------
-# This plan supplies exactly one sub-gate. Later plans in this phase append
-# to GATES and add a matching gate_<name>/falsify_<name> pair; nothing about
-# the frame below should need rewriting.
-GATES=(qa05)
+# 42-01 supplied qa05. 42-03 appends the three FFI sub-gates above, in the
+# order build -> falsifiable-slice-gate -> opaque-handle audit (each depends
+# on the one before it having produced fresh artifacts). Later plans in this
+# phase append further to GATES and add a matching
+# gate_<name>/falsify_<name> pair; nothing about the frame below should need
+# rewriting.
+GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque)
 
 ONLY=""
 VERIFY_FALSIFIABLE=0
@@ -320,7 +579,7 @@ run_falsifications() {
     "falsify_$g"
   done
   echo
-  echo "==> --verify-falsifiable: ALL sub-gate falsification proofs passed (${TO_RUN[*]})"
+  echo "==> --verify-falsifiable: ALL defined sub-gate falsification proofs passed (${TO_RUN[*]}) -- see each sub-gate's own output above for exactly what was, and was not, proven falsifiable in this fast mode"
 }
 
 if [ "$VERIFY_FALSIFIABLE" -eq 1 ]; then
