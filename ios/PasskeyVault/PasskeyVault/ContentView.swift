@@ -567,6 +567,7 @@ struct ContentView: View {
         if let local = AccountService.localAccount() {
             route = .lock(local)
             refreshSessionInBackground()
+            retryPendingProviderItemsInBackground()
         } else if SessionTokenStore.load() != nil {
             Task { await reroute() }
         } else {
@@ -620,6 +621,34 @@ struct ContentView: View {
                 }
             } catch {
                 // Intentionally silent -- see this function's own doc comment.
+            }
+        }
+    }
+
+    /// Plan 43-06, Task 2: `PendingProviderItemStore`'s host-side retry -- fired alongside
+    /// `refreshSessionInBackground()`, AFTER `.lock` is already on screen, matching DR-42-A's own
+    /// "launch must never block first render" discipline exactly. Each still-pending record
+    /// (marked by the AutoFill extension before its own `VaultAPI.createItem` attempt, Plan
+    /// 43-07's registration call site) is retried once; on success the record is cleared, on
+    /// failure it is left pending for the NEXT launch -- never a tight retry loop, never a
+    /// user-facing error for a background repair, mirroring `IdentityStoreSync
+    /// .runIdentityRebuildIfPending()`'s own silent-until-fixed posture.
+    private func retryPendingProviderItemsInBackground() {
+        let pending = PendingProviderItemStore.allPending()
+        guard !pending.isEmpty else { return }
+        Task {
+            let api = VaultAPI(baseURL: ServerSettings.resolved, tokenProvider: { SessionTokenStore.load() })
+            for (itemId, item) in pending {
+                do {
+                    try await api.createItem(
+                        id: itemId, encKeyJson: item.encKeyJson, encDataJson: item.encDataJson
+                    )
+                    PendingProviderItemStore.clearPending(itemId: itemId)
+                } catch {
+                    // Left pending -- retried on the NEXT launch/foreground. Intentionally silent,
+                    // matching refreshSessionInBackground()'s own posture: this is a background
+                    // repair, never a user-facing error.
+                }
             }
         }
     }
