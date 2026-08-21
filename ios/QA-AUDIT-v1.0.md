@@ -202,19 +202,141 @@ left `open` by this plan, per DR-42-C — 42-06/42-07 resolve them, this plan do
 
 | # | Hazard | Owner phase | Disposition |
 |---|---|---|---|
-| H-01 | The wrapped-key wire encoding: `WrappedKey` has no serde attributes, so its byte-array field serializes as a number array from the Rust side and as base64 from a default Swift encoder, and nothing validates it — the server stores the field as opaque text and the register endpoint never parses or length-checks it, so it returns success on either encoding. The failure surfaces later, in a different client, as an undecryptable row (treated as a tampering signal by this codebase). Only a two-direction cross-client test catches it; no unit suite on either side can. | not yet determined — owner is "the first phase that writes such a row"; 42-06/42-07 must name the phase or record its absence as a blocker | open |
-| H-02 | The FFI panic-probe feature (`ffi06-probe`) must default to an empty feature set the moment a second build path exists; the accepted rationale was explicitly time-bound to Phase 35 being the only consumer. `crates/pv-ffi/Cargo.toml` already shows `default = []` (flipped Phase 36, Plan 36-01) — but `scripts/build-ios.sh`'s Run Script phase invocation still defaults to `--with-panic-probe` for the `PasskeyVault` APP target itself (moved there from the test bundle in Phase 37, Plan 37-02), so the synthetic panic probe still ships inside `PasskeyVault.app` today. Check whether a later phase (38–41) linked the AutoFill extension target without flipping this. | 36 (flip), 37 (moved to app target), 38–41 (must check extension-target linkage) | **partial — 42-06.** Confirmed via `crates/pv-ffi/Cargo.toml:82` (`default = []`, unchanged) and Phase 38's own two-sided `nm` symbol control (`off=0`/`on=4`, `.planning/phases/38-pe-ny-interfejs-vaulta/38-01-SUMMARY.md:64-70`, cross-referenced in the Phase 36 QA-02 table above) that the CRATE-level default is correctly off. **Still confirmed OPEN through Phase 38**: `.planning/phases/38-pe-ny-interfejs-vaulta/38-01-SUMMARY.md:34-57` shows the app target's Run Script phase still selects `--with-panic-probe` whenever `${CONFIGURATION}` is `Debug` (the residual DR-38-C names explicitly). The extension-target (Phase 41) linkage question is unanswered by this plan — out of the 35–38 range — and is handed to 42-07 as this hazard's remaining owner. |
+| H-01 | The wrapped-key wire encoding: `WrappedKey` has no serde attributes, so its byte-array field serializes as a number array from the Rust side and as base64 from a default Swift encoder, and nothing validates it — the server stores the field as opaque text and the register endpoint never parses or length-checks it, so it returns success on either encoding. The failure surfaces later, in a different client, as an undecryptable row (treated as a tampering signal by this codebase). Only a two-direction cross-client test catches it; no unit suite on either side can. | not yet determined — owner is "the first phase that writes such a row"; 42-06/42-07 must name the phase or record its absence as a blocker | **resolved — 42-07.** See the dedicated "Wire-encoding hazard (H-01)" subsection immediately below the closing verdict's own hazard-resolution narrative for the full account: Phase 37 first wrote a `WrappedKey`-shaped row from the iOS client (`pw_wrapped_uk`) and proved it two-direction cross-client; Phase 40 independently re-derived and closed the same hazard shape for the family-sharing surface (DR-40-A + E-W2, both directions, on real server rows). |
+| H-02 | The FFI panic-probe feature (`ffi06-probe`) must default to an empty feature set the moment a second build path exists; the accepted rationale was explicitly time-bound to Phase 35 being the only consumer. `crates/pv-ffi/Cargo.toml` already shows `default = []` (flipped Phase 36, Plan 36-01) — but `scripts/build-ios.sh`'s Run Script phase invocation still defaults to `--with-panic-probe` for the `PasskeyVault` APP target itself (moved there from the test bundle in Phase 37, Plan 37-02), so the synthetic panic probe still ships inside `PasskeyVault.app` today. Check whether a later phase (38–41) linked the AutoFill extension target without flipping this. | 36 (flip), 37 (moved to app target), 38–41 (must check extension-target linkage) | **still open — confirmed through Phase 41, this plan's own re-check.** `crates/pv-ffi/Cargo.toml:44-47` (updated by Phase 40, Plan 40-04, Task 3, the most recent commentary on this hazard) states it explicitly: `PasskeyVaultAutoFill.appex` links the SAME shared XCFramework artifact but has **no Run Script phase of its own** — it inherits the probe whenever the app-owned phase last built in `Debug` (narrowed from "every configuration" to "every Debug build" by a Phase 39, Plan 39-07 fix, per the same comment) — and names **"Phase 41 (per-target production/test build split) is the named owner of closing this for real."** This plan's own live re-check (`grep -rn 'build-ios.sh' ios/PasskeyVault/PasskeyVault.xcodeproj/project.pbxproj`) confirms exactly ONE Run Script `shellScript` block invoking `build-ios.sh` in the whole project file, and a repo-wide grep of all eight `41-0N-SUMMARY.md` files for `panic-probe`/`per-target`/`ffi06-probe` finds zero on-topic hits — Phase 41 never touched this. **Disposition unchanged from 42-06's own honest narrowing: still open, correctly, owner is the never-executed "per-target build split," which no phase 35–41 implemented.** Practically bounded by L-14 (this register's own closing verdict): Release cannot currently be built at all, so every build this milestone ships today is Debug, and the probe ships in all of them. |
 | H-03 | The slice gate's device half had never been demonstrated able to fail; only the simulator half had (35-REVIEW.md WR-10). `scripts/build-ios.sh` now calls `falsify_slice` for BOTH `ios-arm64` (device) and `ios-arm64-simulator` — check whether this was closed inside Phase 42 itself (42-01/42-03/42-04) or in an earlier phase, and record the closing evidence. | 35 (artifact); closing phase to be named by 42-06/42-07 | **resolved — 42-06.** Closed inside Phase 35 itself: the Phase 35 specimen table's own WR-10 row (`scripts/build-ios.sh:337-338`, disposition `verified`) is the closing evidence, dated to Phase 35's own commits, not a later phase. Phases 36–38 reuse `scripts/build-ios.sh` unmodified in every `xcodebuild build`/`--verify-falsifiable` invocation across 21 plans without ever regressing this fix — confirmed by the Phase 36/38 QA-02 tables' own "inherited" cross-reference rows (`gate_ffi_build`/`gate_ffi_falsifiable` in `scripts/check-ios-gate.sh` invoke this script automatically on every gate run). |
-| H-04 | The opaque-handle audit (`scripts/audit-ffi-opaque-handles.sh`) is wired into no automated CI lane and has no freshness check of its own; the composition-layer freshness assertion added in 42-03 (`gate_ffi_opaque` in `scripts/check-ios-gate.sh`) closes the RUN-ORDER hole but not the script's OWN staleness detection, and `.github/workflows/ci.yml` still does not invoke it. | 35 (script itself); 42 (composition layer, partial) | open |
+| H-04 | The opaque-handle audit (`scripts/audit-ffi-opaque-handles.sh`) is wired into no automated CI lane and has no freshness check of its own; the composition-layer freshness assertion added in 42-03 (`gate_ffi_opaque` in `scripts/check-ios-gate.sh`) closes the RUN-ORDER hole but not the script's OWN staleness detection, and `.github/workflows/ci.yml` still does not invoke it. | 35 (script itself); 42 (composition layer, partial) | **still open — confirmed by this plan's own live re-check.** `grep -n 'audit-ffi-opaque-handles\|check-ios-gate' .github/workflows/ci.yml` returns zero matches (`.github/workflows/ci.yml`, checked directly, 2026-08-21) — neither the opaque-handle script NOR the composed `scripts/check-ios-gate.sh` itself is invoked anywhere in the CI workflow file. This is the concrete instance of the ROADMAP's own proof-limit paragraph ("a static audit plus runnable scripts on the simulator/local machine does not replace a real CI runner"): the gate this milestone built is a **local composer script**, not a wired CI gate. No phase 39–41 touched `.github/workflows/ci.yml` to add this wiring (Phase 41 DID add its own two AutoFill-specific gates to `ci.yml` — `scripts/audit-ios-autofill-deprecated-apis.sh`/`scripts/audit-ios-identity-store-chokepoint.sh`, `.github/workflows/ci.yml:41-42` — proving the wiring mechanism exists and is cheap; it was simply never extended to the opaque-handle audit or the composer). Owner remains named, unclaimed: a future phase (or a direct CI-wiring task, out of THIS plan's `files_modified`, which is `ios/QA-AUDIT-v1.0.md`/`ios/IOS-SPIKE-LOG.md` only) must add it. |
 | H-05 | The Rust-side deployment target: `35-REVIEW.md` WR-02 found `IPHONEOS_DEPLOYMENT_TARGET` was never set. `scripts/build-ios.sh` now sets it explicitly (`export IPHONEOS_DEPLOYMENT_TARGET=18.0`) — confirm this matches `project.pbxproj`'s own floor and that the device-slice assertion was updated in lockstep (WR-02 warned a correct fix would flip the device load command and break the old assertion). | 35 | **resolved — 42-06.** Closed inside Phase 35 (Phase 35 specimen table's WR-02 row, `scripts/build-ios.sh:374`, disposition `verified`). No commit under `.planning/phases/3[6-8]-*/` touches `IPHONEOS_DEPLOYMENT_TARGET`, and every Phase 36/37/38 build invocation runs against the same unmodified `build-ios.sh` — no lockstep drift observed in the 35–38 range. |
 | H-06 | The slice gate used to inspect whichever object the filesystem yielded first, which in practice was a compiler-support object rather than any of this crate's own (35-REVIEW.md WR-03). `scripts/build-ios.sh` now selects `pv_ffi*.o` specifically — confirm this closes WR-03 and that the falsification (an archive with zero `pv_ffi*.o` objects) has been demonstrated. | 35 | **resolved — 42-06.** Closed inside Phase 35 (specimen table's WR-03 row, `scripts/build-ios.sh:222`, disposition `verified`). Confirmed unmodified and reused (not regressed) through the 35–38 range — cross-referenced in the Phase 38 QA-02 table above. |
-| H-07 | Server-supplied KDF parameters are deserialized and used with no bounds check, so a hostile value is an allocation failure, which aborts rather than unwinds and therefore cannot be caught by `catch_unwind` (35-REVIEW.md WR-11). `crates/pv-ffi/src/lib.rs` now has tests named `from_password_rejects_over_ceiling_m_cost_end_to_end` and `from_password_rejects_argon2s_own_max_m_cost` — confirm the bounds check is real (not merely tested) and quote it. | 35 | open |
-| H-08 | The residual-risk disclosure (`crates/pv-ffi/src/lib.rs`'s CP-4 header) understates the un-zeroized copies that exist on the Rust side: the UniFFI `RustBuffer` marshalling intermediates, and the plaintext-carrying `String` types on the `encrypt_item`/`decrypt_item` pair. The current header (lines 24-40) still only discloses the SWIFT-side residual; a grep for `RustBuffer` across `crates/pv-ffi/src/lib.rs` returns zero hits. This gap looks STILL OPEN as of this plan — 42-06/42-07 must confirm and either extend the disclosure (in scope for this phase's audit-and-record mandate) or record it as an open-finding for a later phase. | 35 | open |
+| H-07 | Server-supplied KDF parameters are deserialized and used with no bounds check, so a hostile value is an allocation failure, which aborts rather than unwinds and therefore cannot be caught by `catch_unwind` (35-REVIEW.md WR-11). `crates/pv-ffi/src/lib.rs` now has tests named `from_password_rejects_over_ceiling_m_cost_end_to_end` and `from_password_rejects_argon2s_own_max_m_cost` — confirm the bounds check is real (not merely tested) and quote it. | 35 | **resolved — 42-07.** The bounds check is real, not merely tested: `fn validate_kdf_params(params: &KdfParams)` at `crates/pv-ffi/src/lib.rs:307` rejects `m_cost_kib > MAX_M_COST_KIB`, `t_cost > MAX_T_COST`, `p_cost > MAX_P_COST`, each returning `FfiError::InvalidInput` before any Argon2id allocation is attempted — read directly from source this session, not inferred from the test names. Independently corroborated by Phase 37's own re-verification (Phase 37 QA-01 table, "WR-11's untrusted-`KdfParams` guard" row, this register): falsified live by raising `MAX_M_COST_KIB` above 4,000,000, observing the panic, then reverting. |
+| H-08 | The residual-risk disclosure (`crates/pv-ffi/src/lib.rs`'s CP-4 header) understates the un-zeroized copies that exist on the Rust side: the UniFFI `RustBuffer` marshalling intermediates, and the plaintext-carrying `String` types on the `encrypt_item`/`decrypt_item` pair. The current header (lines 24-40) still only discloses the SWIFT-side residual; a grep for `RustBuffer` across `crates/pv-ffi/src/lib.rs` returns zero hits. This gap looks STILL OPEN as of this plan — 42-06/42-07 must confirm and either extend the disclosure (in scope for this phase's audit-and-record mandate) or record it as an open-finding for a later phase. | 35 | **still open — confirmed by this plan's own live re-check.** `grep -c RustBuffer crates/pv-ffi/src/lib.rs` still returns `0` as of this session; the CP-4 header at `crates/pv-ffi/src/lib.rs:24-39` still discloses only the Swift-side (owned-`Vec<u8>`-not-retroactively-zeroing-the-caller's-buffer) residual, unchanged in substance since 35-REVIEW.md first found the gap. No phase 36-41 touched this disclosure (confirmed: no `crates/pv-ffi/src/lib.rs` diff in any phase-39/40/41 commit range mentions CP-4 or RustBuffer, per every QA-01 row already written for those phases in this register — none cites this file's header). Per DR-42-C, this plan does not extend the disclosure itself (it is a defect in `crates/pv-ffi/`, not an artifact this phase authors, and not the durable-log falsehood DR-42-C's second exception names) — recorded here, honestly, as an open-finding still owned by whichever phase next touches `crates/pv-ffi/src/lib.rs`'s CP-4 header. |
 | H-09 | The Swift round-trip test (`FfiRoundTripTests.swift`) would still pass if the wrap/unwrap operations were identity no-ops, because the original version never inspected the intermediate (35-REVIEW.md WR-12). The file now contains `#expect(Array(wrapped.ciphertext) != originalUserKeyBytes)` and two sibling assertions at lines 107-109 — confirm this closes WR-12. | 35 | **resolved — 42-06.** Closed inside Phase 35 (specimen table's WR-12 row, disposition `verified`). Phase 37, Plan 37-02 moved the file's MODULE OWNERSHIP (`PasskeyVaultTests` → the `PasskeyVault` app target) but left the assertion itself unmodified in substance, gaining only `import PasskeyVault` (`.planning/phases/37-konto-unlock-has-em-i-biometria/37-02-SUMMARY.md:121, 148-149`, cross-referenced in the Phase 37 QA-02 table above as `inherited`) — confirmed not weakened by the move. |
-| H-10 | The binding generator's command-line feature (`uniffi = { features = ["cli"] }`, `crates/pv-ffi/Cargo.toml`) pulls a large tool dependency set (clap/goblin/askama/rustix/…) into the library graph that is cross-compiled for iOS, widening the crypto crate's supply-chain surface (35-REVIEW.md WR-08). Confirm whether this was ever split into a separate bindgen crate/feature, or remains open. | 35 | open |
+| H-10 | The binding generator's command-line feature (`uniffi = { features = ["cli"] }`, `crates/pv-ffi/Cargo.toml`) pulls a large tool dependency set (clap/goblin/askama/rustix/…) into the library graph that is cross-compiled for iOS, widening the crypto crate's supply-chain surface (35-REVIEW.md WR-08). Confirm whether this was ever split into a separate bindgen crate/feature, or remains open. | 35 | **still open — confirmed by this plan's own live re-check.** `crates/pv-ffi/Cargo.toml:95` still reads `uniffi = { version = "=0.32.0", features = ["cli"] }` in the crate's own main `[dependencies]` block, unchanged since 35-REVIEW.md's WR-08 finding — never split into a separate bindgen-only crate/feature. No phase 36-41 touched this dependency line. Unrelated to, but adjacent to, L-14 (this register's closing verdict): the `=0.32.0` pin this WR-08 finding's own "cheapest to bump" alternative (H-02's cross-reference) would touch is the SAME pin L-14's own recorded option 1 names as the cheapest fix for the Release-build crash — a future bump attempt should evaluate both findings together, not separately. |
 | H-11 | The concurrency backstop from Phase 35 verification — one key handle used from multiple Swift threads — abstained with no evidence in the ORIGINAL `35-VERIFICATION.md` truths table (B1, `insufficient_spec`). `35-VERIFICATION.md`'s own frontmatter (`resolution:`) claims this was closed 2026-08-16 via `FfiConcurrencyTests.swift` under TSan+ASan, both instruments falsified before their green runs were believed. Confirm this resolution is real by reading the evidence file it cites directly, not by trusting the claim. | 35 | **resolved — 42-06 (independent confirmation).** `ios/evidence/35/B1-CONCURRENCY-SANITIZERS.md:17-51` read directly (not re-quoted from the specimen table): both instruments' falsification transcripts are real — `FAIL: PasskeyVault (13898) encountered an error :: Early unexpected exit` (TSan, an unsynchronized-increment control) and `FAIL: deliberateHeapOverflowMustBeReported() :: Crash` (ASan) — with the file's own "HONEST NOTE ON A DISCREPANCY" explaining why the ASan link-time check alone was not accepted as sufficient proof. The claim in `35-VERIFICATION.md`'s frontmatter is confirmed genuine. |
 | H-12 | Phase 35 left the committed status document (`ios/IOS-SPIKE-LOG.md`) asserting the FFI boundary was "Not started (no code yet)", which was false as of the phase's own later commits, and left an explicit landmine-recording obligation (`.planning/STATE.md:352`) undischarged. `35-VERIFICATION.md`'s own frontmatter claims this gap (`G1`) was resolved 2026-08-16 by later Phase 36/37 sessions carrying the content forward. Confirm by reading the current status row directly. | 35 (defect); 36/37 (claimed fix) | **resolved — 42-06 (independent confirmation).** `ios/IOS-SPIKE-LOG.md:21` read directly: `**Delivered and verified** (Phase 35, commits \`f6cb883\` … \`37c1ff7\`)` — no longer "Not started". The status row also names the current gate scripts (`build-ios.sh`, `audit-ffi-opaque-handles.sh`) and states an explicit proof limit ("simulator only"), consistent with this register's own evidence-tier discipline. |
 | H-13 | Three cross-phase premise corrections research already recorded, unclaimed by any phase's own SUMMARY as of this plan: Phase 36's entitlement criteria rest on a premise the simulator cannot measure; Phase 37's Secure Enclave rejection is stated on a factually wrong reason; Phase 38's item-type count is wrong and the field model does not live where its criterion assumes. | 36, 37, 38 respectively | **resolved — 42-06.** All three now carry their own register row, each independently checked against the committed source (not re-quoted from research): Phase 36's corrected SC1–SC3 wording, checked against `.planning/phases/36-bramka-wykonalno-ci-autofilla-entitlement-i-bud-et-pami-ci/36-VERIFICATION.md:104-111` and `ios/AUTOFILL-FEASIBILITY.md:347/755` (Phase 36 QA-01 table, "SC1/SC2 cross-phase correction" row). Phase 37's ACC-05 corrected rationale, checked against `ios/IOS-SPIKE-LOG.md:465-480` (Phase 37 QA-01 table, first row). Phase 38's six-item-type union (L-15), checked against `packages/pv-ui/vault/types.ts:4` and independently re-confirmed by `.planning/phases/38-pe-ny-interfejs-vaulta/38-VERIFICATION.md:68`'s own re-run of `check-item-type-parity.sh` (Phase 38 QA-01 table, first row). |
+
+---
+
+## Durable-log correction (DR-42-C's second named exception) — `ios/IOS-SPIKE-LOG.md`'s status table
+
+**Found (found-and-corrected disposition, per this plan's own instruction — the found-state is quoted
+verbatim here BEFORE the fix, so it survives the correction):**
+
+`ios/IOS-SPIKE-LOG.md:22` (the "Status of the spike" table's "Credential provider extension" row, as
+committed at the start of this plan) reads, in its own words:
+
+> "Real skeleton built, installed, and exercised end-to-end (Phase 36, Plans 36-01..36-04)... **No
+> credential-list/fill *logic* yet (Phase 41)** — this row covers the skeleton, entitlement, and
+> memory-budget proof only."
+
+This was TRUE when Phase 36 wrote it (Phase 41 had not run) and is FALSE as of the code Phase 41 has
+since delivered: `CredentialProviderViewController.swift`'s real fill path (`fillOrCancel`,
+`SessionKeyReader` → `CipherCacheReader` → `decrypt_item` → `completeRequest`) exists, is wired at all
+four entry points, and is independently re-verified live at HEAD `d0c3916` by `41-VERIFICATION.md`
+(this register's own Phase 41 section, Q1/Q2/Q4 tables above) — a real password filled into a real
+Safari form field, cold, offline, with lock-state correctness proven cross-process. The row asserting
+"no fill logic yet" is exactly the shape this correction exists to fix: a durable claim the CODE now
+contradicts, in the one committed file that survives this worktree and that this very register cites
+as its own sibling source.
+
+Additionally, the table has never carried a row for Phase 40 (family sharing) at all — a distinct,
+absence-shaped gap from the false-positive-clause above, corrected in the same edit for the same reason
+(a reader of this committed file with no `.planning/` access should not have to infer Phase 40 happened
+from the decision-record subsections alone).
+
+**Disposition: `found-and-corrected`.** This is DR-42-C's second named exception (the first is this
+register's own two mechanical fixes to its own row schema, made by 42-06) — a factual falsehood in the
+committed durable knowledge sink this register itself cites, corrected in place, with the found-state
+preserved above rather than silently overwritten.
+
+**Recording obligation discharged (Task 2's own required order, item 3):** this row's own correction is
+paired with confirming the four durable learnings the plan's action text names were carried into the
+log's landmine/decision sections. All four are already present, independently confirmed by direct read
+rather than re-authored (the obligation was already discharged, organically, during Phase 35's own
+extensive log-writing — this plan's job is to confirm it, not repeat it):
+- **The generated-bindings invocation trap** — `ios/IOS-SPIKE-LOG.md:3085`, "L-10 — a cold DerivedData
+  mismatches the generated bindings against the linked library."
+- **The build-settings discoveries** — `ios/IOS-SPIKE-LOG.md:2135-2143`, the `IPHONEOS_DEPLOYMENT_TARGET`
+  mismatch (`project.pbxproj` had `26.5` in all four configurations; fixed to `18.0`) and the
+  `PRODUCT_BUNDLE_IDENTIFIER` correction, both recorded with the exact before/after values.
+- **The class-body isolation trap that produced a false pass** — `ios/IOS-SPIKE-LOG.md:3034-3041`,
+  "L-9 — 'a check that cannot fail' produced FOUR more instances in a single phase," naming the `sed`
+  line-range class-body extraction as the mechanism, cross-referenced again at lines 3521 and 3574 as
+  "CR-02/CR-03's own lesson."
+- **The return-type distinction that decides whether a caught panic is catchable or fatal** —
+  `ios/IOS-SPIKE-LOG.md:2190-2214`, naming that UniFFI's `catch_unwind` wrapping is real but an
+  allocation failure aborts rather than unwinds on Darwin, so a `catch_unwind`-wrapped function can
+  still crash the process for a class of hostile input — the exact distinction WR-11/H-07 (this
+  register, above) resolve with a bounds check.
+
+---
+
+## Wire-encoding hazard (H-01) — dedicated subsection, per this plan's own instruction
+
+This is the milestone's highest-risk carried item because it is **inferred, not observed**, by
+construction: `WrappedKey { nonce: Vec<u8>, ciphertext: Vec<u8> }` (`crates/pv-core/src/keys.rs:59-62`)
+carries no `serde` attributes, so `serde_json` serializes its byte fields as JSON number arrays on the
+Rust side, while a default Swift `Codable`/`JSONEncoder` would encode the equivalent `Data` field as
+base64. Nothing on the server validates which encoding a client wrote — `pv-server` stores the field as
+opaque text and neither the register nor the sync endpoints parse or length-check it, so a client
+writing the WRONG encoding gets a `200`/`201` and the failure surfaces only later, in a DIFFERENT
+client, as an undecryptable row. **The settling observation this hazard names is cheap: inspecting the
+type of one field in one real stored row decides it.** This subsection records, for every layer of the
+milestone that uses a `WrappedKey`-shaped wire value, whether that observation was ever actually made —
+and in which direction(s).
+
+**Phase that first wrote such a row from the iOS client: Phase 37 (`pw_wrapped_uk`, the account
+envelope).** Phase 37's own QA-01 table (this register, above) already carries the two-direction
+cross-client proof: *"Two-direction cross-client `pw_wrapped_uk` interop: an iOS-registered account
+unlocks from the real `pv-wasm` artifact and vice versa, both directions falsified with a real one-byte
+ciphertext corruption producing a genuine AEAD rejection"* (`.planning/phases/37-konto-unlock-has-em-i-biometria/37-03-SUMMARY.md:254-278`,
+disposition `verified`), quoting the live transcript `INTEROP D1: PASS` / `INTEROP D1-FALSIFIED: PASS`.
+This is exactly the two-direction proof the hazard asks for: a row written by one client (iOS or web),
+read successfully by the other, in both directions, on a real server. Phase 38 independently extended
+the same proof to VAULT ITEMS (`enc_key`/`enc_data`, the item-level `WrappedKey`-shaped field), not only
+the account envelope — Phase 38's own QA-01 table row "E-W1: two-direction cross-client wire proof for
+VAULT ITEMS" (`ios/evidence/38/EW1-CROSS-CLIENT-WIRE.md`, disposition `verified`) is the second
+independent settling observation, this time explicitly quoting the base64 shape as the REJECTED
+encoding (`base64-shaped row: rejected -- invalid type: string ... expected a sequence`), i.e. the
+positive control this hazard's own "no unit suite on either side can catch it" warning asks for is on
+the record too — a hostile/wrong-encoded row IS observably rejected by the receiving client's decoder,
+though (per that same row's own honest QA-03 finding) `pv-server` itself still answers `201` to it.
+
+**Phase 40 independently re-derived the SAME hazard shape for the family-sharing surface, and closed it
+BEFORE writing dependent code, not after.** DR-40-A (`.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-01-SUMMARY.md:107`,
+this register's own Phase 40 QA-01 table) is a decision record made explicitly BECAUSE of this exact
+hazard: *"rejected UniFFI `Record` with `Data`/byte-array fields (Phase 35's `FfiWrappedKey`/
+`FfiEncryptedItem` style) — Swift's `JSONEncoder` would encode `Data` as base64 while `serde_json`
+encodes `Vec<u8>`/`[u8; N]` as JSON number sequences, so a `Record` hands the wire format to Swift
+instead of fixing it in Rust."* Every new sharing-related FFI export (`wrap_identity_secret_key`,
+`seal_collection_key`, `FfiInviteChannel::wrap_collection_key`, etc.) therefore returns `String`-JSON
+produced by `serde_json` inside Rust, closing the ambiguity at the Rust layer rather than hoping Swift
+encodes it correctly. **This decision was then independently PROVEN, not merely asserted**, by E-W2
+(Phase 40 QA-01 table, three rows: directions A/B/C) — a real, isolated server, real `pv-ffi` on iOS,
+real `pv-wasm` on the "web" side, three directions, each with its own falsification control quoting the
+SAME bytes re-encoded as Swift's `JSONEncoder` would (base64) to show the two encodings are textually
+distinguishable:
+```
+$ curl ... | jq -e '.wrapped_secret_key | fromjson | .nonce | type'
+"array"
+# Falsification control -- the SAME nonce bytes, re-encoded the way Swift's JSONEncoder would:
+$ echo '{"nonce":"1cUeLgaoXIxzOV0t/5zcBCpTXynFCusz",...}' | jq -e '.nonce | type'
+"string"
+```
+This is the milestone's clearest instance of the settling observation actually being performed, three
+separate times, on three separate layers (account, item, sharing), in both directions each time.
+
+**Disposition: resolved.** The hazard is not merely absent-of-evidence; it is affirmatively,
+receiver-side, cross-client, bidirectionally proven at every layer of the milestone that uses a
+`WrappedKey`-shaped wire value — the account envelope (Phase 37), vault items (Phase 38), and the
+identity/Collection-Key sharing surface (Phase 40) — with Phase 40 additionally demonstrating that the
+codebase's own engineers recognised the hazard shape independently and designed against it BEFORE
+writing the dependent code, which is the strongest possible form this resolution could take. No
+`WrappedKey`-shaped wire value in this milestone is missing a settling observation. Phases 39 and 41
+introduce no NEW `WrappedKey`-shaped wire surface of their own (39's ciphertext cache moves `enc_key`/
+`enc_data` VERBATIM, byte-for-byte, never re-encoding — `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:64`;
+41's cache read is the same verbatim-move discipline one hop further, `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:150`) — so neither phase re-opens or re-tests this hazard, and neither needed to.
 
 ---
 
@@ -413,20 +535,422 @@ where its criterion assumes — checked directly below (L-15).
 | `grep -c 'guaranteed' ios/PasskeyVault/PasskeyVault --include=*.swift` → 0 (clipboard/session wording never overclaims) — first caught a real pre-existing violation here (Phase 37's own version of this check had no catch) | UI-07 | real-bytes | `ios/PasskeyVault/PasskeyVault/Vault/ClipboardService.swift:1` | fired against a genuine pre-existing violation (`IdentityAddress.swift`, from 38-03, unrelated to clipboard), fixed by rewording (`.planning/phases/38-pe-ny-interfejs-vaulta/38-07-SUMMARY.md:186-192`) | info | partial — caught a real defect (strong positive signal) but was never itself falsified by injecting a NEW violation and observing the catch, so a silent regression in phrasing elsewhere is not provably catchable |
 | `grep -c derive_master_key crates/pv-ffi/src/lib.rs == 1` — exactly one Argon2id pass on the auth-material path (Phase 37's own check, never re-derived by any Phase 38 plan despite building extensively on the account-creation surface) | ACC-01 | n/a | `crates/pv-ffi/src/lib.rs:1` | not re-verified anywhere in Phase 38's own SUMMARYs (noted for completeness) | info | n/a — a positive count check, not absence-shaped; out of this table's scope, recorded only as a coverage note |
 
-## Phase 39 — section stub (register not yet authored)
+## Phase 39 — Synchronizacja i cache offline
 
-*(No rows yet. `scripts/qa-audit-inventory.sh` reports this phase `IN-COVERAGE` with SUMMARY files on
-disk. 42-07 authors this section.)*
+**Audited plans:** 39-01 through 39-07 (`summaries=7 plans=7`, per this task's own `bash
+scripts/qa-audit-inventory.sh` run: `MACHINE|39|.../|7|7|IN-COVERAGE`). **`UNSUMMARIZED` plan list for
+this range, quoted exactly as the inventory printed it: empty — the only `UNSUMMARIZED` lines the
+inventory's live run produced are `42|.../42-07-PLAN.md` (this plan itself) and five `43-0N-PLAN.md`
+entries, both outside the 39-41 range this task audits.** No plan in 39-41 needed its own direct read
+beyond its SUMMARY.
 
-## Phase 40 — section stub (register not yet authored)
+Authority note, same discipline 42-06 established for 36-38: `39-VERIFICATION.md` (2026-08-19,
+independently re-verified against commit `8c2e776`, AFTER two `fix(39):` review-fix iterations
+totalling 29 commits) supersedes plan-SUMMARY narratives wherever the two disagree. Every row below
+citing `39-VERIFICATION.md` is citing an independently re-run verdict, not a plan's own claim about
+itself.
 
-*(No rows yet. `scripts/qa-audit-inventory.sh` reports this phase `IN-COVERAGE` with SUMMARY files on
-disk. 42-07 authors this section.)*
+### QA-01 — evidence-tier pass (crypto / bytes / time / server claims)
 
-## Phase 41 — section stub (register not yet authored)
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| `GET /api/sync?since=N`'s two response shapes measured against real bytes: `since=0` returns a non-empty `items` array; `since=<current>` returns `{"revision":1}` with **no `items` key at all** (D-12) | SYNC-01 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:50` | "6 PASS / 0 FAIL... Falsifiability control: `jq -e 'has(\"items\")\|not'` against the snapshot body exits **1** as required" | critical | verified |
+| Live WebSocket push from a genuinely independent second client (real `crates/pv-wasm`, not a mock) observed by the real host app, twice on one connection, re-arm proven by frame count 1→2 | SYNC-01 | live-run | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:51` | "Mutation driver is an independent Node process linking the REAL `crates/pv-wasm` artifact... not a mock" | critical | verified |
+| `crates/pv-server`/`pv-core`/`pv-provider` genuinely untouched for the whole phase, diff gate demonstrated non-vacuous | SYNC-01 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:52` | "Verifier-run: `git log 7040cb5^..HEAD -- crates/` → empty... Diff gate demonstrated able to report a change... (touch `main.rs` → 1 insertion → `git checkout` → empty)" | warning | verified |
+| Cold cross-process read (SYNC-02): the real credential-provider `.appex` reads the host's persisted App-Group cache with the host independently confirmed terminated (`launchctl list` BEFORE-present/AFTER-absent around a real `simctl terminate`, never inferred from the terminate command itself), digest byte-for-byte identical to what the host wrote | SYNC-02 | live-simulator | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:53` | "host digest `336d7dd7…` == extension-reported digest `336d7dd7…`... `SC2-PROCESS: real-extension`, `SC2-VERDICT: proven`, in the sentence 39-02 fixed in advance (`sc2-real`)" | critical | verified |
+| The cold read's success is platform-enforced, not vacuous: wrong sharing identifier → `resolve_failed`; cache deleted → `status=absent` (reads storage, never a stale in-process copy) | SYNC-02 | live-simulator | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:54` | "wrong sharing identifier (`…NeverDeclared`) → `resolve_failed`; cache deleted → `status=absent`" | critical | verified |
+| The cache admits ONLY ciphertext/revision-shaped fields at the type level (`CachedSnapshot.Item`), cross-checked against the standing gate's closed allowlist for exact correspondence, shown RED four separate ways | SYNC-03 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:55` | "cross-checked `audit-ios-cache-ciphertext.sh`'s closed allowlist (line 188) against the type — exact correspondence, no drift. Gate shown RED four ways" | critical | verified |
+| UI renders an explicit last-successful-sync time sourced from the snapshot's own `syncedAtMs` field, one clock-free formatter shared by host and (39-07) the extension, both processes observed rendering the same instant with a control proving the comparison can say `DIFFERENT` | SYNC-04 | live-simulator | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:57` | "One formatter, two processes, observed rendering the same instant (`FRESHNESS-MATCH: SAME`) with a control proving the comparison can say `DIFFERENT`" | warning | verified |
+| Freshness timestamp does not advance on a failed pull (real `SIGTERM` to `pv-server`, confirmed dead by both empty `lsof` and a failing `curl`), and advances only on a pull the server actually answered (control: two confirmed pulls, timestamp genuinely different) | SYNC-04 | live-run | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:58` | "forced pull → `syncedAtMs` unchanged (`1787095463124` → `1787095463124`). Control: two confirmed pulls 1.5 s apart... DIFFERENT" | critical | verified |
+| The SYNC-05 decision record (no APNs silent push, the required-external-dependency reasoning, the accepted user-visible consequence) lives in `SyncCoordinator.swift`'s own source with its reasoning, gated by a standing script shown RED three separate ways | SYNC-05 | n/a (decision-record correctness, not a crypto/bytes claim, but gate-verified against real source) | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:61` | "`audit-sync-decision-records.sh` → exit 0. Gate shown RED three ways in `05-gates.md` (wrong root; reasoning removed but token kept; FILL-03 marker removed)" | warning | verified |
+| Ciphertext moves verbatim wire→cache, byte-identical to what the server sent — bridging is four field-for-field conversions with no re-encode, live proof itself falsified via a deliberate one-character corruption | SYNC-03 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:64` | "`enc_key` and `enc_data` digests IDENTICAL between same-session `curl` and the persisted store... Live proof itself falsified (`PV_TRACER_FALSIFY_ONE_CHAR=1` → exit 1, named the mismatch)" | critical | verified |
+| DR-40-A's wire-encoding risk (H-01's own hazard shape, first surfaced here as D-13): `enc_key.nonce` is a `serde_json` **number array**, never a base64 string — confirmed live against a real server row before any Swift decoder existed | SYNC-01 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-01-SUMMARY.md:107` | "`items[0].enc_key`, parsed as JSON, has a `.nonce` member whose type is `\"array\"` — the `serde_json` number-array shape, not the base64-string shape Swift's `Codable` would default to" | critical | verified — see the wire-encoding hazard subsection below (Task 2) for the milestone-wide disposition |
 
-*(No rows yet. `scripts/qa-audit-inventory.sh` reports this phase `IN-COVERAGE` with SUMMARY files on
-disk. 42-07 authors this section.)*
+### QA-02 — guard pass (red before green)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| `scripts/audit-ios-cache-ciphertext.sh` (SYNC-03's permanent gate: existence, positive receiver-side byte equality, closed key allowlist, live canary) | SYNC-03 | live-run | `.planning/phases/39-synchronizacja-i-cache-offline/39-05-SUMMARY.md:85-92` | "Four red runs for the cache gate, all against real defects on a real simulator cache: (1) a decrypted-password field... trips Check 2... (2) the SAME leaking cache, re-checked with Check 2 temporarily disabled in the gate script itself, trips Check 3 independently... (3) a harmless non-secret marker key alone trips Check 2... (4) the cache artifact deleted... trips Check 0" | critical | verified — 4 falsification inputs, each independently returned to green; not composed into `check-ios-gate.sh`'s six named sub-gates (a live-server, parametrized gate, consistent with `scripts/check-ios-gate.sh`'s own composed set) |
+| `scripts/audit-sync-decision-records.sh` (SYNC-05's permanent gate) | SYNC-05 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-05-SUMMARY.md:93-96` | "Three red runs for the record gate: pointed at a directory carrying no sync source (distinct \"vacuous run\" message); the reasoning sentences stripped while the token stayed... the `FILL-03` marker renamed away" | warning | verified — 3 falsification inputs, exit 0 on restore; not composed into `check-ios-gate.sh` |
+| `SyncDecodeTests` (6 tests): the up-to-date branch structurally cannot reach the cache writer with an empty collection (D-12) | SYNC-03 | real-bytes (decodes 39-01's own live-captured response bodies, never a hand-written fixture) | `.planning/phases/39-synchronizacja-i-cache-offline/39-03-SUMMARY.md:106` | "RED-before-green demonstrated by temporarily making the up-to-date branch synthesize an empty snapshot — both the unit test and (by the same code path) the live proof's third assertion would fail under that mutation" | critical | **partial — see the LESSON below.** These two tests were RED at HEAD as of Phase 41's own verification (39-VERIFICATION was written BEFORE Phase 40's `6701e61` broke them; 41-VERIFICATION's own Deferred #1 records the regression). Fixed today, before this plan ran, in commit `5e9ef99` (see the LESSON entry in Task 2 below) — not re-verified live by this register, cited as the fix commit exists and is on this branch |
+| `SyncSocketTests.swift` (7 tests against a fake transport): re-arm, exactly-one-pull-per-frame, intentional-stop-prevents-reconnect, stale-connection isolation, idempotent restart, doubling+jittered backoff — explicitly disclaimed in its own header as NOT SYNC-01 evidence | SYNC-01 | unit-test-only (fake transport, disclaimed by its own header) | `.planning/phases/39-synchronizacja-i-cache-offline/39-04-SUMMARY.md:86-87` | "RED-before-green, twice, plus three binding-spelling mutations: with the re-arm line removed, the second-frame test fails... with the intentional-stop latch moved after the cancel call, the stop-prevents-reconnect test fails" | info | verified (as unit-test-only evidence for lifecycle plumbing; the live claim itself rests on the two-push proof row above, not this row) |
+| `SyncSocket.wsURL`'s `+`-in-query encoding bug (L-23): found live via a genuine 401 against a real session token, root-caused with a local TCP relay proxy, not inferred from source reading | SYNC-01 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-04-SUMMARY.md:123-130` | "`pv-server`'s `axum::extract::Query` decodes with `application/x-www-form-urlencoded` semantics... where an unescaped `+` decodes as a space... re-sniffed via the same proxy — the identical `+`-bearing token now arrives pre-encoded (`%2B`)" | warning | verified (Rule 1 bug, fixed and landmine-recorded, `ios/IOS-SPIKE-LOG.md` L-23) |
+| E-S4: whether a backgrounded socket on this simulator actually loses its connection is MEASURED, not assumed — a consistency-gate falsified against a deliberately inconsistent block first | SYNC-04 | live-simulator | `.planning/phases/39-synchronizacja-i-cache-offline/39-04-SUMMARY.md:91` | "**Result: no close fired; all 12 frames arrived in a burst at the instant of foregrounding.** Classified Result B (this Simulator does not reproduce device suspension)" | warning | verified — the honest negative measurement IS the finding; downstream 39-06 correctly used the server-stop proof path instead |
+| Two review-fix iterations over `fix(39):` (19 + 8 commits): iteration 2 independently re-verified iteration 1's 21 claimed fixes and found 3 not fully resolved plus 4 new defects the fixes themselves introduced, all 8 then fixed and re-verified | SYNC-01/03/04 | n/a (process-integrity claim, backed by the code-level rows above) | `.planning/phases/39-synchronizacja-i-cache-offline/39-REVIEW-FIX.md:23` | "Iteration 2 is a verification pass over the 19 `fix(39):` commits from iteration 1, and found 3 findings reported fixed that were not... plus 4 new defects introduced by iteration 1's fixes themselves" | warning | verified — this is exactly the QA-02 discipline this register enforces, applied by the phase to its own prior claims |
+
+### QA-03 — absence-shaped assertion pass
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| The extension's `nm`/`strings` inspection initially returned zero matches for a real, correctly-running module — a false absence found and corrected (Xcode links real code into a sidecar `.debug.dylib` in Debug, not the plain executable) | SYNC-02 | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-07-SUMMARY.md:130-136` | "The gate now inspects `PasskeyVaultAutoFill.debug.dylib` when present (52 matches for `AppGroupCiphertextCacheStore`)" | info | verified — a genuine same-mechanism control fix, not a silently-accepted absence |
+| The FAKETEAMID discipline check (no literal team-prefix string anywhere this plan's diff touches) — demonstrated as this plan's OWN diff, not the whole file's occurrence count, because the whole-file count is nonzero for a legitimate, pre-existing reason (L-8's own documentation) | QA-05 (durable-sink discipline) | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-02-SUMMARY.md:160-167` | "`git diff --unified=0 41aa287~1 6cd5cc6 -- ...\| grep '^+' \| grep -v '^+++' \| grep -c FAKETEAMID` returns `0`" | warning | verified — same-mechanism positive control (the plan's own diff, not the file's lifetime total) |
+| E2's App-Group / E3's keychain negative controls (36-inherited pattern, re-confirmed live in the 39-07 cold-read harness): wrong sharing identifier and a deleted cache both fire distinctly | SYNC-02 | live-simulator | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:54` | "wrong sharing identifier (`…NeverDeclared`) → `resolve_failed`; cache deleted → `status=absent`" | critical | verified |
+| `TBD`/`FIXME`/`XXX` debt-marker scan across all 37 changed source files | n/a | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:142` | "0 hits" | info | verified — same-mechanism scan, not merely "nothing found" (the verifier's own scoped-file-list is the positive control: the scan ran against a known-nonzero-file-count set) |
+| The verifier's own vacuity self-correction: `-only-testing:` selectors without a trailing `()` silently select zero Swift Testing tests while `xcodebuild` reports `** TEST SUCCEEDED **` and exit 0 | n/a | real-bytes | `.planning/phases/39-synchronizacja-i-cache-offline/39-VERIFICATION.md:146` | "the first scoped `VaultMutationTests` run reported `** TEST SUCCEEDED **` with exit 0 while its xcresult read `total 0, passed 0`... Every count in the two rows above is read from the xcresult bundle, not from the \"TEST SUCCEEDED\" banner" | critical | verified — this is the L-30 landmine (Phase 40 names it explicitly; here it is the verifier catching the SAME toolchain trap independently, one phase earlier) |
+
+---
+
+## Phase 40 — Rodzina i współdzielenie na telefonie
+
+**Audited plans:** 40-01 through 40-10 (`summaries=10 plans=10`, per this task's own inventory run:
+`MACHINE|40|.../|10|10|IN-COVERAGE`). **`UNSUMMARIZED` plan list for this range: empty** (same live
+inventory run quoted under Phase 39 above — no `40-*-PLAN.md` lacks a matching SUMMARY).
+
+Authority note: `40-VERIFICATION.md` is a **re-verification** (2026-08-20, HEAD `9ca0141`, after a
+gap-closure cycle `c9fc54e..9ca0141`) — the FIRST verification pass scored 3/6 with `status:
+gaps_found`; this register cites the re-verification's own re-run evidence, never the pre-fix pass,
+and names the closed gaps explicitly below because DR-42-C's "found-state survives the fix" principle
+applies to a phase's own verification history exactly as it applies to this register's later
+corrections.
+
+### QA-01 — evidence-tier pass (crypto / bytes / time / server claims)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| **DR-40-A, the wire-encoding decision this phase made BECAUSE of H-01's hazard shape**: every new sharing-related `#[uniffi::export]` returns/accepts `String`-JSON produced by `serde_json`, never a UniFFI `Record`-of-`Data` — rejected explicitly because Swift's `JSONEncoder` would encode `Data` as base64 while `serde_json` encodes byte arrays as JSON number sequences | FAM-04 | n/a (decision record; the crypto claim it protects is the E-W2 rows below) | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-01-SUMMARY.md:107` | "rejected UniFFI `Record` with `Data`/byte-array fields... Swift's `JSONEncoder` would encode `Data` as base64 while `serde_json` encodes `Vec<u8>`/`[u8; N]` as JSON number sequences, so a `Record` hands the wire format to Swift instead of fixing it in Rust" | critical | verified — the milestone's clearest documented case of a phase independently rediscovering H-01's exact hazard shape and mitigating it at the design layer before writing code |
+| E-W2 direction A: identity keypair wire-shape (`wrapped_secret_key.nonce` is a JSON array), iOS writes, real `pv-wasm` reads — falsification control quotes the SAME bytes re-encoded as Swift's `JSONEncoder` would (base64), showing the two encodings are textually distinguishable | FAM-04 | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-02-SUMMARY.md:172-179` | "`curl ... \| jq -e '.wrapped_secret_key \| fromjson \| .nonce \| type'` → `\"array\"`... Falsification control -- the SAME nonce bytes, re-encoded the way Swift's `JSONEncoder` would... → `\"string\"`" | critical | verified |
+| E-W2 direction B: Collection Key wire-shape (`sealed_key.ephemeral_pk` is a 32-element JSON array), iOS creates a family-wide collection, real `pv-wasm` reads and decrypts its name, matching the literal iOS authored | FAM-04 | live-run | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-02-SUMMARY.md:229-234` | "`sealed_key.ephemeral_pk` is a JSON array of exactly 32 elements... receiver-side (real pv-wasm) decrypted the iOS-created collection's name and it matches the literal iOS authored" | critical | verified |
+| E-W2 direction C (the reverse): real `pv-wasm` creates and shares a family-wide collection to the iOS account; iOS unseals the Collection Key and decrypts the name, matching a literal byte-for-byte, both a Rust-side and a Swift-side falsification demonstrated | FAM-04 | real-FFI | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-02-SUMMARY.md:236-240` | "web-owner created collection... and shared it to iOS... `Test webSealedCollectionKeyUnsealsOnIosAndNameMatchesLiteral() passed`" | critical | verified — this is the **settling observation** the wire-encoding hazard subsection (Task 2) asks whether the milestone ever performed: a real stored row's field TYPE inspected from both sides, in both directions, on a real server |
+| SC1 — shared-BY-me vs shared-TO-me distinguishable on the list screen, real two-account, real shared item; regression-checked unchanged across the gap-closure commit range | FAM-04 | live-simulator | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:83` | "verifier-run `ShareMarkerTests/liveTwoAccountMarkerRun()` green... **re-proven live at the UI layer** by my two green `FamilyWiringLiveUITests` runs" | critical | verified |
+| SC2 — invite from the phone redeemed by ANOTHER real client (the web app, real `pv-wasm`), roster read receiver-side with account A's own token showing B `active` with a distinct public key/fingerprint | FAM-02/FAM-04 | live-run | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:84` | "iOS authored the invite through the production `InviteService`/real pv-ffi... host-side node redeemed it through the **real pv-wasm artifact** `web/` itself imports... roster read **receiver-side**... shows B `active`, distinct `public_key`/`fingerprint`" | critical | verified — this is WR-08's carried-open finding from `40-REVIEW.md`, discharged in the gap-closure cycle; see Task 2's hazard-checklist cross-reference |
+| SC3 — hidden password: exact interface-level-protection copy AND the key-holder CAN decrypt via direct FFI (E-F3), five honesty strings byte-identical to `main:dictionary.ts` | FAM-03 | real-FFI | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:85` | "verifier-run `AccessLevelTests/liveHiddenPasswordFfiRecovery()` green; five honesty strings byte-identical to `main:dictionary.ts`" | critical | verified |
+| SC4 — invite-time-wrap AND lazy-reseal proven as two SEPARATE mechanisms, neither inferable from the other, through the PRODUCTION `ResealTrigger`/`ResealService` types (E-F6, the first live run in the phase able to make that claim) | FAM-04 | live-simulator | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:86` | "E-F4a/E-F4b with a discriminator falsified against itself; E-F6 through the production `ResealTrigger.run`" | critical | verified |
+| GAP1 root-caused: `ContentView.vault(_:)` constructed `vaultStore`/`folderStore` **synchronously inside `body`'s own `switch` evaluation**, corrupting SwiftUI Observation tracking so a genuinely-populated store never rendered — independently re-checked (not narrative-trusted) against 4 separate code assertions, including the falsification of the verifier's OWN prior wrong hypothesis (a `hasNoFamily` latch) | FAM-01 | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:94-106` | "`VaultStore.swift` is **unchanged** by the fix; the merge was never the defect... My own leading hypothesis was falsified" | critical | verified — the milestone's clearest instance of "evidence that measures the wrong thing" being caught and corrected by re-driving the actual failing run rather than trusting a plausible narrative |
+| Committed evidence transcripts corrected in place with dated `CORRECTION` blocks (never a silent rewrite) after two transcripts were found to describe a cross-client counterpart that did not exist at the time they were written | n/a (documentation-integrity claim) | n/a | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:88` | "Both transcripts corrected in `9d03d83` with dated `CORRECTION, 2026-08-19` blocks **prepended**, original runs left untouched below" | warning | verified — same discipline this register's own `found-and-corrected` disposition applies to `ios/IOS-SPIKE-LOG.md` in Task 2 |
+
+### QA-02 — guard pass (red before green)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| `rewrap_item_key_for_collection`'s AAD binding (collection_id/item_id/revision), three separate named negative tests, one falsified per component via a targeted production-code hardcode (not a generic wrong-value swap) | FAM-04 | real-FFI | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-03-SUMMARY.md:20-21` | "Falsifiability demonstrated via a temporary, targeted production-code mutation (hardcode a caller-supplied AAD component to the value the specific negative test's own fixture used), run to RED, then reverted to GREEN" | critical | verified |
+| Direct-share item-key path (`seal_item_key_for_recipient`/`decrypt_item_with_shared_key`): the raw Cipher Key never crosses the FFI boundary (T-40-11), Swift test builds the whole flow end to end through real FFI, no mock | FAM-04 | real-FFI | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-03-SUMMARY.md:59-71` | "seal_item_key_for_recipient (raw Cipher Key never leaves Zeroizing, never crosses the FFI boundary, T-40-11)... Swift test directShareItemKeySealsAndRecipientDecryptsPlaintext builds the whole flow end to end through the real FFI with no mock" | critical | verified |
+| `scripts/audit-ffi-opaque-handles.sh`'s FFI-02 gate genuinely extended to shape D (a top-level free function returning bytes naming NO handle type) — closes a gap neither shape A nor shape B could have caught | FFI-02 | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-04-SUMMARY.md:21` | "Audit script shape D: a free top-level function returning Data/[UInt8] whose signature names NO handle type is a distinct leak shape from shape A (which requires a handle type in the signature) -- neither shape A nor shape B (class-method-scoped) could ever have caught it" | warning | verified |
+| `ffi06-probe` `default = []` re-verified (not re-flipped — the flip already happened in Phase 36) against Phase 40's new surface, with a fresh falsification proof that the flag's placement in `scripts/build-ios.sh` is load-bearing | FFI-06 | real-FFI | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-04-SUMMARY.md:36` | "treated it as a re-verification: ran every literal acceptance-criterion check (grep, cargo build, xcodebuild test, falsification) against Phase 40's new surface, and recorded the honest history (re-verified, not re-flipped)" | warning | verified — see H-02 cross-reference in Task 2 |
+| GAP1 delivery fix, re-driven live 2/2 GREEN on two FRESH isolated servers, where the SAME test failed 2/2 RED at the previous HEAD — the gate is proven non-vacuous by its own prior red | FAM-01 | live-simulator | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:87` | "run 1 passed in 195.290s, run 2 passed in 195.440s... the same command, same test, same harness failed twice before the fix" | critical | verified |
+| The 409-singleton-family dead end fixed with a two-sided falsification test (true on the real thrown 409, FALSE on 500 and `invalidCredentials`) — a negative arm, so the predicate cannot pass by always returning true | FAM-02 | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:114` | "`isFamilyAlreadyExistsConflictDistinguishesA409FromOtherFailures()` asserts true on the real thrown 409 AND **false** on 500 and `invalidCredentials`" | warning | verified |
+| WR-03 (removal-batch scoping mismatch, `RemoveMemberService.swift:267-273,299-307`): carried, genuinely still open — masked by a server-side singleton-family constraint, latent-not-reachable; correctly SKIPPED because the real fix needs a `pv-server` route change forbidden by this milestone's premise | FAM-02 | n/a (gap, not a false claim) | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-REVIEW.md:626` | "the removal batch's sets remain scoped differently from the server's guard" | warning | gap — correctly recorded open, not silently repaired (this phase's own DR-42-C-shaped discipline, applied before this register existed) |
+| WR-08 (no artifact proved cross-client web/wasm redemption) — carried open at the END of `40-REVIEW-FIX.md`'s first pass, then explicitly discharged in the gap-closure cycle via `scripts/gap2-web-redemption-e2e.sh` + `InviteAuthoredForWebRedemptionTests`, re-run independently by the verifier | FAM-04 | live-run | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-REVIEW-FIX.md:284` | "GAP 2 -- SC2's web half, WR-08 discharged" | warning | **resolved (this register's own re-check, per the plan's explicit instruction to re-check WR-08's current true state rather than inherit the skip)** — `40-VERIFICATION.md:84`'s SC2 row above is the live re-run confirming the discharge holds at HEAD `9ca0141`, independent of the fix's own narrative |
+
+### QA-03 — absence-shaped assertion pass
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| E-F0 falsification: pre-merge state genuinely fails (migration 0020 absent, `family_wide_access_level` zero hits), post-merge genuinely passes — same-mechanism control over the identical three checks | FAM-04 | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-01-SUMMARY.md:123-147` | "pre-merge (FAILING... 91 / (no output) / 0)... post-merge (PASSING... 0 / 0020_family_wide_access_level.sql / 19)" | warning | verified |
+| DR-40-A/DR-40-B commit-order gate: falsified live by staging a scratch file under `crates/pv-ffi/` and amending it into the decision-record commit (exit 1), then reset and re-confirmed clean (exit 0) | n/a (process-integrity, decision-record-before-dependent-code discipline) | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-01-SUMMARY.md:149-158` | "with a scratch file staged under crates/pv-ffi/ and amended into the commit: ... 1 ... after git reset --mixed to the clean commit and removing the scratch file: ... 0" | info | verified |
+| Standing Gates re-run at re-verification HEAD `9ca0141`: colour tokens, colorset parity, generator-uses-FFI, clipboard single-writer, SYNC-05 record, cache-ciphertext static arms, server-untouched, debt markers — all PASS, none silently skipped | n/a | real-bytes / live-run mixed | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:137-149` | "Server-untouched \| `git diff --stat c9fc54e~1..HEAD -- crates/` \| **empty** — no crate touched at all by the gap closure" | warning | verified |
+| `TBD`/`FIXME`/`XXX` debt-marker scan over all 6 changed source files in the gap-closure range | n/a | real-bytes | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:149` | "0 hits" | info | verified |
+| The verifier's own runtime-warning check: `xcresulttool get log` returns 0 lines for the green runs, so a `grep -c` over it would be vacuous — stated honestly as UNVERIFIED rather than reported as an absence either way | FAM-01 | n/a | `.planning/phases/40-rodzina-i-wsp-dzielenie-na-telefonie/40-VERIFICATION.md:106` | "**? UNVERIFIED — stated honestly.** `xcresulttool get log --type console` and `--type activity` both return **0 lines** for my green runs, so a `grep -c` over them is vacuous and I will not report it as evidence either way" | info | abstained — exactly the QA-03 discipline this register enforces: an absence check with no positive control is not evidence, and this phase's own verifier declined to claim one |
+
+---
+
+## Phase 41 — AutoFill dla haseł i poprawność blokady między procesami
+
+**Audited plans:** 41-01 through 41-08 (`summaries=8 plans=8`, per this task's own inventory run:
+`MACHINE|41|.../|8|8|IN-COVERAGE`). **`UNSUMMARIZED` plan list for this range: empty.**
+
+**This is the cross-process phase — the only phase in the milestone where two independently-scheduled
+OS processes exist at once — and per this task's own instruction it receives the deepest pass. Every
+row below cites `41-VERIFICATION.md` (2026-08-20, commit `d0c3916`, after 2 review-fix iterations
+totalling 33 `fix(41):` commits), which explicitly re-drove 4 of the 5 ROADMAP Success Criteria live
+against the post-fix tree — because its own disconfirmation pass found that all 33 fix commits had
+landed on top of evidence from BEFORE those fixes (every evidence-file commit timestamped 04:25–11:12,
+the first `fix(41):` commit at 11:38), so trusting the original evidence would have been trusting a
+stale run.**
+
+### The four cross-process questions this task's own `<action>` names, each answered with its own citation
+
+**Q1 — Is "an unlock in one process is honoured in the other" proven by observing the second process,
+or by observing a flag the first process wrote? Only a positive receiver-side observation counts.**
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| Host unlock → AutoFill does NOT re-prompt: the passing evidence is a log line **emitted from inside the extension process itself** (`PVFILL|entry=silent stage=fill status=ok`), not a read of a flag asserted true by the host | FILL-07/ACC-06 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:94` | "Run 1 (real biometric unlock): `PVLOCK\|entry=silent stage=lazy-check status=unlocked` → `PVFILL\|entry=silent stage=lock-check status=unlocked` → `stage=fill status=ok` — no prompt, positive receiver-side proof from inside the extension process" | critical | verified — this is the receiver-side observation the question asks for, not a writer-side flag |
+| Expiry in the host is visible in the extension on its NEXT ACCESS: the host really deletes Secret C (`sessionkey-delete status=0`), then the extension independently confirms the deletion by attempting its OWN read and observing `errSecItemNotFound` (`-25300`), refusing at BOTH of its own entry points | ACC-06 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:94` | "Run 2 (expiry): host detects it... really deletes Secret C (`sessionkey-delete status=0`, then `-25300` = errSecItemNotFound confirming absence), and the extension refuses at **both** entry points (`lock-check status=locked`)" | critical | verified |
+| Extension-only activity (host never opened) refreshes the shared `unlockedAtMs` so the host still sees the session active — measured with real elapsed wall-clock time against a real 60-second window, not an offset hook, host reads the extension's own write on its next launch | ACC-07 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:95` | "three extension-only fills at 13:54:08 / 13:55:01 / 13:55:46 each succeeded and wrote `activity-refresh writer=extension` — the third is **+127 s** past the host's refresh... Host relaunch... reads `host-launch-read writer=extension bootMatch=true` (receiver-side)" | critical | verified |
+| **Residual, disclosed not hidden (W-3):** ACC-07's host-side *verdict* is never itself logged — the host records only `writer`/`bootMatch`, never its own unlocked/expired evaluation, so "the host still sees the session as active" rests on the marker level plus the shared `SessionLifecycle` code path, not a host-process log line stating its own conclusion | ACC-07 | n/a | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:259-263` | "`host-launch-read` records only `writer` and `bootMatch`, never an unlocked/expired evaluation... proven at the *marker* level and by the shared `SessionLifecycle` code path — not by a host-process log line stating its own verdict" | info | gap — honestly disclosed residual, not a defect this register repairs |
+
+**Q2 — Is "a cold-started extension filled a credential" proven by a real field in a real browser on
+the simulator, or by an API call having been made?**
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| Cold fill (host force-quit, no prior activity this simulator session): real `simctl shutdown`→`boot`, server confirmed unreachable, host app NEVER launched after boot, extension fills into a real Safari form field with byte-for-byte encoding proof over all 6 fields | FILL-05 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:93` | "Real `simctl shutdown` 13:46:14 → `boot` 13:46:26; server unreachable (`curl` exit 7) with a paired server-UP falsification proving the check can fail; host app never launched; ... `PVUITEST\|E41-6\|status=ok identity-survived=true field-value-equal=true filled-length=18`" | critical | verified |
+| The QuickType receiver-side round trip (SC1): a real system Sign-In sheet showing the MUTATED username after a fix, the STALE username before it — a same-mechanism negative control that could distinguish the two | FILL-03 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:92` | "negative control 3a (choke point bypassed) shows the **stale** username in the live sheet, 3b (after the fix) shows the **MUTATED** username — the falsification L-34 demands... Screenshot `e41-2-quicktype-fresh-write-proof.png` shows a real system Sign-In sheet" | critical | verified — **but see W-2 below: this specific claim was NOT re-driven live at HEAD `d0c3916`; the choke-point mechanism WAS re-verified, the original QuickType screenshot evidence was carried, not reproduced this verification** |
+| **Residual, disclosed not hidden (W-2):** SC1 and SC5 were not re-driven at this verification's own HEAD — their MECHANISMS were (the choke-point gate, the entitlement grep, the full fill chain), but the two specific live evidence artifacts (`e41-2`, `e41-8`) themselves were not re-run against the post-fix tree | FILL-03/FILL-04 | n/a | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:254-257` | "SC1 and SC5 were not re-driven at HEAD. Their mechanisms were... but `e41-2` and `e41-8` themselves were not re-run. Their outcomes are inferred from the re-proven mechanism plus the original evidence" | warning | gap — honestly disclosed, an inference from a re-proven mechanism, not a re-executed proof; recorded per this register's own "could this have failed?" standard |
+
+**Q3 — Is the freshness/expiry claim measured against a real clock and a real wait, or against a value
+the test supplied?**
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| ACC-06/07's real-elapsed-time proof, disconfirmed explicitly by the verifier's own pass: "is any truth resting on a green unit test that mocks the layer it claims?" — answered no, citing the specific real-time measurement | ACC-06/07 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:300-303` | "the one place this could hide is the lock lifecycle — and it does not: `e41-7`'s ACC-06 leg uses **real elapsed time** (65 s against a 60 s window), not an offset hook, and shows the real `OSStatus` of the real Keychain delete plus the paired recreate" | critical | verified |
+| **The relock-loop root cause (fixed today, before this register was authored, `d8d9c9b`): a lazy lock-state check collapsed `.expired` and `.indeterminate` ("the marker could not be read at all") to the same Bool, so an INCONCLUSIVE read drove the SAME routing decision as a genuinely evaluated expiry** | ACC-06 | real-bytes | `ios/PasskeyVault/Shared/SessionLifecycle.swift:105` (fixed by commit `d8d9c9b`) | "`SessionLifecycle.checkAndExpireIfNeeded` collapsed its own tri-state `LockState` (.unlocked/.expired/.indeterminate) to a Bool at its return statement... `checkAndExpireIfNeeded` now returns `LockState` directly; a new `LockState.mustRelock` (true only for `.expired`) is the single, tested, named contract" | critical | verified (fixed; see the closing verdict for the full account — this is the first of two Face ID relock loops found on real hardware after this phase's own verification closed) |
+| **A SECOND relock loop (`df3e601`), found on Bartek's real iPhone 16 (iOS 27): `kern.bootsessionuuid` is unreadable from a sandboxed process on real hardware on EVERY call, and a missing input was classified identically to a genuine boot-identity mismatch — "a non-verdict routed as a verdict," the same shape as the first fix, found one layer deeper** | ACC-06 | real-bytes (real hardware, not simulator) | `ios/PasskeyVault/Shared/LockMarker.swift:61` (fixed by commit `df3e601`) | "`LockMarker.bootSessionId` is now `Optional<String>`; `isValid` refuses on the boot leg only when both sides are present and disagree... RED (1/25 fail) -> GREEN (32/32 pass), zero regressions across the full 501-test suite" | critical | verified (fixed) — the milestone's only claim in this register backed by REAL HARDWARE evidence, not the simulator; see closing verdict |
+
+**Q4 — Is the offline claim proven with the host process genuinely force-quit and absent from the
+session, or with it merely backgrounded?**
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| E41-6's cold/offline proof: `simctl shutdown` (a genuine terminate, not a background transition), server independently confirmed down (`curl` exit 7, a real connection-refused, paired with a server-UP falsification proving the unreachability check itself can fail), host app never launched after boot | FILL-05 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:93` | "server unreachable (`curl` exit 7) with a paired server-UP falsification proving the check can fail; host app never launched" | critical | verified — genuinely force-quit (`simctl shutdown`), not backgrounded, matching Phase 39's own E-S4 finding that backgrounding alone does not sever a socket on this simulator and therefore is not an acceptable substitute for this claim |
+| Cache-encoding host→extension proof: byte-for-byte over all 6 fields, cross-process, independent of the live/offline claim above but load-bearing for it (the extension must decrypt from cache alone, with no live server available to fall back to) | FILL-05 | real-bytes | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:150` | "digests match byte-for-byte across the process boundary (`e41-6-encoding.log`, 6 fields)" | critical | verified |
+
+### Both hunted shapes 42-06 established, checked again here
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| No suite in this phase stubs the generated FFI bindings rather than linking the real framework — every crypto-touching claim in the four Q-tables above cites `real-FFI`/`live-simulator`/`live-run`, never `unit-test-only`, for the load-bearing rows | FILL-05/ACC-06/ACC-07 | n/a (cross-check over the tiers already assigned above) | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:196` | "e41-4/e41-6/e41-7 are all `live-simulator`" | critical | verified — no instance of the mocked-crypto shape found in this phase's load-bearing claims |
+| `CredentialMatcher`'s fill-time gate has a criterion that COULD NOT have come out the other way, found and corrected LIVE mid-plan: the original hope (fill-time origin verification against the live page) was assumed achievable, then measured to be structurally impossible for `.domain`-typed identities before the record was finalized | FILL-02 | live-simulator | `ios/IOS-SPIKE-LOG.md:1831-1845` | "**CORRECTED FINDING (E41-3-policy, live this session) — the fill-time gate does NOT enforce origin equality against the live page for `.domain`-typed identities**... `request.credentialIdentity.serviceIdentifier` echoes our own registered `.domain` identity verbatim... a same-host-different-port or different-host VISIT is therefore structurally invisible to `CredentialMatcher` at the fill entry point" | critical | verified — this is exactly the "criterion that could not have come out the other way" shape 42-06 hunted, except caught and corrected by Phase 41 ITSELF, live, before the record was ever committed with the wrong claim — see WINDOWS #17 cross-reference in Task 2 |
+
+### Remaining QA-01/02/03 rows (non-cross-process claims)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| Third-party fill (FILL-04): entitlement dumps taken from the BUILT binaries carry no `associated-domains` key on either the app or the appex, positive fill on a domain with no relationship to this product, one-character password falsification driven RED then restored GREEN | FILL-04 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:96` | "Entitlement dumps taken from the **built binaries**... carry no `associated-domains` key... Positive fill on `127.0.0.1:8770`... with a one-character expected-password falsification driven RED (exit 65) and restored GREEN" | warning | verified — **W-4 residual disclosed**: the third-party domain is loopback (`127.0.0.1`), not a registrable third-party DNS domain, chosen after a fresh `.localhost` subdomain failed to propagate to QuickType across 4 retries (L-38); human item, not a defect |
+| `scripts/audit-ios-autofill-deprecated-apis.sh` + `scripts/audit-ios-identity-store-chokepoint.sh`: two standing gates, both wired into `.github/workflows/ci.yml`, both PASS at verification HEAD | FILL-03 | real-bytes | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:169-170` | "**AutoFill deprecated APIs** \| exit 0 — 108 Swift files, 0 skipped... **Identity-store choke point** \| exit 0 — allow-list holds, all 6 call sites reach their own required entry point" | warning | verified |
+| L-33: the deprecated-overload trap's REAL trigger is the completion-handler call form, not array typing alone under `try await` — corrects the plan's own inherited assumption, found live | FILL-03 | real-bytes | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-04-SUMMARY.md:16` | "landmine L-33: the deprecated-overload trap's REAL trigger (completion-handler call form, not array typing alone under try await) -- corrects the plan's own inherited assumption" | warning | verified |
+| L-34: `credentialIdentities(forService:)` returns empty on this simulator/toolchain regardless of a confirmed-durable write — the app-facing enumeration API is broken; QuickType's own system sheet became the working receiver-side proof instead, not a silently-accepted absence | FILL-03 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-04-SUMMARY.md:17` | "landmine L-34: credentialIdentities(forService:) returns empty on this simulator/toolchain regardless of a confirmed-durable write; QuickType's own system sheet is the working receiver-side proof instead" | warning | verified — same discipline L-14's own "isolate the finding, prove the underlying capability via an independent channel" pattern established at scale |
+| W-1 (verifier-observed live, not theoretical): the pre-WR-06 `identityPublishedKeys` upgrade reset makes every identity published before the upgrade unremovable on the incremental path — hit on the verifier's FIRST re-run attempt, not merely predicted | FILL-03 | live-simulator | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:241-252` | "This verifier hit its real effect on the first attempt to re-run `e41-4` at HEAD: a stale `e418-thirdparty-item` identity... survived a fresh whole-vault republish and was offered by QuickType ahead of the freshly-seeded item" | warning | gap — real, narrow, pre-release-only functional defect, honestly recorded, not repaired by this register (DR-42-C) |
+| W-5: `removeAllPublished()`'s busy-retry (WR-05) and `unionIntoPublishedKeys`'s compare-and-swap (WR-06) carry NO automated test — no injectable `ASCredentialIdentityStore` mock exists in this codebase, stated as the reason rather than silently omitted | FILL-03 | n/a | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:271-274` | "inspection-verified only; the fixer states the reason (no injectable `ASCredentialIdentityStore` mock). WR-06 also only *narrows* the cross-process race, as its own comment says" | warning | gap — inspection-only, honestly disclosed as a structural test-seam limitation |
+| Two review-fix iterations (33 `fix(41):` commits total) — the verifier's own disconfirmation pass explicitly checked whether the SUMMARY narrative was trusted anywhere and found it was not: every gate, the build, the scoped suites, and four live legs were executed in the verifier's own process | FILL-02/03/05/07/ACC-06/07 | n/a (process-integrity) | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:309-310` | "Was the SUMMARY narrative trusted anywhere? No. Every gate, the build, the scoped suites and four live legs were executed in this verifier's own process" | warning | verified |
+
+---
+
+## Closing verdict (plan 42-07, 2026-08-21)
+
+**One command runs every gate in the milestone green** (`bash scripts/check-ios-gate.sh`, exit 0, six
+sub-gates named as executed: `qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register`), **and
+`--verify-falsifiable` re-proves all six can fail, `qa_register` included**. Both were re-run live by
+this plan, after the register edits above, so the last recorded state of the tree is the state that was
+measured — per this plan's own closing instruction.
+
+### Per success criterion — what holds and on what evidence
+
+**SC1** (*"Przegląd wszystkich planów faz 35-41 potwierdza, per faza z konkretnym file:line dowodu:
+każde twierdzenie dotykające krypto/realnych bajtów/realnego czasu/realnego serwera ma dowód real-FFI
+lub live-run, nie tylko zielony `XCTest` mockujący warstwę"*) — **HOLDS, across all seven phases (35–41),
+with 150 register rows carrying `file:line` evidence, evidence tiers drawn from the register's own fixed
+set, and every claim citation quoted inline.** No load-bearing claim in this register rests on
+`unit-test-only` alone — the two rows tiered `unit-test-only` (Phase 39's `SyncSocketTests`, Phase 37's
+CR-02 wipe) are each explicitly disclaimed as NOT sufficient evidence for their own SYNC-01/ACC-01
+claims, with the real live-run/real-FFI row that DOES carry the claim cited alongside. Per-phase scope:
+35 (specimen, 15 rows), 36 (18 rows), 37 (16 rows), 38 (18 rows), 39 (24 rows, this plan), 40 (24 rows,
+this plan), 41 (24 rows, this plan, cross-process given the deepest pass) — 150 total, `qa_register`'s
+own count.
+
+**SC2** (*"Co najmniej jeden guard z każdej fazy 35-41 dotyczącej bezpieczeństwa ... ma udokumentowany
+dowód 'czerwony przed zielonym' przez mutację kodu produkcyjnego"*) — **HOLDS, one guard per phase, every
+one with a real mutation and an observed failing output**: Phase 35 (CR-01 password zeroize path, CR-02
+opaque-handle audit unbalanced-brace truncation), Phase 36 (`ios-memory-gate.sh measure`'s
+self-referential-check-fixed-then-shown-red), Phase 37 (CR-01's Copy-on-Write wipe, mutation-driven),
+Phase 38 (`SnapshotCoverOverlay`'s negative control catching a REAL bug on its first run), Phase 39
+(`audit-ios-cache-ciphertext.sh`'s four red runs against real defects on a real simulator cache), Phase
+40 (`rewrap_item_key_for_collection`'s AAD-binding negative tests, three components each individually
+falsified), Phase 41 (`CredentialMatcher`'s data-integrity gate, falsified live by bypassing the guard
+and observing the fill wrongly succeed). Per DR-42-B, this criterion is judged as prose-plus-`file:line`
+evidence, never a heading grep — the mechanizable half (coverage, resolvability) is `qa_register`'s job
+and it passes.
+
+**SC3** (*"Nowy skrypt weryfikacyjny ... jest dowiedziony zdolny zawieść"*) — **HOLDS.**
+`scripts/check-ios-gate.sh --verify-falsifiable` re-ran live by this plan, exit 0, and its own coverage
+line names all six sub-gates as having been re-proved falsifiable in that invocation, `qa_register`
+included (`R2` resolvability, `R3` parser-abort, both against `mktemp -d` scratch copies, zero mutation
+of the real register — quoted transcripts above and in this plan's own SUMMARY). Every one of the
+composer's own six sub-gates has its FAIL branch demonstrated reachable in this session.
+
+**SC4** (*"Grep całego drzewa `ios/` i configu GSD potwierdza brak `.planning/` w historii gita tego
+worktree"*) — **HOLDS in its restated form, not its literal ROADMAP wording, for a reason already
+recorded twice before this plan (`.planning/ROADMAP.md`'s own ⚠️ SC4 note, and `scripts/check-ios-gate.sh`'s
+own header "SECOND restatement") and restated here a third time so a future reader does not re-derive
+it.** The ROADMAP's literal form (`git log --all --full-history -- .planning/` → empty) is structurally
+unachievable — `--all` sweeps `main`/`origin/main` directly, and this branch inherits main's entire
+`.planning/` history from the fork point. The ROADMAP's own FIRST restatement (`git log --oneline
+6bbee65..HEAD -- .planning/` → empty) is **this plan's own literal Task-3 `<verify>` command** — and it
+is ALSO no longer achievable, for a reason the ROADMAP's restatement note predates: Phase 40, Plan 40-01
+merged 91 of `main`'s own commits into this branch (`1e0958a`) to pick up server-side migrations, 36 of
+which touch `.planning/` (legitimate phase-30/31 web-extension planning docs, committed on `main` where
+`commit_docs: true`). Run live by this plan:
+```
+$ git log --oneline 6bbee654a1a591970e7c6db4d7c933d580061b07..HEAD -- .planning/ | wc -l
+36
+```
+This is NOT a QA-05 violation — `scripts/check-ios-gate.sh`'s own header names this exact fact as a
+"SECOND restatement, discovered executing this plan (2026-08-20)" and `gate_qa05` was written against
+it: the mechanized, actually-composed gate adds `--no-merges --not <exclude-ref>` (resolved to
+`origin/main`), which removes both the reconciliation merge commit itself and every commit already
+reachable from `main` — i.e. everything that arrived via legitimate sync rather than being authored on
+`ios/spike`. Run live by this plan:
+```
+$ git log --oneline --no-merges 6bbee654a1a591970e7c6db4d7c933d580061b07..HEAD --not origin/main -- .planning/ | wc -l
+0
+$ bash scripts/check-ios-gate.sh --only qa05
+PASS[qa05]: zero .planning/ commits authored on this branch itself since 6bbee654a1a591970e7c6db4d7c933d580061b07 (excluding $QA05_EXCLUDE_REF=origin/main; positive control: 334 commit(s) found under -- ios/; commit_docs precondition holds)
+```
+**The true claim SC4 protects — "no `.planning/` commit was ever AUTHORED on `ios/spike` itself" — HOLDS**,
+proven by the mechanized `gate_qa05` (which passes) against the scoped, exclusion-aware query, not by
+the ROADMAP's literal wording or its own first restatement (both of which this plan's own required verify
+command reproduces as non-empty, for the fully-accounted-for reason above — not a finding, a
+confirmation of an already-documented fact). A future reader following ROADMAP.md's own restatement note
+alone, without also reading `scripts/check-ios-gate.sh`'s header, would re-derive a command that no
+longer works; this closing verdict exists partly so that does not happen a third time.
+
+### Complete gap list — every row dispositioned `gap` or `partial`, this milestone's outstanding-debt register
+
+| # | Finding | file:line | Severity | Owner phase |
+|---|---|---|---|---|
+| 1 | H-02: `ffi06-probe` panic-probe ships in every Debug `PasskeyVault.app`, inherited unchanged by `PasskeyVaultAutoFill.appex` (no per-target build split); named owner Phase 41 never closed it | `crates/pv-ffi/Cargo.toml:44-47` | warning | 41 (named, unclaimed) |
+| 2 | H-04: neither `scripts/audit-ffi-opaque-handles.sh` nor the composed `scripts/check-ios-gate.sh` is wired into `.github/workflows/ci.yml` — the milestone's gate is a local composer, not a CI gate | `.github/workflows/ci.yml` (zero matches for either script) | warning | unclaimed |
+| 3 | H-08: CP-4's residual-risk disclosure still names only the Swift-side un-zeroized copy; the UniFFI `RustBuffer` intermediate and the `encrypt_item`/`decrypt_item` plaintext `String`s remain undisclosed | `crates/pv-ffi/src/lib.rs:24-39` | warning | unclaimed |
+| 4 | H-10: `uniffi = { features = ["cli"] }` still pulls the full binding-generator tool dependency set into the crypto crate's supply-chain surface; never split into a bindgen-only crate | `crates/pv-ffi/Cargo.toml:95` | warning | unclaimed |
+| 5 | WR-04 (Phase 35): the falsifiable-slice gate's `UNIFFI_VERSION` parse-failure branch is unreachable under `set -euo pipefail` — a check that cannot fail, in the direction that never blocks a build | `scripts/build-ios.sh:152-155` | info | 35 |
+| 6 | WR-05 (Phase 35): the opaque-handle audit has no freshness check of its own (the composer's `gate_ffi_opaque` covers run-order, not the script's own staleness) | `scripts/audit-ffi-opaque-handles.sh:1-471` | warning | 35 / 42 (partial) |
+| 7 | WR-06 (Phase 35): duplicate of H-08 above, same finding, same file — Phase 35's own review first found it | `crates/pv-ffi/src/lib.rs:24-40` | warning | 35 |
+| 8 | E7 (Phase 36): an independent out-of-process `vmmap` reading of the FILL-06 peak was sought via twelve real escalating attempts and never obtained — honestly recorded absent, not inferred | `ios/evidence/36/vmmap-crosscheck-race-attempt.txt` | info | 36 |
+| 9 | `os_proc_available_memory()` never-in-conditional grep (Phase 36) has no demonstrated positive control | `ios/PasskeyVault/PasskeyVaultAutoFill/MemoryProbe.swift:1` | info | 36 |
+| 10 | `simctl get_app_container`'s original negative-control mechanism (Phase 36) was itself a check that cannot fail — superseded before shipping, correctly | `scripts/ios-autofill-layers.sh:140` | warning | 36 (superseded, not open) |
+| 11 | CR-02's `defer`-based master-password wipe (Phase 37) has no mutation-driven falsification transcript — verified only by `swiftc -parse` + re-inspection | `ios/PasskeyVault/PasskeyVault/Core/AccountService.swift:80` | warning | 37 |
+| 12 | `grep -c 'case errSecAuthFailed'` (Phase 37) has no falsification transcript for this specific grep | `ios/PasskeyVault/PasskeyVaultTests/BiometricGateSimulatorTests.swift:1` | info | 37 |
+| 13 | `grep -c 'guaranteed'` within Phase 37's own scope has no falsification transcript (Phase 38 later extends the same discipline with a genuine catch) | `ios/PasskeyVault/PasskeyVault/Core/Keychain/UkEnvelopeStore.swift:1` | info | 37 (extended, not closed, by 38) |
+| 14 | No `LAContext` held as a stored property (Phase 37) is grep-guarded with no injected-then-caught transcript | `ios/PasskeyVault/PasskeyVault/Core/BiometricUnlockService.swift:1` | warning | 37 |
+| 15 | `touchIDAuthenticationAllowableReuseDuration` absence (Phase 37) is grep-guarded with no counter-example transcript | `ios/PasskeyVault/PasskeyVault/Core/BiometricUnlockService.swift:1` | warning | 37 |
+| 16 | `grep -c 'guaranteed'` (Phase 38) caught a real pre-existing violation but was never itself falsified by injecting a NEW one | `ios/PasskeyVault/PasskeyVault/Vault/ClipboardService.swift:1` | info | 38 |
+| 17 | `SyncDecodeTests`' two decode tests (Phase 39) were RED at HEAD as of Phase 41's own verification — Phase 40's `6701e61` emptied the evidence file they parsed. **Fixed today, before this plan ran, in `5e9ef99`**; captured bodies now live in `PasskeyVaultTests/Fixtures/`, decoupled from a document a live script owns. **LESSON, carried forward:** a test whose input is a document another process owns and rewrites measures the document, not the code — the exact shape this milestone's own QA-01 discipline exists to catch, found here inside the audit's own evidence chain rather than in application code | `.planning/phases/39-synchronizacja-i-cache-offline/39-03-SUMMARY.md:106` | critical (was) → resolved | 39 (regressed by 40, fixed pre-42-07) |
+| 18 | WR-03 (Phase 40, carried): the member-removal batch's re-key set is scoped differently from the server's own completeness guard — masked by a server-side singleton-family constraint, correctly left open (the real fix needs a `pv-server` route change, forbidden by this milestone's premise) | `ios/PasskeyVault/PasskeyVault/Family/RemoveMemberService.swift:267-273,299-307` | warning | 40 |
+| 19 | W-3 (Phase 41): ACC-07's host-side *verdict* is never itself logged — proven at the marker level, not by a host-process log line stating its own unlock/expired evaluation | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:259-263` | info | 41 |
+| 20 | W-2 (Phase 41): SC1 (QuickType) and SC5 (third-party fill) were not RE-driven live at Phase 41's own re-verification HEAD `d0c3916` — their mechanisms were, the two specific evidence artifacts (`e41-2`, `e41-8`) were not | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:254-257` | warning | 41 |
+| 21 | W-1 (Phase 41): the pre-WR-06 `identityPublishedKeys` upgrade reset makes any identity published before the upgrade unremovable on the incremental path — verifier-observed live, not theoretical | `ios/PasskeyVault/Shared/IdentityStoreSync.swift:465-471` | warning | 41 |
+| 22 | W-5 (Phase 41): `removeAllPublished()`'s busy-retry and `unionIntoPublishedKeys`'s compare-and-swap carry no automated test — no injectable `ASCredentialIdentityStore` mock exists in this codebase | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:271-274` | warning | 41 |
+| 23 | W-4 (Phase 41): FILL-04's third-party domain is loopback (`127.0.0.1`), not a registrable third-party DNS domain — chosen after a fresh `.localhost` subdomain failed to propagate to QuickType across 4 retries (L-38) | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:265-269` | warning | 41 |
+| 24 | FILL-02's "aplikacjom" half (native third-party app fill, not Safari) was never exercised in this milestone — every fill proof targets Safari with a `.domain` identifier | `.planning/phases/41-autofill-dla-hase-i-poprawno-blokady-mi-dzy-procesami/41-VERIFICATION.md:220` | warning | 41 |
+| 25 | T-41-23 / WINDOWS #17: `.domain`-typed identities' fill-time gate cannot see the live page — a mismatched-VISIT fill is structurally unmitigated on this platform, disclosed unsoftened in DR-41-B's own CORRECTED FINDING | `ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift` (per `.planning/WINDOWS.md` row 17) | high (disclosed security limitation) | 41 (human accept/reject decision pending — see human-verification items, 41-VERIFICATION.md) |
+| 26 | WINDOWS #18: `prepareCredentialList`'s `SessionLifecycle` gate is present and correct by inspection but was never observed firing live in any Phase-41 plan | `ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift` (per `.planning/WINDOWS.md` row 18) | info (unrun-verify) | 41 |
+| 27 | **L-14 (this phase's own named obligation): a Swift compiler crash (`swift-frontend`, `EarlyPerfInliner`, infinite recursion in generated `UniffiHandleMap.deinit`) makes `xcodebuild build -configuration Release` fail unconditionally.** Probed live by this plan today (2026-08-21) — **STILL REPRODUCES, byte-identical mangled symbol and crash shape** to the 2026-08-16 finding. See "L-14" subsection below. | `crates/pv-ffi` generated bindings (`pv_ffi.swift`, generator output, not hand-written) | **critical — ship blocker** | 42 (this phase's own named obligation, still open) |
+
+### L-14 — probed live this session, still open, and what that means for shipping
+
+Per this plan's own HARD RULES ("probing L-14's current state with a Release build attempt is
+legitimate phase-42 subject matter, provided no workaround is silently committed"), this plan ran a real
+Release build against the pinned simulator before writing this verdict:
+
+```
+$ cd ios/PasskeyVault && caffeinate -i xcodebuild -project PasskeyVault.xcodeproj -scheme PasskeyVault \
+  -configuration Release -destination "id=34992BB7-4982-4915-92C7-C7FC987802AF" build
+...
+4.  While running pass #982547 SILFunctionTransform "EarlyPerfInliner" on SILFunction
+    "@$s12PasskeyVault15UniffiHandleMap33_3020C04B17195456C4681D445E4E403DLLCfD".
+4  swift-frontend  0x000000010425744c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+5  swift-frontend  0x000000010425744c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+...
+** BUILD FAILED **
+```
+
+**Byte-identical in kind to the 2026-08-16 finding**: same mangled symbol (`UniffiHandleMap.deinit`),
+same optimizer pass (`EarlyPerfInliner`), same infinite-recursion shape in the same function
+(`isCallerAndCalleeLayoutConstraintsCompatible`). No commit across phases 39, 40, or 41 touched the
+UniFFI version pin, the codegen invocation, or the app target's build settings in a way that would have
+been expected to move this. **L-14 is confirmed STILL OPEN as of this session, not resolved, not
+regressed to a different failure — the identical failure.**
+
+**What this means for shipping, stated plainly, per this register's own no-softening standard: a CI (or
+a human) that only ever builds Debug would ship this exact defect** — every claim of "works" this entire
+150-row register makes was produced under `-Onone` (Debug), because that is the only configuration that
+builds at all. `ffi06-probe`'s own unresolved default-on-Debug residual (H-02, gap #1 above) means the
+Debug build every proof in this register rests on ALSO ships a synthetic panic vector — two separate,
+independently-tracked debts (L-14, H-02) that compound in the same direction: **the only build
+configuration that works today is the one configuration this milestone does not intend to ship.** No
+workaround (e.g. quietly shipping `-Onone`) was applied or committed by this probe — per this plan's own
+prohibition, this plan modifies no file under `crates/` or `ios/PasskeyVault/`, and none was touched.
+
+### Proof limits, restated in the ROADMAP's own terms
+
+Everything in this milestone was built and verified **on a simulator (`PV-iPhone16`, iOS 26.5), under
+the paid Apple Developer Program membership Bartek purchased 2026-08-20** (retiring the earlier
+free-team hardware block on `autofill-credential-provider` — see "Today's corrections" below), with the
+following named, structural limits, none discovered by this plan, all restated here per this plan's own
+instruction:
+
+- **Entitlement allowlisting on real hardware is now UNBLOCKED for issuance, but App-Group-dependent
+  behaviour on hardware remains unverified.** The membership grants `autofill-credential-provider` on
+  both App IDs (confirmed by decoding the issued provisioning profiles, `ios/IOS-SPIKE-LOG.md`'s §3b
+  CORRECTION, 2026-08-20); no phase in this milestone has yet exercised AutoFill, App Group sharing, or
+  cross-process lock correctness on a REAL device — every SC2/SC4/E41-* proof in Phases 39 and 41 is
+  simulator-only. The two Face ID relock loops found and fixed on Bartek's real iPhone 16 TODAY
+  (`d8d9c9b`, `df3e601`, see below) are the first and only real-hardware evidence this milestone has
+  produced, and both were bugs, not confirmations.
+- **Memory-pressure process termination (OS jetsam) remains unverified.** Phase 36's own FILL-06 budget
+  work explicitly could not obtain an independent out-of-process reading (gap #8 above); nothing in
+  Phases 39–41 changes this.
+- **Physical-device Keychain behaviour is unverified by construction.** Every simulator run in this
+  milestone (Phases 35–41 alike) confirmed the simulator enforces NO Keychain ACLs at all (Phase 37's
+  own E2 finding, re-confirmed by Phase 41's own `branch-state.md`) — every biometric-flavoured claim in
+  this register describes code INTENT (does it ask the OS before reading?), never Secure Enclave
+  enforcement.
+- **This phase's gate script (`scripts/check-ios-gate.sh`) is the milestone's CI surrogate, not a CI
+  runner** — confirmed directly by this plan (gap #2 above): the composed gate is not itself invoked from
+  `.github/workflows/ci.yml`, only two of Phase 41's own narrower AutoFill-specific gates are. A static
+  audit plus runnable scripts on the simulator/local machine, exactly as the ROADMAP's own
+  "Ograniczenie dowodu" paragraph for this phase states, does not replace a real CI runner.
+- **Release builds do not build at all (L-14, gap #27), so every proof in this register was produced
+  under Debug.** Restated here because it is the single limitation this milestone's own proof standard
+  would otherwise have missed: a green Debug proof is not evidence about the Release binary this
+  milestone would actually ship.
+
+### The two-layer QA-05 claim, with its residuals
+
+**Preventive layer:** `scripts/install-ios-hooks.sh` installs a shared `pre-commit` hook rejecting a
+`.planning/` commit from this worktree before it lands, proven a no-op on `main` before install
+(`be2c492`, this repository's own git history). **Detective layer:** `gate_qa05` in
+`scripts/check-ios-gate.sh`, re-run green by this plan (see SC4 above), asserting the substantive claim
+directly against git history rather than trusting the hook to have always been present.
+
+**Residuals, stated with the two layers' own limits, not upgraded to a structural-impossibility claim
+(per this plan's own prohibition):**
+- **The preventive hook CAN be bypassed** — `git commit --no-verify` skips any local hook unconditionally;
+  nothing about a shared `pre-commit` script changes that. The hook is a courtesy against an accidental
+  commit, not a barrier against a deliberate one.
+- **The guard's discriminating configuration value (`commit_docs: false`) is an uncommitted modification
+  to a tracked file** (`.planning/config.json`) — a fresh clone of this repository, or a reviewer reading
+  only `main`, would see `commit_docs` at whatever value `main` itself carries, not this worktree's own
+  local override. The detective gate (`gate_qa05`) is what asserts the claim POSITIVELY, against real git
+  history, independent of whether the config value that motivated it is itself durably recorded — which
+  is exactly why QA-05 is proven by `gate_qa05`'s own history query, not by grepping `config.json`.
+
+### Today's corrections folded into this verdict, named and dated
+
+Discovered and fixed on real hardware and in this codebase TODAY (2026-08-20/21), before this plan ran,
+all already committed to this branch's own history — recorded here because Task 3's own instruction asks
+this verdict to be self-contained, and a reader of this register alone should not have to reconstruct
+them from `git log`:
+
+- **`d8d9c9b`** — the first Face ID relock loop: `SessionLifecycle.checkAndExpireIfNeeded` collapsed its
+  own tri-state `LockState` to a Bool, so an INCONCLUSIVE marker read drove the same routing decision as
+  a genuinely evaluated expiry. Fixed with a named `LockState.mustRelock` contract (this register's own
+  Phase 41 Q3 table, above).
+- **`df3e601`** — the SECOND Face ID relock loop, found on Bartek's real iPhone 16 (iOS 27):
+  `kern.bootsessionuuid` is unreadable from a sandboxed process on real hardware on every call, and a
+  missing input was classified identically to a genuine boot-identity mismatch — the same "non-verdict
+  routed as a verdict" shape, one layer deeper (this register's own Phase 41 Q3 table, above). **This is
+  the milestone's only finding backed by real hardware, not the simulator.**
+- **`003cf97`** — app package names (e.g. `com.xiaomi.smarthome`) were being resolved as DNS hostnames
+  for favicon lookups AND registered as QuickType `.domain` identities that could never legitimately
+  match a real page — a DNS leak with no possible benefit, fixed by a shared shape predicate
+  (`OriginNormalize.looksLikeAppPackageName`) reused by both the favicon loader and `IdentityStoreSync`.
+- **`6e47711`** — the identity-store choke-point gate (H-04's own composed sibling, `gate_ffi_opaque`'s
+  cousin) was found RED on `ios/spike` with no defect behind it: `d8d9c9b`'s own comment-line additions
+  pushed a correct, unchanged call site past a FIXED line-window standing in for "inside this function."
+  Fixed by ending the window at the next same-indentation declaration; falsified both ways (swapping the
+  real call for the exact CR-01 defect this gate exists to catch → exit 1; deleting the call → exit 1;
+  restored → exit 0, byte-identical to HEAD).
+- **`84f55a7`** — §3b CORRECTED: the paid Apple Developer Program membership was purchased 2026-08-20;
+  `autofill-credential-provider` is GRANTED on both App IDs (year-long profiles, confirmed by direct
+  decode); the hardware AutoFill block that Phases 41/43 previously could not clear is **retired**. A
+  narrower App-Groups-absent claim raised mid-investigation was independently re-checked and found
+  FALSE (`application-groups` reads present on both profiles) — recorded honestly as an unresolved
+  discrepancy in the debugging session's own account, not silently reconciled.
+
+None of these five commits is this plan's own work — they are prior fixes this plan discovered already
+on the branch and is folding into its closing account, per Task 3's own instruction to state what holds
+and what does not as precisely as the record allows.
 
 ---
 
