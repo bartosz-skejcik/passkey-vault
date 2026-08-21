@@ -25,6 +25,9 @@ web/tsconfig.tsbuildinfo
 .verify-scratch.*
 .verify-tmp/
 
+# verify-aasa-proxy-snippet.sh repo-local scratch (nginx.conf for the AASA proxy check)
+.verify-aasa-scratch.*
+
 # Xcode per-user state and build output (ios/). xcuserdata holds window
 # positions and scheme ordering — machine-local noise, never shared.
 xcuserdata/

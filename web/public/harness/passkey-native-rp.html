@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PV SC2 harness -- native-app registration</title>
+</head>
+<body>
+<!--
+  passkey-native-rp.html -- Phase 43 (warunkowe-passkeys-tylko-jesli-tanie), Plan 43-08, Task 1.
+
+  TEST-HARNESS-ONLY. Served as a normal web/public/ static asset (Next.js's `output: "export"`
+  copies public/ verbatim -- this file needs NO pv-server code change, it is served by the SAME
+  static fallback every other page under web/public/ already uses). Used EXACTLY ONCE, via Safari
+  on the pinned simulator, to register one real Passkey Vault passkey for
+  `rp_id = "vault.blonie.cloud"` against `crates/rp-fixture` (43-03) -- the one-time prerequisite
+  Task 3's own `<precondition>` names, before ANY native-app assertion (this file's own sibling
+  proof, driven entirely by `ios/PasskeyVaultHarness`, never by this page again) can succeed.
+
+  Mirrors `crates/rp-fixture`'s own served page (`crates/rp-fixture/src/main.rs`'s `index`
+  handler) almost verbatim -- same fixture-issues-the-challenge-first order, same
+  b64url<->bytes helpers, same button-click-supplies-user-activation discipline (43-03's own
+  live FINDING 1: an auto-fired ceremony on page load is silently rejected by Safari) -- just
+  hardcoded to `rp_id=vault.blonie.cloud`/`mode=create` instead of taking both as query params,
+  and hosted at a REAL domain instead of served dynamically by the fixture binary itself.
+
+  The fixture is authoritative for the challenge, never this page (the SAME discipline
+  `ios/PasskeyVaultHarness/NativeSignInView.swift`'s own header applies to the native-app side of
+  this SAME rp_id): `fetch()`s `crates/rp-fixture`'s own
+  `POST /challenge/register?rp_id=vault.blonie.cloud&user_name=...` FIRST to obtain a REAL,
+  webauthn-rs-issued challenge -- an externally-supplied challenge would not match the
+  `reg_state` `webauthn.start_passkey_registration` stores server-side, and
+  `finish_passkey_registration` would reject it the same way.
+-->
+<h1>PV SC2 harness -- native-app registration</h1>
+<p>rp_id=vault.blonie.cloud mode=create</p>
+<button id="rp-fixture-start">Start</button>
+<div id="rp-fixture-result" data-ok="pending">pending</div>
+<script>
+// `crates/rp-fixture`'s own fixed loopback port (43-03's own port inventory). Reached
+// cross-origin from THIS https://vault.blonie.cloud-served page -- the Mixed Content spec's own
+// "potentially trustworthy" exception for localhost/127.0.0.1 permits the REQUEST despite the
+// scheme mismatch, and crates/rp-fixture's own permissive CORS layer (Plan 43-08, added to this
+// TEST-ONLY fixture -- never crates/pv-server) permits the RESPONSE to be read.
+const FIXTURE_BASE = 'http://localhost:8900';
+const RP_ID = 'vault.blonie.cloud';
+const USER_NAME = 'ios-native-sc2-registration';
+
+function b64urlToBytes(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function bytesToB64url(bytes) {
+  let bin = '';
+  const arr = new Uint8Array(bytes);
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodePublicKeyJson(pk) {
+  const out = Object.assign({}, pk);
+  if (out.challenge) out.challenge = b64urlToBytes(out.challenge);
+  if (out.user && out.user.id) out.user.id = b64urlToBytes(out.user.id);
+  if (Array.isArray(out.excludeCredentials)) {
+    out.excludeCredentials = out.excludeCredentials.map(c => Object.assign({}, c, { id: b64urlToBytes(c.id) }));
+  }
+  return out;
+}
+function encodeCredentialJson(cred) {
+  return {
+    id: cred.id,
+    rawId: bytesToB64url(cred.rawId),
+    type: cred.type,
+    response: {
+      attestationObject: bytesToB64url(cred.response.attestationObject),
+      clientDataJSON: bytesToB64url(cred.response.clientDataJSON),
+    },
+    clientExtensionResults: {},
+  };
+}
+
+// User activation (43-03's own live FINDING 1: an auto-fired ceremony on page load is silently
+// rejected by Safari) -- the ceremony only starts on this real tap, never automatically.
+document.getElementById('rp-fixture-start').addEventListener('click', async function () {
+  const resultEl = document.getElementById('rp-fixture-result');
+  try {
+    const ccrResp = await fetch(
+      `${FIXTURE_BASE}/challenge/register?rp_id=${encodeURIComponent(RP_ID)}&user_name=${encodeURIComponent(USER_NAME)}`,
+      { method: 'POST' }
+    );
+    const ccr = await ccrResp.json();
+    const publicKey = decodePublicKeyJson(ccr.publicKey);
+    const cred = await navigator.credentials.create({ publicKey });
+    const body = encodeCredentialJson(cred);
+    const finishResp = await fetch(`${FIXTURE_BASE}/register/finish?rp_id=${encodeURIComponent(RP_ID)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const finishJson = await finishResp.json();
+    resultEl.setAttribute('data-ok', String(finishJson.ok));
+    resultEl.textContent = JSON.stringify(finishJson);
+  } catch (e) {
+    resultEl.setAttribute('data-ok', 'false');
+    resultEl.textContent = 'exception: ' + (e && e.message ? e.message : String(e));
+  }
+});
+</script>
+</body>
+</html>

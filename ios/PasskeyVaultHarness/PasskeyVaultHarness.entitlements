@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The ONE entitlement this harness needs: proves the OS will route a native, third-party
+	     app's ASAuthorizationPlatformPublicKeyCredentialProvider request for
+	     rp_id="vault.blonie.cloud" into Passkey Vault's own AutoFill extension (ROADMAP SC2). No
+	     autofill-credential-provider entitlement (this app REQUESTS a passkey, it does not
+	     PROVIDE one -- that is PasskeyVaultAutoFill's job) and no App Group (shares no storage
+	     with the shipping app by design, 43-08-PLAN.md's own read_first note). -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>webcredentials:vault.blonie.cloud</string>
+	</array>
+</dict>
+</plist>

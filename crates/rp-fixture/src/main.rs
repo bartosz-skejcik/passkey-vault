@@ -427,7 +427,21 @@ async fn main() {
         .route("/register/finish", post(register_finish))
         .route("/challenge/assert", post(challenge_assert))
         .route("/assert/finish", post(assert_finish))
-        .with_state(state);
+        .with_state(state)
+        // Plan 43-08: `web/public/harness/passkey-native-rp.html` is served from
+        // `https://vault.blonie.cloud` (a DIFFERENT origin than this fixture's own
+        // `http://localhost:8900`) and calls the two routes above cross-origin. Without this,
+        // the browser's own CORS check blocks the response from being READ even though the
+        // Mixed Content spec's "potentially trustworthy" exception for `localhost` already
+        // allows the REQUEST itself -- these are two independent browser checks, and only the
+        // first one is satisfied by loopback alone. `Any` is an accepted posture for THIS crate
+        // specifically (Cargo.toml's own doc comment): loopback-only (T-43-18), no secret ever
+        // crosses it, unlike `pv-server`'s own carefully-scoped per-origin CORS (SEC-06). Applied
+        // AFTER `.with_state()`, over the complete router -- mirrors `crates/pv-server/src/
+        // routes/mod.rs`'s own established `base.layer(cors)` ordering (T-24-10's doc comment
+        // there explains why layering over the complete router, not a partial one, is
+        // load-bearing).
+        .layer(tower_http::cors::CorsLayer::permissive());
 
     // Loopback only, never 0.0.0.0 -- T-43-18.
     let addr = SocketAddr::from(([127, 0, 0, 1], port));

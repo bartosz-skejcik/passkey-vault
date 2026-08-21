@@ -18,3 +18,15 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+# Plan 43-08: web/public/harness/passkey-native-rp.html is served from
+# https://vault.blonie.cloud (a DIFFERENT origin than this fixture's own
+# http://localhost:8900) and calls this fixture's /challenge/register and
+# /register/finish cross-origin. Same version already pinned by pv-server
+# (crates/pv-server/Cargo.toml) -- only the "cors" feature is needed here,
+# never "trace"/"fs" (this fixture has no static-file serving or tracing
+# middleware of its own). Permissive (Any origin/method/header) is an
+# accepted posture for THIS crate specifically -- loopback-only (T-43-18),
+# no secret ever crosses it, and pv-server's own careful per-origin CORS
+# scoping (SEC-06) is a production concern this test-only fixture does not
+# share.
+tower-http = { version = "0.6", features = ["cors"] }
