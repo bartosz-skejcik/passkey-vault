@@ -804,6 +804,109 @@ falsify_swift_tests() {
   echo "==> PASS: F2 -- the named-identifier assertion's FAIL branch is reachable"
 }
 
+# --- gate_qa_register / gate_qa_register falsification -------------------
+# 42-05: composes scripts/check-qa-audit-register.sh -- the structural
+# coverage gate over ios/QA-AUDIT-v1.0.md -- by INVOKING it, never by
+# reimplementing its parsing logic (same discipline as gate_ffi_build/
+# gate_ffi_opaque above: the coverage/resolvability logic stays in exactly
+# one place). This sub-gate is DELIBERATELY RED at the end of plan 42-05:
+# ios/QA-AUDIT-v1.0.md carries real rows for Phase 35 (the worked example)
+# but only empty section stubs for phases 36-41, and
+# scripts/check-qa-audit-register.sh measures ROW COUNT, not section
+# presence -- see that script's own header for why. 42-06 turns the
+# phase-35..38 portion green; 42-07 turns the phase-39..41 portion green
+# and resolves the 13 pre-seeded hazards. Do not loosen this sub-gate to
+# make it pass early; that is the exact defect family this phase polices.
+QA_REGISTER_SCRIPT_DEFAULT="scripts/check-qa-audit-register.sh"
+
+gate_qa_register() {
+  local script="${QA_REGISTER_SCRIPT:-$QA_REGISTER_SCRIPT_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[qa_register]: $script not found or not readable -- cannot run the QA-01/QA-02/QA-03 register coverage gate" >&2
+    return 1
+  fi
+
+  if ! bash "$script"; then
+    echo "FAIL[qa_register]: $script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[qa_register]: $script reports full coverage over ios/QA-AUDIT-v1.0.md (see its own OK/PASS line above)"
+}
+
+# falsify_qa_register -- R2 (a broken reference) and R3 (an unparseable
+# register) re-run against `mktemp -d` SCRATCH COPIES only -- the real
+# ios/QA-AUDIT-v1.0.md is never mutated in place (mirrors gate_ffi_opaque's
+# own staleness-proof idiom: `cp` a real artifact into scratch, corrupt the
+# copy, never touch the original). Both use
+# scripts/check-qa-audit-register.sh's own $QA_REGISTER_FILE override,
+# exactly the same overridable-path idiom every other falsify_* in this
+# file already uses.
+falsify_qa_register() {
+  echo "==> --verify-falsifiable: qa_register"
+
+  local checker_script="${QA_REGISTER_CHECKER_SCRIPT:-$QA_REGISTER_SCRIPT_DEFAULT}"
+  local scratch_dir="$GATE_SCRATCH_ROOT/qa-register-falsify"
+  mkdir -p "$scratch_dir"
+
+  echo "--- R2: a broken reference makes the checker fail, quoting the row (scratch copy only) ---"
+  local scratch_register="$scratch_dir/QA-AUDIT-v1.0-R2.md"
+  cp ios/QA-AUDIT-v1.0.md "$scratch_register"
+  sed -i.bak 's#`crates/pv-ffi/src/lib.rs:364`#`crates/pv-ffi/src/lib.rs:999999`#' "$scratch_register"
+  if ! grep -q '999999' "$scratch_register"; then
+    echo "ERROR: could not stage the R2 scratch mutation -- the CR-01 ref text (crates/pv-ffi/src/lib.rs:364) was not found in ios/QA-AUDIT-v1.0.md to break; has the worked-example table changed?" >&2
+    exit 1
+  fi
+
+  local out status
+  set +e
+  out=$(QA_REGISTER_FILE="$scratch_register" bash "$checker_script" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: qa_register R2 falsification FAILED -- the checker against a scratch copy with a broken ref exited 0; the resolvability assertion cannot fail and is therefore worthless" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "exceeds"; then
+    echo "ERROR: qa_register R2 falsification FAILED -- exited non-zero (exit=$status) but did not name the exceeded reference" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against a scratch copy with CR-01's ref broken to line 999999 exited $status, quoting the row:"
+  echo "$out" | grep "exceeds" | sed 's/^/      /'
+  echo "==> PASS: R2 -- the resolvability assertion's FAIL branch is reachable, zero mutation of the real register"
+  echo "    git diff --stat -- ios/QA-AUDIT-v1.0.md (must be empty):"
+  git diff --stat -- ios/QA-AUDIT-v1.0.md | sed 's/^/      /'
+
+  echo
+  echo "--- R3: an empty/unparseable register aborts as could-not-parse, never a clean run (scratch file only) ---"
+  local empty_scratch="$scratch_dir/empty.md"
+  : > "$empty_scratch"
+  set +e
+  out=$(QA_REGISTER_FILE="$empty_scratch" bash "$checker_script" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: qa_register R3 falsification FAILED -- the checker against an empty scratch file exited 0" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "could not be parsed"; then
+    echo "ERROR: qa_register R3 falsification FAILED -- exited non-zero (exit=$status) but did not name the could-not-parse abort" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against an empty scratch file exited $status, naming the could-not-parse abort:"
+  echo "$out" | grep "could not be parsed" | sed 's/^/      /'
+  echo "==> PASS: R3 -- the positive-control parser-abort branch is reachable, zero mutation of the real register"
+  echo "    git diff --stat -- ios/QA-AUDIT-v1.0.md (must be empty):"
+  git diff --stat -- ios/QA-AUDIT-v1.0.md | sed 's/^/      /'
+
+  echo
+  echo "==> qa_register falsification: BOTH proofs passed (R2 resolvability, R3 parser control) -- ios/QA-AUDIT-v1.0.md never mutated, only mktemp -d scratch copies"
+}
+
 # --- composer: sub-gate dispatch table ----------------------------------
 # 42-01 supplied qa05. 42-03 appends the three FFI sub-gates above, in the
 # order build -> falsifiable-slice-gate -> opaque-handle audit (each depends
@@ -813,10 +916,15 @@ falsify_swift_tests() {
 # SECOND time (WITH the panic probe), on top of whatever `ffi_build` just
 # left on disk (WITHOUT it); `gate_swift_tests`'s own header comment records
 # why that specific transition needed a bounded, narrowly-scoped retry
-# (L-41, ios/IOS-SPIKE-LOG.md). Later plans in this phase append further to
-# GATES and add a matching gate_<name>/falsify_<name> pair; nothing about
-# the frame below should need rewriting.
-GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests)
+# (L-41, ios/IOS-SPIKE-LOG.md). 42-05 appends qa_register LAST of all: it is
+# the one sub-gate deliberately left RED at the end of plan 42-05 (see that
+# sub-gate's own header comment above), so it is placed where a reader
+# scanning top-to-bottom sees every gate this phase actually composes
+# before hitting the one still under construction. Later plans in this
+# phase append further to GATES and add a matching
+# gate_<name>/falsify_<name> pair; nothing about the frame below should
+# need rewriting.
+GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register)
 
 ONLY=""
 VERIFY_FALSIFIABLE=0
