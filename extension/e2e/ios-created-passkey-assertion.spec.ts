@@ -41,7 +41,7 @@ import { expect, test } from "./fixtures";
 import type { Page } from "@playwright/test";
 import { spawn, execFileSync, execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,6 +71,15 @@ const RUN = String(Date.now() % 100000);
 let fixtureProc: ChildProcess | undefined;
 let serverProc: ChildProcess | undefined;
 let dbDir: string | undefined;
+
+// crates/rp-fixture's own stdout, captured (never "ignore"d) so this spec's own falsification leg
+// can assert POSITIVE evidence of engagement (a real `/challenge/assert ... status=issued` line)
+// rather than inferring anything from silence alone -- 43-VERIFICATION.md WARNING A's own lesson
+// (a missing input must never be classified as a verdict) applied here too, not just to
+// scripts/ios-autofill-e43.sh's assert_interop. Also re-recorded to `ios/evidence/43/` in
+// afterAll -- direction 1 was, until this fix, the only live proof in this phase with no captured
+// artifact (every other live proof has a `.log`/`.log.fixture-stdout` sibling).
+let fixtureLog = "";
 
 async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -109,7 +118,10 @@ test.beforeAll(async () => {
 
   fixtureProc = spawn("cargo", ["run", "-p", "rp-fixture", "--", "--port", String(FIXTURE_PORT)], {
     cwd: REPO_ROOT,
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  fixtureProc.stdout?.on("data", (chunk: Buffer) => {
+    fixtureLog += chunk.toString("utf8");
   });
   await waitForHttp(`${FIXTURE_BASE}/?rp_id=localhost&mode=get`, 30000);
 
@@ -147,6 +159,16 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // Re-record the run transcript under ios/evidence/43/ regardless of pass/fail -- matches every
+  // other live proof in this phase (43-VERIFICATION.md GAP 1's own "missing" item).
+  try {
+    const evidenceDir = path.join(REPO_ROOT, "ios/evidence/43");
+    mkdirSync(evidenceDir, { recursive: true });
+    writeFileSync(path.join(evidenceDir, "43-09-direction1.log.fixture-stdout"), fixtureLog, "utf8");
+  } catch (e) {
+    // Evidence capture is best-effort and must never mask the test's own real pass/fail.
+    console.error("pv-e2e: failed to write direction-1 evidence transcript:", e);
+  }
   fixtureProc?.kill();
   serverProc?.kill();
   if (dbDir) rmSync(dbDir, { recursive: true, force: true });
@@ -327,18 +349,48 @@ test.describe("Phase 12 (43-09) -- iOS-created Passkey Assertion (ROADMAP SC5, d
       expect(stillPresent).toBeUndefined();
     }).toPass({ timeout: 30000 });
 
+    // 43-VERIFICATION.md GAP 1's own root cause, found live re-running this exact leg: the
+    // corrupted credential is no longer offered at all (dropped from vault.list above), so
+    // page-bridge.content.ts's own broker() has no candidate to hand back and falls through to
+    // the REAL native navigator.credentials.get() (its own documented D-11 discipline -- "always
+    // fall through to the real native result, never a dead-ended promise"). In this headed
+    // Chromium harness there is no platform authenticator/security key to answer that native
+    // call, so it does not reject at all -- it waits on the browser's own "use a security key" UI
+    // indefinitely, and `#rp-fixture-result` never leaves `data-ok="pending"` (confirmed live: 3/3
+    // attempts, 63 polls each, unbounded). There is no synthetic "no candidate" rejection anywhere
+    // in that chain for this test to observe passively.
+    //
+    // Fix: opt into rp-fixture's own `abort_ms` (a real WebAuthn Level 2 AbortSignal, not a
+    // fixture-invented mechanism -- see crates/rp-fixture/src/main.rs's own IndexParams doc
+    // comment) so the ceremony's genuine "cannot complete" outcome settles to a concrete,
+    // receiver-observed `data-ok="false"` instead of an unbounded hang. This is a REAL abort of a
+    // REAL native call, not a simulated failure -- the browser actually cancels the in-flight
+    // request via the same AbortController/AbortSignal a real page would use.
+    const preCorruptLogCursor = fixtureLog.length;
     const rpPage2 = await popup2.context().newPage();
-    await rpPage2.goto(`${FIXTURE_BASE}/?rp_id=localhost&mode=get`);
+    await rpPage2.goto(`${FIXTURE_BASE}/?rp_id=localhost&mode=get&abort_ms=8000`);
     await rpPage2.bringToFront();
     await rpPage2.locator("#rp-fixture-start").click();
 
-    // The corrupted credential is no longer offered at all (dropped from vault.list above) --
-    // there is nothing left for the SAME ceremony to complete; rp-fixture's own try/catch still
-    // settles data-ok to something other than "true" once the browser exhausts every registered
-    // provider's candidate list. Never merely "not true" -- this plan's own acceptance criteria
-    // requires a concrete "false", so this waits it out to that exact terminal state.
+    // Never merely "not true" -- this plan's own acceptance criteria requires a concrete "false",
+    // so this waits it out to that exact terminal state (now deterministic: abort_ms=8000 bounds
+    // it well under this 15s Playwright-level wait).
     await expect(rpPage2.locator("#rp-fixture-result")).toHaveAttribute("data-ok", "false", {
-      timeout: 30000,
+      timeout: 15000,
     });
+
+    // Non-vacuousness (43-VERIFICATION.md WARNING A's own lesson, applied here too -- a hardened
+    // predicate must require POSITIVE evidence the harness genuinely engaged, never accept a
+    // "false" that could equally mean "nothing ran"): assert the terminal state was reached
+    // BECAUSE of the abort (rp-fixture's own catch block now surfaces e.name), not some earlier,
+    // unrelated exception; and assert rp-fixture's own /challenge/assert log line for THIS
+    // ceremony fired (a real challenge was genuinely issued -- the ceremony reached rp-fixture,
+    // not merely a browser-side no-op).
+    await expect(rpPage2.locator("#rp-fixture-result")).toContainText("AbortError", {
+      timeout: 1000,
+    });
+    const newFixtureLog = fixtureLog.slice(preCorruptLogCursor);
+    expect(newFixtureLog).toMatch(/RPFIXTURE\|route=\/challenge\/assert rp_id=localhost status=issued/);
+    expect(newFixtureLog).not.toMatch(/RPFIXTURE\|route=\/assert\/finish rp_id=localhost ok=true/);
   });
 });

@@ -139,16 +139,37 @@ struct IndexParams {
     rp_id: String,
     mode: String,
     user_name: Option<String>,
+    /// Optional bounded-wait deadline (milliseconds) for `navigator.credentials.get()`, wired to
+    /// a real `AbortController`/`AbortSignal` (`CredentialRequestOptions.signal`, spec-legal
+    /// since WebAuthn Level 2 -- not a fixture-invented mechanism). Absent by default, so every
+    /// EXISTING caller (`ios-autofill-e43.sh`'s tracer/interop/native-app flows, none of which
+    /// pass this param) is byte-for-byte unaffected.
+    ///
+    /// Exists ONLY for a caller that needs a genuine "this ceremony structurally cannot
+    /// complete" outcome to settle to a real, page-JS-observed `data-ok="false"` instead of
+    /// waiting forever (43-VERIFICATION.md GAP 1:
+    /// `extension/e2e/ios-created-passkey-assertion.spec.ts`'s falsification leg). Root cause:
+    /// once a corrupted item is dropped from the extension's own `vault.list`,
+    /// `page-bridge.content.ts`'s own `broker()` has no matching credential to offer and falls
+    /// through to the REAL native `navigator.credentials.get()` (its own documented D-11
+    /// discipline: "always fall through to the real native result, never a dead-ended promise")
+    /// -- but the real native call then waits on the browser's OWN "use a security key" UI,
+    /// which nothing in an automated run ever dismisses. There is no synthetic "no candidate"
+    /// rejection anywhere in that chain; an explicit, caller-opted-in abort is the only
+    /// deterministic way to observe "genuinely cannot complete" as a concrete terminal state
+    /// rather than an unbounded hang.
+    abort_ms: Option<u64>,
 }
 
 async fn index(Query(params): Query<IndexParams>) -> Html<String> {
     println!(
-        "RPFIXTURE|route=/ rp_id={} mode={} user_name={:?}",
-        params.rp_id, params.mode, params.user_name
+        "RPFIXTURE|route=/ rp_id={} mode={} user_name={:?} abort_ms={:?}",
+        params.rp_id, params.mode, params.user_name, params.abort_ms
     );
     let user_name = params.user_name.unwrap_or_else(|| "fixture-user".to_string());
     let mode = params.mode.clone();
     let rp_id = params.rp_id.clone();
+    let abort_ms = params.abort_ms;
     Html(format!(
         r#"<!DOCTYPE html>
 <html>
@@ -169,6 +190,7 @@ document.getElementById('rp-fixture-start').addEventListener('click', async func
   const rpId = {rp_id_json};
   const mode = {mode_json};
   const userName = {user_name_json};
+  const abortMs = {abort_ms_json};
   const resultEl = document.getElementById('rp-fixture-result');
   function b64urlToBytes(s) {{
     s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -237,7 +259,18 @@ document.getElementById('rp-fixture-start').addEventListener('click', async func
       const rcrResp = await fetch(`/challenge/assert?rp_id=${{encodeURIComponent(rpId)}}`, {{ method: 'POST' }});
       const rcr = await rcrResp.json();
       const publicKey = decodePublicKeyJson(rcr.publicKey);
-      const cred = await navigator.credentials.get({{ publicKey }});
+      const getOptions = {{ publicKey }};
+      if (abortMs) {{
+        // A real AbortController/AbortSignal (WebAuthn Level 2's own
+        // CredentialRequestOptions.signal), not a fixture-invented timeout --
+        // the browser rejects navigator.credentials.get() with a genuine
+        // AbortError once the signal fires, dismissing whatever native UI
+        // (e.g. "use a security key") was otherwise waiting on a human.
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), abortMs);
+        getOptions.signal = controller.signal;
+      }}
+      const cred = await navigator.credentials.get(getOptions);
       const body = encodeCredentialJson(cred, false);
       const finishResp = await fetch(`/assert/finish?rp_id=${{encodeURIComponent(rpId)}}`, {{
         method: 'POST', headers: {{ 'content-type': 'application/json' }}, body: JSON.stringify(body)
@@ -251,7 +284,13 @@ document.getElementById('rp-fixture-start').addEventListener('click', async func
     }}
   }} catch (e) {{
     resultEl.setAttribute('data-ok', 'false');
-    resultEl.textContent = 'exception: ' + (e && e.message ? e.message : String(e));
+    // Include e.name (e.g. 'AbortError') alongside e.message -- a caller
+    // asserting `data-ok="false"` needs to be able to tell "the ceremony
+    // genuinely could not complete" (AbortError, when abortMs is set) apart
+    // from any OTHER exception shape, never just a bare 'false'.
+    const name = e && e.name ? e.name : '';
+    const message = e && e.message ? e.message : String(e);
+    resultEl.textContent = 'exception: ' + (name ? name + ': ' + message : message);
   }}
 }});
 </script>
@@ -263,6 +302,7 @@ document.getElementById('rp-fixture-start').addEventListener('click', async func
         rp_id_json = serde_json::to_string(&rp_id).unwrap(),
         mode_json = serde_json::to_string(&mode).unwrap(),
         user_name_json = serde_json::to_string(&user_name).unwrap(),
+        abort_ms_json = serde_json::to_string(&abort_ms).unwrap(),
     ))
 }
 

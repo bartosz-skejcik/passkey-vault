@@ -1,0 +1,102 @@
+
+Running 1 test using 1 worker
+
+==> sc5-register: pinned simulator UDID: 34992BB7-4982-4915-92C7-C7FC987802AF
+==> sc5-register: building pv-ffi (plain variant)
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.63s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.19s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-5ff1166bfdc679bb.pv_ffi.c9f552404ace256e-cgu.01.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+==> sc5-register: building app+extension (PV_PROBE_E43_SC4, reused verbatim)
+==> HIT landmine L-10 (cold DerivedData mismatch) -- retrying once
+==> sc5-register: building the UI test bundle (PasskeyVaultUITests)
+==> sc5-register: launching host app to run PasskeyRegistrationSc4Seeder.seed() (REAL AccountService.register against the caller's own server)
+==> sc5-register: account registered ok
+==> sc5-register: driving Safari against the fixture, mode=create (AutoFillPasskeyRegistrationUITests, reused verbatim)
+## XCUITest drive (exit 0)
+    t =    14.11s     Check for interrupting elements affecting "ASAuthorizationControllerContinueButton" Other
+    t =    14.16s     Synthesize event
+    t =    14.46s     Wait for com.apple.springboard to idle
+    t =    14.46s Find the Application 'com.apple.mobilesafari'
+    t =    14.57s Added attachment named 'poll-1-screenshot'
+    t =    14.57s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    14.71s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    14.74s Added attachment named 'poll-1-hierarchy'
+    t =    14.74s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    14.76s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    14.78s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    14.81s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    14.87s Find the Application 'com.apple.mobilesafari'
+    t =    15.01s Added attachment named 'poll-2-screenshot'
+    t =    15.01s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    15.22s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    15.25s Added attachment named 'poll-2-hierarchy'
+    t =    15.76s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    15.78s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Create passkey"'
+    t =    15.80s Checking existence of `"passkeyRegistration.confirm" Button`
+    t =    15.91s Find the "passkeyRegistration.confirm" Button
+    t =    15.94s Find the Application 'com.apple.springboard'
+    t =    16.06s Added attachment named 'confirm-button-found-poll3-screenshot'
+    t =    16.06s Requesting snapshot of accessibility hierarchy for app with pid 77032
+    t =    16.29s Requesting snapshot of accessibility hierarchy for app with pid 77032
+    t =    16.33s Added attachment named 'confirm-button-found-poll3-hierarchy'
+    t =    16.34s Tap "passkeyRegistration.confirm" Button
+    t =    16.34s     Wait for com.apple.springboard to idle
+    t =    16.34s     Find the "passkeyRegistration.confirm" Button
+    t =    16.36s     Check for interrupting elements affecting "passkeyRegistration.confirm" Button
+    t =    16.40s     Synthesize event
+    t =    16.70s     Wait for com.apple.springboard to idle
+    t =    16.70s Find the Application 'com.apple.mobilesafari'
+    t =    16.82s Added attachment named 'poll-3-screenshot'
+    t =    16.83s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    16.97s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    17.00s Added attachment named 'poll-3-hierarchy'
+    t =    20.00s Find the Application 'com.apple.mobilesafari'
+    t =    20.12s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-tappedCreatePasskey=true-screenshot'
+    t =    20.12s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    20.26s Requesting snapshot of accessibility hierarchy for app with pid 62818
+    t =    20.29s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-tappedCreatePasskey=true-hierarchy'
+    t =    20.29s Tear Down
+Test Case '-[PasskeyVaultUITests.AutoFillPasskeyRegistrationUITests testPasskeyRegistrationAgainstRpFixture]' passed (20.535 seconds).
+Test Suite 'AutoFillPasskeyRegistrationUITests' passed at 2026-08-22 2:03:57.244 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 20.535 (20.537) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 2:03:57.245 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 20.535 (20.538) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 2:03:57.246 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 20.535 (20.539) seconds
+2026-08-22 14:03:57.583 xcodebuild[62548:13683263] [MT] IDETestOperationsObserverDebug: 23.085 elapsed -- Testing started completed.
+2026-08-22 14:03:57.583 xcodebuild[62548:13683263] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 14:03:57.583 xcodebuild[62548:13683263] [MT] IDETestOperationsObserverDebug: 23.085 sec, +23.085 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_2-03-19-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+==> sc5-register: confirming server-visible via a direct GET /api/vault/items snapshot (receiver-side proof: rp-fixture's own webauthn-rs already verified the ceremony -- this confirms the resulting item genuinely persisted server-side, the precondition direction 1's own sync-pull proof needs)
+(node:63134) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"email":"pv-e2e-43-09-ios-created-29787@example.test","rowCount":1,"passkeyRowCount":1}
+PASS: sc5-register -- see stderr for the full transcript
+  ✓  1 [chromium-ceremony] › e2e/ios-created-passkey-assertion.spec.ts:235:3 › Phase 12 (43-09) -- iOS-created Passkey Assertion (ROADMAP SC5, direction 1) › OPT-03: a passkey created on iOS is usable by the extension after a real sync pull, receiver-side against crates/rp-fixture, falsifiable by ciphertext corruption (1.9m)
+
+  1 passed (2.0m)
+EXIT=0
