@@ -1,0 +1,90 @@
+=== CR-02 fix falsification transcript (post-fix) ===
+Date: 2026-08-22T18:45:06Z
+
+--- Step 1: gate on unmodified tree (expect PASS, exit 0) ---
+== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) ==
+count: 0
+PASS
+== check 2 (positive): a real Swift call site of the FFI generator, outside the generated bindings ==
+count: 5
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:356:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:360:                preview = try generatePassphrase(wordCount: UInt32(wordCount), separator: separator)
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:362:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:42:            let candidate = try? generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:59:            let candidate = try generatePasswordFromRules(rulesText: rulesText)
+== check 3 (positive): the generator symbols exist in the GENERATED Swift bindings ==
+count: 3
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2509:public func generateCharacterPassword(length: UInt32, options: FfiCharacterPasswordOptions)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2523:public func generatePassphrase(wordCount: UInt32, separator: String)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2545:public func generatePasswordFromRules(rulesText: String)throws  -> String  {
+== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source ==
+count: 0
+PASS
+== check 5 (negative): the EXCLUDED test dirs are not a hiding place ==
+count: 0
+PASS
+
+OVERALL: PASS -- all five checks hold (3 negative, 2 positive); the negative results are not vacuous
+EXIT=0
+
+--- Step 2: planted a Swift-native randomElement() password generator + lowercase
+    charset literal at Shared/GeneratePasswordDispatch.swift:59 (replacing the
+    generatePasswordFromRules(rulesText:) call). Expect FAIL, non-zero exit,
+    naming the planted file. ---
+== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) ==
+count: 1
+FAIL -- Swift random-number API found (must be zero):
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:61:            let candidate = String((0..<20).map { _ in "abcdefghijklmnopqrstuvwxyz".randomElement()! })
+== check 2 (positive): a real Swift call site of the FFI generator, outside the generated bindings ==
+count: 4
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:356:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:360:                preview = try generatePassphrase(wordCount: UInt32(wordCount), separator: separator)
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:362:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:42:            let candidate = try? generateCharacterPassword(
+== check 3 (positive): the generator symbols exist in the GENERATED Swift bindings ==
+count: 3
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2509:public func generateCharacterPassword(length: UInt32, options: FfiCharacterPasswordOptions)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2523:public func generatePassphrase(wordCount: UInt32, separator: String)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2545:public func generatePasswordFromRules(rulesText: String)throws  -> String  {
+== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source ==
+count: 1
+FAIL -- Swift-side wordlist/charset literal found (must be zero):
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:61:            let candidate = String((0..<20).map { _ in "abcdefghijklmnopqrstuvwxyz".randomElement()! })
+== check 5 (negative): the EXCLUDED test dirs are not a hiding place ==
+count: 0
+PASS
+
+OVERALL: FAIL -- see the failing check(s) above
+EXIT=1
+
+--- Step 3: reverted the plant byte-identically (diff against pre-plant backup: empty). Expect PASS again. ---
+== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) ==
+count: 0
+PASS
+== check 2 (positive): a real Swift call site of the FFI generator, outside the generated bindings ==
+count: 5
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:356:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:360:                preview = try generatePassphrase(wordCount: UInt32(wordCount), separator: separator)
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/PasskeyVault/Generator/GeneratorSheet.swift:362:                preview = try generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:42:            let candidate = try? generateCharacterPassword(
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift:59:            let candidate = try generatePasswordFromRules(rulesText: rulesText)
+== check 3 (positive): the generator symbols exist in the GENERATED Swift bindings ==
+count: 3
+PASS
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2509:public func generateCharacterPassword(length: UInt32, options: FfiCharacterPasswordOptions)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2523:public func generatePassphrase(wordCount: UInt32, separator: String)throws  -> String  {
+/tmp/sv-44-reviewfix-2JwRnP/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2545:public func generatePasswordFromRules(rulesText: String)throws  -> String  {
+== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source ==
+count: 0
+PASS
+== check 5 (negative): the EXCLUDED test dirs are not a hiding place ==
+count: 0
+PASS
+
+OVERALL: PASS -- all five checks hold (3 negative, 2 positive); the negative results are not vacuous
+EXIT=0

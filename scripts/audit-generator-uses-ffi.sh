@@ -82,7 +82,21 @@ BINDINGS_DIR="${ROOT}/ios/PasskeyVault/build/swift-bindings"
 # silently (degrading the scan to a PARTIAL one, never erroring) on any
 # checkout path containing a space. `"${SHIPPED_SRC[@]}"`/`"${TEST_SRC[@]}"`
 # expand each element as its own argument regardless of embedded spaces.
-SHIPPED_SRC=("${ROOT}/ios/PasskeyVault/PasskeyVault" "${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill")
+# CR-02 (44-REVIEW.md): Phase 44 (Plan 44-05) moved the file that actually
+# decides what password the AutoFill extension offers --
+# `GeneratePasswordDispatch.swift` -- into `ios/PasskeyVault/Shared/`, which
+# this list did not scan. Falsified live: a Swift-native `randomElement()`
+# password generator planted in that exact file produced `OVERALL: PASS`.
+# The sibling gate `audit-extension-network-scope.sh` already scans
+# `ios/PasskeyVault/Shared` for the identical reason ("the extension links
+# nothing else"); `PvShared` is the same kind of shared-target directory
+# (see that directory's own contents) and is included for the same reason.
+SHIPPED_SRC=(
+  "${ROOT}/ios/PasskeyVault/PasskeyVault"
+  "${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill"
+  "${ROOT}/ios/PasskeyVault/Shared"
+  "${ROOT}/ios/PasskeyVault/PvShared"
+)
 TEST_SRC=("${ROOT}/ios/PasskeyVault/PasskeyVaultTests" "${ROOT}/ios/PasskeyVault/PasskeyVaultUITests")
 
 FAIL=0
@@ -141,7 +155,20 @@ fi
 # ---------------------------------------------------------------------------
 say "== check 2 (positive): a real Swift call site of the FFI generator, outside the generated bindings =="
 allhits2="$(grep -rnE --include='*.swift' "$CALL_PATTERN" "$SRC" || true)"
-hits2="$(printf '%s\n' "$allhits2" | grep -vF "$BINDINGS_DIR" || true)"
+hits2_with_comments="$(printf '%s\n' "$allhits2" | grep -vF "$BINDINGS_DIR" || true)"
+# CR-02 (44-REVIEW.md): a DOC COMMENT that merely mentions a symbol name
+# (e.g. `//  \`generatePasswordFromRules(rulesText:)\`` in this file's own
+# neighbour's header) matched `$CALL_PATTERN` and was being counted as a
+# real call site. Strip `path:line:` off each hit, trim leading whitespace,
+# and drop anything whose remaining content starts with `//` or `*` (line
+# or block comment) before counting -- a comment must never satisfy a
+# call-site count.
+hits2="$(printf '%s\n' "$hits2_with_comments" | awk -F: '{
+  line=$0
+  sub(/^[^:]*:[^:]*:/, "", line)
+  gsub(/^[ \t]+/, "", line)
+  if (line !~ /^(\/\/|\*)/) print $0
+}')"
 count2="$(printf '%s' "$hits2" | grep -c . || true)"
 [ -z "$hits2" ] && count2=0
 say "count: $count2"
