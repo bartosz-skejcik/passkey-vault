@@ -36,6 +36,79 @@ extension ASCredentialServiceIdentifier: ASCredentialServiceIdentifierLike {
 }
 
 final class CredentialProviderViewController: ASCredentialProviderViewController {
+    // MARK: - `.planning/debug/passkey-reg-blank-sheet-discord.md` -- DEBUG-only diagnostic,
+    // 2026-08-22. Bartek's real device (iPhone 16, iOS 27.0) hit a blank white sheet registering a
+    // passkey from the Discord native app; the host-app-process log capture showed ZERO
+    // `PVFILL|passkey-reg|` lines. That capture is the HOST app's own console, a SEPARATE process
+    // from this extension, so absence there is suggestive, never proof this override never ran --
+    // this block converts "we saw nothing" into "the system called X", by logging from EVERY
+    // lifecycle/override point this class can reach, including ones with no production
+    // implementation. `PVDIAG|` (never `PVFILL|`) so a grep against this run can never be confused
+    // with a production log line. Gated `#if DEBUG` -- never ships in Release.
+    #if DEBUG
+    private static let diagLogger = Logger(subsystem: "cloud.blonie.PasskeyVault", category: "fill")
+
+    override func viewDidLoad() {
+        Self.diagLogger.log("PVDIAG|method=viewDidLoad")
+        super.viewDidLoad()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        Self.diagLogger.log("PVDIAG|method=viewWillAppear")
+        super.viewWillAppear(animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        Self.diagLogger.log("PVDIAG|method=viewDidAppear")
+        super.viewDidAppear(animated)
+    }
+
+    /// The CONDITIONAL passkey-registration entry point (iOS 18+) -- a DIFFERENT request shape
+    /// from the explicit "Add a Passkey" ceremony `prepareInterface(forPasskeyRegistration:)`
+    /// handles below (opportunistic, background-only, silent). This extension declares no
+    /// `SupportsConditionalPasskeyRegistration` capability in `Info.plist`, so the system should
+    /// never route here -- logged anyway to settle that empirically rather than assume it from the
+    /// header's own prose (L-1's own discipline).
+    override func performWithoutUserInteractionIfPossible(passkeyRegistration registrationRequest: ASPasskeyCredentialRequest) {
+        Self.diagLogger.log("PVDIAG|method=performWithoutUserInteractionIfPossible(passkeyRegistration:)")
+        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    }
+
+    /// The DEPRECATED `ASPasswordCredentialIdentity`-typed sibling of `provideCredentialWithoutUserInteraction(for:)`
+    /// below -- this file's own header (top of file) already names this exact overload as "the
+    /// shipped Xcode 26.6 template walks straight into" trap for PASSWORD identities: it compiles,
+    /// appears to work, and silently never fills, because the current, non-deprecated
+    /// request-typed overload is the one actually used. Logged here purely to settle whether iOS
+    /// 27 (Bartek's real device) reintroduces or prefers this legacy overload for ANY request
+    /// shape, passkey included -- never expected to fire, but never assumed either.
+    override func provideCredentialWithoutUserInteraction(for credentialIdentity: ASPasswordCredentialIdentity) {
+        Self.diagLogger.log("PVDIAG|method=provideCredentialWithoutUserInteraction(for:ASPasswordCredentialIdentity)")
+        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
+    /// The DEPRECATED `ASPasswordCredentialIdentity`-typed sibling of `prepareInterfaceToProvideCredential(for:)`
+    /// below -- same rationale as the override immediately above.
+    override func prepareInterfaceToProvideCredential(for credentialIdentity: ASPasswordCredentialIdentity) {
+        Self.diagLogger.log("PVDIAG|method=prepareInterfaceToProvideCredential(for:ASPasswordCredentialIdentity)")
+        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
+    /// Never implemented in production (no `ProvidesTextToInsert` capability declared) -- logged
+    /// purely for completeness of "every AS* override this class can implement".
+    override func prepareInterfaceForUserChoosingTextToInsert() {
+        Self.diagLogger.log("PVDIAG|method=prepareInterfaceForUserChoosingTextToInsert")
+        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    }
+
+    /// Never implemented in production (no OTP capability declared) -- logged purely for
+    /// completeness; NOT expected on a passkey registration request, but ruling it out costs one
+    /// override.
+    override func prepareOneTimeCodeCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
+        Self.diagLogger.log("PVDIAG|method=prepareOneTimeCodeCredentialList(for:)")
+        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    }
+    #endif
+
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier]) {
         MemoryProbe.emit(stage: "list")
         #if PV_PROBE_APPGROUP
@@ -694,11 +767,31 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             return
         case .refuseLocked:
             // T-43-12: no confirmation screen for an unlocked vault's contents is ever presented to
-            // a locked-device attacker -- mirrors `fillOrCancel`'s own posture: no separate lock UI
-            // of its own to fall back to, cancel and let the system/host handle re-authentication
-            // (this override draws no THIRD unlock surface).
+            // a locked-device attacker -- this override draws no THIRD unlock surface, unchanged.
+            //
+            // FIX (`.planning/debug/passkey-reg-blank-sheet-discord.md`, 2026-08-22): cancels with
+            // `.failed`, NOT `.userInteractionRequired` -- LIVE FINDING this session:
+            // `prepareInterface(forPasskeyRegistration:)` is the ONLY entry point a standard
+            // (non-conditional) passkey registration request ever reaches (confirmed against the
+            // real iPhoneOS26.5.sdk headers -- no sibling `provideCredentialWithoutUserInteraction`-
+            // shaped "silent" registration entry point exists to retry into, unlike the assertion
+            // family's silent -> interactive two-step this comment previously, incorrectly,
+            // compared this to). Cancelling with `.userInteractionRequired` FROM INSIDE the already-
+            // interactive entry point is a dead end: there is no further UI the system can offer in
+            // response, and a live simulator reproduction (native-app-register locked, this session)
+            // proved the requesting app's own `ASAuthorizationController` delegate never received
+            // ANY callback -- neither success nor error -- for the full 50s test window; the
+            // ceremony hung silently and permanently, exactly matching the reported symptom (a
+            // native app's own passkey-creation sheet going inert after the user taps "Save"/"Add
+            // Passkey", with no visible error). `.failed` is the code this SAME switch's sibling
+            // refusal above (`.refuseUnsupportedAlgorithm`) already uses for an equivalent
+            // no-further-recourse refusal, and matches `ASCredentialProviderViewController.h`'s own
+            // documented convention for the interactive `prepareInterface*` family (pass "an
+            // appropriate error code" for a genuine failure -- its own `.userInteractionRequired`
+            // doc comment is scoped to the NON-interactive `provideCredentialWithoutUserInteraction`
+            // family, which this override is not).
             Self.fillLogger.log("PVFILL|passkey-reg|stage=preflight status=refused-locked")
-            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
             return
         case .proceed:
             break
