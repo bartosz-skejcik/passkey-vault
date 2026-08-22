@@ -5957,3 +5957,77 @@ Combined plan verify command (`bash scripts/ios-autofill-e43.sh interop && (cd e
 playwright test e2e/ios-created-passkey-assertion.spec.ts --project=chromium-ceremony)`) run once
 more, end to end, exit 0. `bash scripts/check-ios-gate.sh` exits 0. Evidence under
 `ios/evidence/43/43-09-interop*.{log,log.fixture-stdout}`.
+
+## 18. Debug session -- native-app passkey REGISTRATION on a locked vault hangs silently, real-device report, root-caused and fixed on the simulator (2026-08-22)
+
+Bartek's real iPhone 16 (iOS 27.0, a beta -- Xcode 26.6 on this machine only has the iOS 26.5 SDK,
+no local iOS 27 SDK exists): in the Discord native app, "add a passkey" -> chose Passkey Vault ->
+tapped Save -> a completely blank white sheet, nothing happened, the flow never completed. His own
+host-app-process log capture showed zero `PVFILL|passkey-reg|` lines -- suggestive but not proof
+the override never ran (a SEPARATE process's own console).
+
+**Gap found first:** no prior plan in this codebase ever drove a passkey REGISTRATION request from
+a genuine NATIVE (non-Safari) app through the system's own credential-picker surface. 43-07/SC4
+proved registration via SAFARI's `navigator.credentials.create()` only; 43-08/SC2 proved a native
+app's ASSERTION only (`ios/PasskeyVaultHarness/NativeSignInView.swift`, sign-in only, never
+create). This exact combination -- native app + registration -- was genuinely untested territory.
+
+**Built to close the gap:** `ios/PasskeyVaultHarness/NativeCreateView.swift` (new, mirrors
+`NativeSignInView.swift`'s own `ASAuthorizationController` pattern for
+`createCredentialRegistrationRequest(challenge:name:userID:)`, a local random challenge -- no
+`crates/rp-fixture` round trip needed since the question is ROUTING, not cryptographic
+correctness), `PasskeyVaultUITests/NativeAppRegisterUITests.swift` (new, mirrors
+`NativeAppSignInUITests.swift`), and `scripts/ios-autofill-e43.sh native-app-register
+{locked|unlocked}` (new subcommand -- `locked` needs no `pv-server` at all, since the extension
+refuses before ever reaching the network; `unlocked` reuses `PasskeyRegistrationSc4Seeder`
+verbatim). Also added DEBUG-only `PVDIAG|method=<name>` logging
+(`CredentialProviderViewController.swift`) to every `AS*` override the class can implement,
+including ones with no production implementation (`viewDidLoad`/`viewWillAppear`/`viewDidAppear`,
+the deprecated `ASPasswordCredentialIdentity`-typed overloads, the CONDITIONAL registration entry
+point, one-time-code and text-insertion entry points) -- converts "we saw nothing" into "the
+system called X", the actual diagnostic this investigation needed.
+
+**LIVE FINDING: a REGISTRATION request's own default system sheet is a COMPLETELY DIFFERENT shape
+from the assertion sheet every prior harness in this codebase was built against.** Not "Sign In" +
+"More from PasskeyVault..." (43-08's own precedent) -- a "Save a passkey?" sheet with PasskeyVault
+ALREADY pre-checked (a real app-icon row) and a direct "Add Passkey" confirm button, no separate
+row-selection step. The FIRST test run's own gate (copied verbatim from the assertion sibling,
+searching for "Add Passkey" only AFTER a "More from" row-tap that this shape never needs) never
+even searched for the visible, waiting button -- a pure test-harness bug, caught and fixed by
+reading the xcresult's own screenshots (`xcrun xcresulttool export attachments`), not by guessing.
+
+**Root cause, confirmed via a direct live differential (same code, only lock state differs):**
+`PasskeyRegistrationPreflight.decide`'s `.refuseLocked` branch cancelled via
+`ASExtensionError(.userInteractionRequired)` from INSIDE `prepareInterface(forPasskeyRegistration:)`
+-- confirmed against the real iPhoneOS26.5.sdk headers to be the ONLY entry point a standard
+registration request ever reaches (no sibling "without user interaction" registration entry point
+to retry into, unlike the assertion family's silent -> interactive two-step). Locked run: `viewDidLoad`
+fires (6x across repeated user taps of the system's own sheet) but `viewWillAppear`/`viewDidAppear`
+NEVER fire even once; the harness's own `ASAuthorizationController` delegate never receives ANY
+callback in 50s; the system's chooser sheet stays inert but tappable forever -- directly reproducing
+"tapped Save, nothing happened, flow never completed". Unlocked run (identical code, only
+`SessionLifecycle.checkAndExpireIfNeeded` returns `.unlocked` instead of `.indeterminate`):
+`viewWillAppear`/`viewDidAppear` BOTH fire, and the accessibility dump captured at that moment shows
+`identifier: 'passkeyRegistration.confirm'` genuinely on screen.
+
+**Fix:** `.refuseLocked` now cancels with `ASExtensionError(.failed)`, matching this same switch's
+sibling refusal (`.refuseUnsupportedAlgorithm`) two lines above and
+`ASCredentialProviderViewController.h`'s own documented convention for the interactive
+`prepareInterface*` family (`.userInteractionRequired` is documented for the NON-interactive
+`provideCredentialWithoutUserInteraction` family only).
+
+**Verification, honestly partial.** A real A/B falsification (revert the one line, rerun live,
+restore, rerun live again) found `viewWillAppear` presence to be the CLEAN, reproducible,
+code-level causal signal (0-of-7 invocations with `.userInteractionRequired` across two separate
+runs; 2-of-2 with `.failed`) -- the exact system-sheet RETRY-TAP COUNT (6x vs 1x) is noisier,
+confounded by an XCUITest AX-cache race against a system-owned cross-process element this session's
+own defensive `.exists` pre-tap guard sometimes blocks. NOT verified in either state: whether the
+REQUESTING app's own `ASAuthorizationController` delegate ever receives a completion callback --
+neither pre- nor post-fix runs captured one within 50s+, plausibly because the ephemeral,
+test-torn-down harness process never lives long enough for a slower system-level callback, not
+necessarily a property of either code path. iOS 27 itself (Bartek's real device) is entirely
+untestable from this machine (no iOS 27 SDK/simulator available) -- device-side confirmation is the
+one thing this session could not produce. `bash scripts/check-ios-gate.sh` exits 0 (all six
+sub-gates). Evidence: `ios/evidence/43/e43-10-native-app-register-{locked,unlocked}.log{,.extension-log,.harness-log}`,
+full debug trail in `.planning/debug/resolved/passkey-reg-blank-sheet-discord.md` (not committed --
+`.planning/` is never committed from this worktree, D-obligation per `docs/IOS-HANDOFF.md` §8).
