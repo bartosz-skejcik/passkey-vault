@@ -5766,3 +5766,111 @@ fixture`'s own multi-rp_id override flag is `--origin <rp_id>=<origin>` (`crates
 main.rs`'s own `parse_args`), NOT `--rp-origin` as this plan's own action text assumed for Task 3 --
 recorded here so Task 3's own harness-script invocation uses the REAL flag name, not the plan's
 guessed one.
+
+## 16. Phase 43, Plan 43-08, Task 3 -- ROADMAP SC2 live proof: three real-environment root causes, none of them SpringBoard timing (2026-08-22)
+
+Task 2's checkpoint discharged: AASA live at `https://vault.blonie.cloud/.well-known/apple-app-
+site-association` (`{"webcredentials":{"apps":["4S7F2M7YLW.cloud.blonie.PasskeyVaultHarness"]}}`,
+`content-type: application/json`), delivered by the `pv-aasa-harness` sidecar. Task 3 adds a
+`native-app` subcommand to `scripts/ios-autofill-e43.sh` and a new
+`NativeAppSignInUITests.swift`, and gets a REAL, live, falsifiable proof that a native app --
+`ios/PasskeyVaultHarness`, via `ASAuthorizationController` -- routes into Passkey Vault's real
+AutoFill extension, verified by `crates/rp-fixture`'s own independent `webauthn-rs` check. Both
+legs ultimately PASS. Getting there required finding three genuinely distinct, real-environment
+root causes, none of which were the SpringBoard-icon-cache-settle-time theory this session started
+with (which more retries/longer sleeps never fixed, up to 15 attempts / 6 minutes of genuinely
+idle waiting).
+
+**Registration precondition, disclosed substitution:** 43-08-PLAN.md's own `<precondition>`
+describes registering the `rp_id=vault.blonie.cloud` passkey "via Safari against
+`web/public/harness/passkey-native-rp.html`". Live investigation: `curl -s https://vault.blonie
+.cloud/harness/passkey-native-rp.html` returns HTTP 200 `content-type: text/html`, but the body is
+`pv-server`'s own SPA `index.html` fallback (`<title>Passkey Vault</title>`, no `rp-fixture-start`
+button anywhere) -- Task 1's own file, committed to this repo, has never been deployed to the LIVE
+`vault.blonie.cloud` Next.js frontend (that requires a production web-app redeploy, out of scope
+for this session's own hard rule against further Oracle infrastructure changes beyond Task 2's own
+sidecar). `crates/pv-provider/examples/ios_seed_passkey.rs`'s own module doc had ALREADY
+anticipated exactly this non-localhost case ("A non-localhost rp_id (Plan 43-08) must pass
+`--origin` explicitly") -- confirming the seeding-tool path was the plan's own intended fallback,
+not an improvisation. `seed_real_passkey`/`ios_seed_passkey` (both already parameterizable, now
+generalized in the shell function) perform a GENUINE registration ceremony, verified by the
+fixture's own independent `webauthn-rs`, identical rigor to the Safari path -- only the DRIVING
+mechanism differs. SC2's own truth (the ASSERTION side, native app -> system picker -> PV's real
+extension) is unaffected either way.
+
+**Root cause #1 -- `simctl launch --stdout=<repo-relative-path>` denies with a REAL EROFS, not a
+SpringBoard timing race.** Every failed `simctl launch` logged (confirmed via `xcrun simctl spawn
+"$udid" log show`, querying the SIMULATOR's own system log, not the host's):
+`FBSOpenApplicationServiceErrorDomain Code=1 ... denied by service delegate (SBMainWorkspace)`,
+with `NSUnderlyingError=... {Error Domain=NSPOSIXErrorDomain Code=30 "Read-only file system"}`
+buried underneath. Before finding this, three escalating retry-loop-with-sleep designs were tried
+and ALL failed 100% of the time regardless of how long or how many attempts (3 attempts/3s, 6/5s,
+15/6s -- up to ~95s within-script; then a single genuinely idle `sleep 60` x5 rounds, up to 6
+minutes) -- yet a brand-new, standalone `xcrun simctl launch` issued moments after the script gave
+up succeeded EVERY time, immediately. That pattern (fails 100% inside the script, succeeds 100%
+standalone, regardless of elapsed wait) is what pointed away from "SpringBoard needs more time" and
+toward "something about THIS invocation's own arguments". Direct reproduction confirmed it: passing
+`simctl launch --stdout=<path>` a path resolved under this repo's own working directory
+(`ios/evidence/43/...`, exactly what the function used to pass) reproduces the EROFS denial
+standalone, with zero build/wait involved; switching ONLY the target to an absolute
+`/private/tmp/...` path fixes it immediately, first try, every time. `launchd_sim` opens that file
+from ITS OWN process context (not the calling shell's), which in this bypass-permissions-sandboxed
+session cannot write under the repo's own working directory.
+
+**Root cause #2 -- `simctl launch --stdout=<path>` never captures a GUI app's own `print()` output
+AT ALL, EROFS or not.** After fixing #1, the launch succeeded and the ceremony visibly ran (the
+fixture's own `/challenge/assert` log line proved it), but the captured stdout file was STILL
+completely empty. `simctl launch --stdout=`/`--stderr=` redirection does not reliably capture a
+launched GUI app process's own stdout in this environment. Every OTHER probe/seeder in this
+codebase already avoids this exact trap by using `os.Logger` + `xcrun simctl spawn <udid> log show
+--predicate '...'` (this script's own header: "log-capture via `os_log` marker greps") --
+`NativeSignInView.swift` was switched from `print()` to `os.Logger` (subsystem
+`cloud.blonie.PasskeyVaultHarness`, category `sign-in`, every dynamic interpolation explicitly
+`privacy: .public`, matching `PasskeyTracerSeeder.swift`'s own established discipline) to match,
+and `cmd_native_app` now captures via `simctl spawn log show --predicate ... --start "$run_start"`,
+the SAME idiom `ios-autofill-e41.sh`'s own PVFILL captures already use. `--stdout`/`--stderr` are
+dropped from the `simctl launch` invocation entirely.
+
+**Root cause #3 -- the system's own "Sign In" sheet defaults to "Scan QR Code" SELECTED, and
+tapping the real provider row then "Continue" in the SAME poll iteration outruns the UI.** With
+#1 and #2 fixed, the ceremony ran and the system sheet appeared, but the harness's own status froze
+at "Requesting passkey..." forever (confirmed: no `PVHARNESS|stage=ceremony` line ever printed --
+`ASAuthorizationController`'s own delegate callback never fired). A screenshot pulled from the
+xcresult bundle (`xcrun xcresulttool export attachments`) at the moment "Continue" was tapped shows
+the checkmark STILL on "Scan QR Code", not "More from PasskeyVault..." -- the test's own poll loop
+tapped the provider row AND "Continue" back-to-back in the SAME iteration (two separate un-gated
+`if` blocks), before the row-selection had visibly settled, so "Continue" proceeded with the
+WRONG option selected, routing into a QR-code cross-device flow that can never complete on a
+simulator with no second device to scan. A SECOND, compounding bug in the same screenshot chain:
+the provider-row search used a bare `label CONTAINS[cd] "PasskeyVault"` predicate, which matched
+the HARNESS APP'S OWN onscreen title text ("PasskeyVaultHarness", visible from launch, well before
+any system sheet exists) as a false positive BEFORE the real system row ever appeared -- a
+harmless-looking no-op tap on plain text that nonetheless set `selectedProvider = true`
+prematurely. Fixed both: narrowed the search to `"More from"` (unique to the real system row's
+observed text, "More from PasskeyVault..."), and gated the Continue-tap check on `!actedThisPoll`
+plus an explicit `usleep(750_000)` after the provider-row tap, so a genuine settle window exists
+before the next control is searched for.
+
+**A bash 3.2 landmine, distinct from L-42's `declare -A` trap but the same species.** This host's
+`/usr/bin/env bash` resolves to macOS's bundled bash 3.2.57 (`bash --version`, confirmed), not a
+Homebrew-installed newer bash -- this project's own INTERACTIVE shell is zsh (L-3's own landmine),
+but `#!/usr/bin/env bash` scripts run under 3.2. Bash 3.2 treats `"${arr[@]}"` on a GENUINELY EMPTY
+array as an "unbound variable" error under `set -u`, not an empty expansion (fixed in later bash
+versions). This broke the PLAIN (non-`--corrupt-signature`) `native-app` leg specifically, since
+only that leg leaves `launch_args`/`extra_args`/`origin_args` empty (`--corrupt-signature` always
+populates `launch_args` first, masking the bug there). Fixed with the standard
+`${arr[@]+"${arr[@]}"}` bash-3.2-safe idiom everywhere this file expands a possibly-empty array
+(`native-app`'s own `launch_args`, and `start_fixture`/`seed_real_passkey`'s pre-existing
+`extra_args`/`origin_args`, both of which this plan's own generalization of those two shared
+functions newly put at risk for `cmd_tracer`'s and `cmd_sc4`'s own existing, previously-working
+call sites -- caught and fixed here before it could regress a phase in production use).
+
+**Final live result, both legs, both signals agreeing:**
+```
+--corrupt-signature: RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=false reason="An OpenSSL Error has occurred"
+                      PVHARNESS|stage=complete status=failed
+plain:                RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=true reason=verified
+                      PVHARNESS|stage=complete status=ok
+```
+`git diff --stat -- crates/pv-server` empty throughout. Evidence under `ios/evidence/43/43-08-
+native-app*.{log,harness-stdout,log.fixture-stdout}`.
