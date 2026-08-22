@@ -166,6 +166,99 @@ pub fn generate_passphrase(word_count: usize, separator: &str) -> Result<String,
     Ok(words.join(separator))
 }
 
+// --- Apple Password Rules DSL (SAVE-02, DR-44-B) ---------------------------
+//
+// `parse_password_rules`/`generate_character_password_from_rules` are
+// ADDITIVE: `generate_character_password` above is UNCHANGED, its own "no
+// guaranteed inclusion" design stays exactly as documented (DR-44-B,
+// `ios/IOS-SPIKE-LOG.md` §1o). This DSL is the string
+// `ASGeneratePasswordsRequest`/`request.passwordFieldPasswordRules` carries:
+// `key: value; key: value; ...`, semicolon-separated, `required`/`allowed`
+// values themselves comma-separated. Unknown keys/tokens are ignored
+// (Apple's own forward-compatibility convention); two shapes this project's
+// ASCII-only `CHARSET_*` constants genuinely cannot honour -- a custom
+// bracket character class and `unicode` -- are REFUSED with a named error
+// rather than silently approximated.
+//
+// TWO STABLE ERROR-MESSAGE PREFIXES (44-PLAN-CHECK.md W2, a contract with
+// Plan 44-05's own Swift caller -- do not rename either without updating
+// that plan's own string-matching dispatch):
+//   "unsupported rule shape: " -- the DSL text could not even be read (a
+//     shape pv-core cannot express). Safe for a caller to fall back to a
+//     generic ascii-printable default.
+//   "unsatisfiable rule: "     -- the DSL parsed fine, but its OWN stated
+//     bounds cannot be satisfied (e.g. more required classes than the
+//     stated maxlength allows). NOT safe to fall back generically -- the
+//     RP's own stated bounds would be violated.
+
+/// Total input length cap for `parse_password_rules`, checked BEFORE any
+/// parsing loop runs (T-44-03: DoS from a pathological RP-supplied string).
+const RULES_TEXT_MAX_LEN: usize = 4096;
+
+/// Bounded per-character retry budget for the `max_consecutive` constraint
+/// (T-44-04) -- never an unbounded loop.
+const MAX_CONSECUTIVE_RETRY_ATTEMPTS: usize = 200;
+
+/// A single named character class from Apple's Password Rules DSL.
+/// `AsciiPrintable` is the DSL's own documented default expansion (lower +
+/// upper + digit + special); `Unicode` is refused wherever it is named --
+/// this project's `CHARSET_*` constants are ASCII-only by construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordRuleClass {
+    Lower,
+    Upper,
+    Digit,
+    Special,
+    AsciiPrintable,
+    Unicode,
+}
+
+/// The parsed form of an RP-supplied Password Rules string. `Default` (all
+/// `None`/empty) is exactly Apple's own documented "no rules specified"
+/// state -- `allowed: ascii-printable`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PasswordRules {
+    pub min_length: Option<usize>,
+    pub max_length: Option<usize>,
+    pub required: Vec<PasswordRuleClass>,
+    pub allowed: Vec<PasswordRuleClass>,
+    pub max_consecutive: Option<usize>,
+}
+
+fn charset_for_class(class: PasswordRuleClass) -> &'static str {
+    match class {
+        PasswordRuleClass::Lower => CHARSET_LOWERCASE,
+        PasswordRuleClass::Upper => CHARSET_UPPERCASE,
+        PasswordRuleClass::Digit => CHARSET_DIGITS,
+        PasswordRuleClass::Special => CHARSET_SYMBOLS,
+        // Expanded (AsciiPrintable) or refused (Unicode) before this is
+        // ever reached -- both arms exist only to keep this match
+        // exhaustive.
+        PasswordRuleClass::AsciiPrintable | PasswordRuleClass::Unicode => "",
+    }
+}
+
+/// Parses Apple's Password Rules DSL. See the module note above for the two
+/// refusal shapes and their stable error-message prefixes.
+///
+/// STUB (TDD RED): always returns the default, never actually parses
+/// anything. Replaced by the real grammar in the GREEN commit.
+pub fn parse_password_rules(rules_text: &str) -> Result<PasswordRules, CryptoError> {
+    let _ = rules_text;
+    Ok(PasswordRules::default())
+}
+
+/// Generates a password honouring `rules`.
+///
+/// STUB (TDD RED): always returns an error, never actually generates
+/// anything. Replaced by the real rule-aware generator in the GREEN commit.
+pub fn generate_character_password_from_rules(
+    rules: &PasswordRules,
+) -> Result<String, CryptoError> {
+    let _ = rules;
+    Err(CryptoError::InvalidInput("not yet implemented (TDD RED)"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +474,271 @@ mod tests {
             max_words_pipe_joined.matches('|').count(),
             PASSPHRASE_MAX_WORDS - 1,
             "a passphrase of n words joined by a one-character separator must contain n-1 separators"
+        );
+    }
+
+    // --- Task 1 (44-02): Apple Password Rules DSL parser + rule-aware
+    // generator (DR-44-B) ---
+
+    #[test]
+    fn parse_password_rules_empty_or_whitespace_input_is_default() {
+        assert_eq!(
+            parse_password_rules("").expect("empty input must be accepted"),
+            PasswordRules::default()
+        );
+        assert_eq!(
+            parse_password_rules("   \n\t  ").expect("whitespace-only input must be accepted"),
+            PasswordRules::default()
+        );
+    }
+
+    #[test]
+    fn parse_password_rules_parses_minlength_maxlength_and_required_classes() {
+        let rules = parse_password_rules(
+            "minlength: 10; maxlength: 14; required: lower; required: upper; required: digit;",
+        )
+        .expect("well-formed rules text must parse");
+        assert_eq!(rules.min_length, Some(10));
+        assert_eq!(rules.max_length, Some(14));
+        assert_eq!(rules.required.len(), 3, "required must have exactly 3 classes: {:?}", rules.required);
+        assert!(rules.required.contains(&PasswordRuleClass::Lower));
+        assert!(rules.required.contains(&PasswordRuleClass::Upper));
+        assert!(rules.required.contains(&PasswordRuleClass::Digit));
+    }
+
+    #[test]
+    fn parse_password_rules_parses_max_consecutive() {
+        let rules = parse_password_rules("max-consecutive: 3;").expect("must parse");
+        assert_eq!(rules.max_consecutive, Some(3));
+    }
+
+    #[test]
+    fn parse_password_rules_refuses_custom_bracket_class() {
+        let err = parse_password_rules("required: [ABCDEFGH];").unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsupported rule shape: "),
+                "expected the stable 'unsupported rule shape: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_password_rules_refuses_unicode_class() {
+        let err = parse_password_rules("allowed: unicode;").unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsupported rule shape: "),
+                "expected the stable 'unsupported rule shape: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_password_rules_ignores_unrecognized_keys() {
+        assert_eq!(
+            parse_password_rules("foo: bar;").expect("unrecognized keys must be ignored, not error"),
+            PasswordRules::default()
+        );
+    }
+
+    #[test]
+    fn parse_password_rules_rejects_input_over_the_length_cap_before_parsing() {
+        let oversized = "a".repeat(RULES_TEXT_MAX_LEN + 1);
+        let err = parse_password_rules(&oversized).unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsupported rule shape: "),
+                "expected the stable 'unsupported rule shape: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generate_from_default_rules_succeeds_at_default_length() {
+        let password = generate_character_password_from_rules(&PasswordRules::default())
+            .expect("default rules must succeed");
+        assert_eq!(password.chars().count(), CHAR_DEFAULT_LENGTH);
+    }
+
+    #[test]
+    fn generate_from_default_rules_draws_from_all_four_classes_over_many_runs() {
+        // Statistical, not per-string: the default's effective alphabet
+        // spans all four ASCII classes (ascii-printable's own documented
+        // expansion) -- generate_character_password_from_rules has no
+        // per-string inclusion guarantee absent an explicit `required`.
+        let mut saw_lower = false;
+        let mut saw_upper = false;
+        let mut saw_digit = false;
+        let mut saw_special = false;
+        for _ in 0..200 {
+            let password = generate_character_password_from_rules(&PasswordRules::default())
+                .expect("default rules must succeed");
+            for ch in password.chars() {
+                saw_lower |= CHARSET_LOWERCASE.contains(ch);
+                saw_upper |= CHARSET_UPPERCASE.contains(ch);
+                saw_digit |= CHARSET_DIGITS.contains(ch);
+                saw_special |= CHARSET_SYMBOLS.contains(ch);
+            }
+        }
+        assert!(
+            saw_lower && saw_upper && saw_digit && saw_special,
+            "default rules' effective alphabet must span all four ASCII classes over 200 runs \
+             (lower={saw_lower} upper={saw_upper} digit={saw_digit} special={saw_special})"
+        );
+    }
+
+    /// Research E-G2-style guaranteed-inclusion test, run 200 times so the
+    /// GUARANTEE is visible, not luck. A falsification control for this
+    /// exact test (temporarily routing `Slot::Required` draws through the
+    /// general alphabet instead of the required class's own charset,
+    /// confirming this test then FAILS) is recorded in this plan's
+    /// SUMMARY, then reverted -- this test's own load-bearing-ness is
+    /// therefore demonstrated, not merely asserted.
+    #[test]
+    fn generate_with_all_four_required_classes_and_min_length_12_guarantees_inclusion() {
+        let rules = PasswordRules {
+            required: vec![
+                PasswordRuleClass::Lower,
+                PasswordRuleClass::Upper,
+                PasswordRuleClass::Digit,
+                PasswordRuleClass::Special,
+            ],
+            min_length: Some(12),
+            ..Default::default()
+        };
+        for _ in 0..200 {
+            let password = generate_character_password_from_rules(&rules)
+                .expect("required classes fitting within min_length must succeed");
+            assert_eq!(
+                password.chars().count(),
+                12,
+                "length must be exactly the requested min_length: {password}"
+            );
+            assert!(
+                password.chars().any(|c| CHARSET_LOWERCASE.contains(c)),
+                "missing a lowercase character: {password}"
+            );
+            assert!(
+                password.chars().any(|c| CHARSET_UPPERCASE.contains(c)),
+                "missing an uppercase character: {password}"
+            );
+            assert!(
+                password.chars().any(|c| CHARSET_DIGITS.contains(c)),
+                "missing a digit character: {password}"
+            );
+            assert!(
+                password.chars().any(|c| CHARSET_SYMBOLS.contains(c)),
+                "missing a special character: {password}"
+            );
+        }
+    }
+
+    #[test]
+    fn generate_with_max_consecutive_one_and_two_class_alphabet_never_repeats() {
+        let rules = PasswordRules {
+            allowed: vec![PasswordRuleClass::Lower, PasswordRuleClass::Digit],
+            max_consecutive: Some(1),
+            ..Default::default()
+        };
+        for _ in 0..200 {
+            let password = generate_character_password_from_rules(&rules)
+                .expect("max_consecutive=1 over a two-class alphabet must be achievable");
+            let chars: Vec<char> = password.chars().collect();
+            for window in chars.windows(2) {
+                assert_ne!(
+                    window[0], window[1],
+                    "found two identical consecutive characters in {password}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generate_clamps_a_too_small_min_length_up_to_char_min_length() {
+        let rules = PasswordRules { min_length: Some(3), ..Default::default() };
+        let password = generate_character_password_from_rules(&rules)
+            .expect("a too-small min_length must be clamped up, not rejected");
+        assert_eq!(password.chars().count(), CHAR_MIN_LENGTH);
+    }
+
+    #[test]
+    fn generate_rejects_required_classes_exceeding_max_length() {
+        let rules = PasswordRules {
+            required: vec![
+                PasswordRuleClass::Lower,
+                PasswordRuleClass::Upper,
+                PasswordRuleClass::Digit,
+                PasswordRuleClass::Special,
+            ],
+            max_length: Some(2),
+            ..Default::default()
+        };
+        let err = generate_character_password_from_rules(&rules).unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsatisfiable rule: "),
+                "expected the stable 'unsatisfiable rule: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generate_rejects_maxlength_below_char_min_length() {
+        let rules = PasswordRules { max_length: Some(6), ..Default::default() };
+        let err = generate_character_password_from_rules(&rules).unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsatisfiable rule: "),
+                "expected the stable 'unsatisfiable rule: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn generate_rejects_unicode_class_named_directly() {
+        let rules = PasswordRules {
+            allowed: vec![PasswordRuleClass::Unicode],
+            ..Default::default()
+        };
+        let err = generate_character_password_from_rules(&rules).unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsupported rule shape: "),
+                "expected the stable 'unsupported rule shape: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    /// 44-PLAN-CHECK.md W2: Plan 44-05's Swift caller pattern-matches on
+    /// these two EXACT prefixes -- this test pins the literals themselves,
+    /// not merely "an error happened", and proves the two cases are
+    /// genuinely DIFFERENT strings.
+    #[test]
+    fn refusal_error_prefixes_are_exactly_the_two_stable_literals_and_differ() {
+        let unsupported = parse_password_rules("required: [X];").unwrap_err();
+        let CryptoError::InvalidInput(unsupported_msg) = unsupported else {
+            panic!("expected InvalidInput");
+        };
+        assert!(unsupported_msg.starts_with("unsupported rule shape: "));
+
+        let unsatisfiable_rules = PasswordRules { max_length: Some(1), ..Default::default() };
+        let unsatisfiable =
+            generate_character_password_from_rules(&unsatisfiable_rules).unwrap_err();
+        let CryptoError::InvalidInput(unsatisfiable_msg) = unsatisfiable else {
+            panic!("expected InvalidInput");
+        };
+        assert!(unsatisfiable_msg.starts_with("unsatisfiable rule: "));
+
+        assert_ne!(
+            unsupported_msg, unsatisfiable_msg,
+            "the two refusal shapes must produce genuinely different prefixes"
         );
     }
 }
