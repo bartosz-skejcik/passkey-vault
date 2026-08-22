@@ -240,23 +240,257 @@ fn charset_for_class(class: PasswordRuleClass) -> &'static str {
 
 /// Parses Apple's Password Rules DSL. See the module note above for the two
 /// refusal shapes and their stable error-message prefixes.
-///
-/// STUB (TDD RED): always returns the default, never actually parses
-/// anything. Replaced by the real grammar in the GREEN commit.
 pub fn parse_password_rules(rules_text: &str) -> Result<PasswordRules, CryptoError> {
-    let _ = rules_text;
-    Ok(PasswordRules::default())
+    if rules_text.len() > RULES_TEXT_MAX_LEN {
+        return Err(CryptoError::InvalidInput(
+            "unsupported rule shape: rules text exceeds the maximum accepted length",
+        ));
+    }
+
+    let trimmed = rules_text.trim();
+    if trimmed.is_empty() {
+        return Ok(PasswordRules::default());
+    }
+
+    let mut rules = PasswordRules::default();
+    for clause in trimmed.split(';') {
+        let clause = clause.trim();
+        if clause.is_empty() {
+            continue;
+        }
+        let mut parts = clause.splitn(2, ':');
+        let key = parts.next().unwrap_or("").trim().to_ascii_lowercase();
+        let value = parts.next().unwrap_or("").trim();
+
+        match key.as_str() {
+            "minlength" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    rules.min_length = Some(n);
+                }
+            }
+            "maxlength" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    rules.max_length = Some(n);
+                }
+            }
+            "max-consecutive" => {
+                if let Ok(n) = value.parse::<usize>() {
+                    rules.max_consecutive = Some(n);
+                }
+            }
+            "required" | "allowed" => {
+                for token in value.split(',') {
+                    let token = token.trim();
+                    if token.is_empty() {
+                        continue;
+                    }
+                    if token.starts_with('[') {
+                        return Err(CryptoError::InvalidInput(
+                            "unsupported rule shape: custom character class",
+                        ));
+                    }
+                    let class = match token.to_ascii_lowercase().as_str() {
+                        "lower" => PasswordRuleClass::Lower,
+                        "upper" => PasswordRuleClass::Upper,
+                        "digit" => PasswordRuleClass::Digit,
+                        "special" => PasswordRuleClass::Special,
+                        "ascii-printable" => PasswordRuleClass::AsciiPrintable,
+                        "unicode" => {
+                            return Err(CryptoError::InvalidInput(
+                                "unsupported rule shape: unicode class",
+                            ));
+                        }
+                        // Unrecognized token -- ignored (Apple's own
+                        // forward-compatibility convention: unknown is
+                        // never an error).
+                        _ => continue,
+                    };
+                    let target =
+                        if key == "required" { &mut rules.required } else { &mut rules.allowed };
+                    if !target.contains(&class) {
+                        target.push(class);
+                    }
+                }
+            }
+            // Unrecognized key -- ignored, never an error.
+            _ => {}
+        }
+    }
+
+    Ok(rules)
 }
 
-/// Generates a password honouring `rules`.
-///
-/// STUB (TDD RED): always returns an error, never actually generates
-/// anything. Replaced by the real rule-aware generator in the GREEN commit.
+/// Expands `AsciiPrintable` into its four constituent classes and dedupes.
+/// `Unicode` must already have been refused by the caller before this runs.
+fn expand_classes(classes: &[PasswordRuleClass]) -> Vec<PasswordRuleClass> {
+    let mut expanded = Vec::new();
+    for &class in classes {
+        if class == PasswordRuleClass::AsciiPrintable {
+            for c in [
+                PasswordRuleClass::Lower,
+                PasswordRuleClass::Upper,
+                PasswordRuleClass::Digit,
+                PasswordRuleClass::Special,
+            ] {
+                if !expanded.contains(&c) {
+                    expanded.push(c);
+                }
+            }
+        } else if !expanded.contains(&class) {
+            expanded.push(class);
+        }
+    }
+    expanded
+}
+
+/// If the trailing run at the end of `chars` has already reached
+/// `max_run`, returns the run's character (the ONE value the next
+/// character must not be, or the run would exceed `max_run`). `None` means
+/// no restriction applies yet.
+fn trailing_run_char_at_limit(chars: &[char], max_run: usize) -> Option<char> {
+    let last = *chars.last()?;
+    let run = chars.iter().rev().take_while(|&&c| c == last).count();
+    if run >= max_run {
+        Some(last)
+    } else {
+        None
+    }
+}
+
+/// Draws one CSPRNG-uniform character from `charset`, respecting
+/// `max_run` against the characters already placed in `chars` -- retrying
+/// (bounded, T-44-04) whenever the draw would extend a run past the limit.
+/// `max_run = None` is a single unrestricted uniform draw.
+fn draw_char_respecting_max_run(
+    chars: &[char],
+    charset: &[char],
+    max_run: Option<usize>,
+) -> Result<char, CryptoError> {
+    let n = charset.len() as u32;
+    let Some(max_run) = max_run else {
+        let idx = uniform_random_index(n);
+        return Ok(charset[idx as usize]);
+    };
+
+    let forbidden = trailing_run_char_at_limit(chars, max_run);
+    for _ in 0..MAX_CONSECUTIVE_RETRY_ATTEMPTS {
+        let idx = uniform_random_index(n);
+        let candidate = charset[idx as usize];
+        if forbidden != Some(candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(CryptoError::InvalidInput(
+        "unsatisfiable rule: max-consecutive not achievable within retry budget",
+    ))
+}
+
+/// One position in the password being constructed: either a guaranteed
+/// slot for a specific required class, or a general slot drawn from the
+/// full effective alphabet.
+#[derive(Clone, Copy)]
+enum Slot {
+    Required(PasswordRuleClass),
+    General,
+}
+
+/// Generates a password honouring `rules`: guarantees one character per
+/// `required` class (drawn from that class's OWN charset), fills the
+/// remainder uniformly over the effective alphabet, places every character
+/// at a CSPRNG-shuffled POSITION (required characters are never
+/// front-loaded), and -- if `max_consecutive` is set -- enforces the run
+/// limit during construction with a bounded per-character retry rather
+/// than an unbounded loop. Reuses `uniform_random_index`, the SAME CSPRNG
+/// primitive `generate_character_password` already uses -- no second RNG
+/// mechanism.
 pub fn generate_character_password_from_rules(
     rules: &PasswordRules,
 ) -> Result<String, CryptoError> {
-    let _ = rules;
-    Err(CryptoError::InvalidInput("not yet implemented (TDD RED)"))
+    // Effective allowed-class union: prefer `allowed`, else `required`,
+    // else the DSL's own documented default (all four ASCII classes).
+    let effective_classes: &[PasswordRuleClass] = if !rules.allowed.is_empty() {
+        &rules.allowed
+    } else if !rules.required.is_empty() {
+        &rules.required
+    } else {
+        &[
+            PasswordRuleClass::Lower,
+            PasswordRuleClass::Upper,
+            PasswordRuleClass::Digit,
+            PasswordRuleClass::Special,
+        ]
+    };
+
+    if effective_classes.contains(&PasswordRuleClass::Unicode)
+        || rules.required.contains(&PasswordRuleClass::Unicode)
+    {
+        return Err(CryptoError::InvalidInput(
+            "unsupported rule shape: unicode class",
+        ));
+    }
+
+    let expanded_classes = expand_classes(effective_classes);
+    let alphabet: Vec<char> =
+        expanded_classes.iter().flat_map(|&c| charset_for_class(c).chars()).collect();
+    if alphabet.is_empty() {
+        return Err(CryptoError::InvalidInput(
+            "unsatisfiable rule: no character classes available",
+        ));
+    }
+
+    let required_len = rules.required.len();
+    let min_bound = CHAR_MIN_LENGTH.max(required_len);
+    let effective_max = rules.max_length.unwrap_or(CHAR_MAX_LENGTH).min(CHAR_MAX_LENGTH);
+
+    if required_len > effective_max {
+        return Err(CryptoError::InvalidInput(
+            "unsatisfiable rule: required classes exceed available length",
+        ));
+    }
+
+    let requested_min = rules.min_length.unwrap_or(min_bound).max(min_bound);
+    if requested_min > effective_max {
+        return Err(CryptoError::InvalidInput(
+            "unsatisfiable rule: minlength exceeds maxlength",
+        ));
+    }
+
+    let target_length = match rules.min_length {
+        Some(explicit_min) => explicit_min.max(min_bound),
+        None => CHAR_DEFAULT_LENGTH.max(min_bound),
+    };
+    let length = target_length.min(effective_max);
+
+    // Slot assignment: one Required(class) slot per required class, the
+    // rest General -- then CSPRNG-shuffle the ASSIGNMENT (Fisher-Yates,
+    // uniform_random_index-driven swaps -- never `.shuffle()`/any
+    // non-CSPRNG source), so required characters are not always
+    // front-loaded. The actual CHARACTERS are drawn afterwards, in final
+    // left-to-right order, so max_consecutive can be enforced against
+    // characters that are already genuinely placed.
+    let mut slots: Vec<Slot> = Vec::with_capacity(length);
+    for &class in &rules.required {
+        slots.push(Slot::Required(class));
+    }
+    while slots.len() < length {
+        slots.push(Slot::General);
+    }
+    for i in (1..slots.len()).rev() {
+        let j = uniform_random_index((i + 1) as u32) as usize;
+        slots.swap(i, j);
+    }
+
+    let mut chars: Vec<char> = Vec::with_capacity(length);
+    for slot in slots {
+        let slot_charset: Vec<char> = match slot {
+            Slot::Required(class) => charset_for_class(class).chars().collect(),
+            Slot::General => alphabet.clone(),
+        };
+        let ch = draw_char_respecting_max_run(&chars, &slot_charset, rules.max_consecutive)?;
+        chars.push(ch);
+    }
+
+    Ok(chars.into_iter().collect())
 }
 
 #[cfg(test)]
