@@ -164,6 +164,21 @@ STRIPPED_FILE="$(mktemp)"
 trap 'rm -f "$WINDOW_FILE" "$STRIPPED_FILE"' EXIT
 strip_comments_and_strings "$WINDOW_FILE" > "$STRIPPED_FILE"
 
+# --- Freshness fingerprint (F2, 44-VERIFICATION.md re-verification) ---
+# The composer's fast --verify-falsifiable path cannot mutate this real Swift file, so it cites a
+# recorded transcript instead. A transcript is only evidence about the tree it was taken from: the
+# stale 44-fix-wr08-falsification.log that WAS gap 1 contained both an OVERALL: FAIL and an
+# OVERALL: PASS line and would have satisfied a string-presence check while proving nothing about
+# the current tree. `--print-fingerprint` emits the hashes that bind a transcript to a tree state:
+# this gate's own logic, and the exact guarded-function extent it measures. The composer recomputes
+# them and refuses a transcript whose fingerprint no longer matches.
+if [ "${1:-}" = "--print-fingerprint" ]; then
+  printf 'GATE_SHA256=%s\n' "$(shasum -a 256 "$0" | cut -d' ' -f1)"
+  printf 'GUARDED_EXTENT_SHA256=%s\n' "$(shasum -a 256 "$STRIPPED_FILE" | cut -d' ' -f1)"
+  printf 'GUARDED_EXTENT_LINES=%s-%s\n' "$start_line" "$end_line"
+  exit 0
+fi
+
 FAIL=0
 say() { printf '%s\n' "$*"; }
 

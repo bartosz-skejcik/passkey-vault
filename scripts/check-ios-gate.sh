@@ -1111,7 +1111,29 @@ falsify_preflight_ordering() {
     echo "ERROR: ios/evidence/44/44-fix-wr08-falsification.log does not contain both an OVERALL: FAIL and an OVERALL: PASS line -- it does not actually demonstrate the gate can fail AND pass" >&2
     exit 1
   fi
-  echo "==> PASS: the cited transcript file exists and contains both OVERALL: FAIL and OVERALL: PASS lines (a real gate that genuinely exercised both branches, not merely asserted)"
+  # F2 (44-VERIFICATION.md re-verification): string presence alone is NOT evidence about the
+  # CURRENT tree. The stale transcript that WAS gap 1 contained both strings and would have
+  # satisfied the check above while proving nothing. Bind the transcript to the tree it was taken
+  # from: this gate's own logic, and the exact guarded-function extent it measures.
+  local recorded_gate recorded_extent current_gate current_extent fingerprint
+  recorded_gate="$(sed -n 's/^GATE_SHA256=//p' ios/evidence/44/44-fix-wr08-falsification.log | head -1)"
+  recorded_extent="$(sed -n 's/^GUARDED_EXTENT_SHA256=//p' ios/evidence/44/44-fix-wr08-falsification.log | head -1)"
+  if [ -z "$recorded_gate" ] || [ -z "$recorded_extent" ]; then
+    echo "ERROR: ios/evidence/44/44-fix-wr08-falsification.log records no GATE_SHA256/GUARDED_EXTENT_SHA256 fingerprint -- it cannot be shown to describe the current tree; re-record it with '$PREFLIGHT_ORDERING_SCRIPT_DEFAULT --print-fingerprint'" >&2
+    exit 1
+  fi
+  fingerprint="$(bash "$PREFLIGHT_ORDERING_SCRIPT_DEFAULT" --print-fingerprint)"
+  current_gate="$(printf '%s\n' "$fingerprint" | sed -n 's/^GATE_SHA256=//p')"
+  current_extent="$(printf '%s\n' "$fingerprint" | sed -n 's/^GUARDED_EXTENT_SHA256=//p')"
+  if [ "$recorded_gate" != "$current_gate" ]; then
+    echo "ERROR: stale falsification transcript -- it was recorded against gate logic $recorded_gate but $PREFLIGHT_ORDERING_SCRIPT_DEFAULT now hashes $current_gate. The gate's own logic changed since it was last proven falsifiable; re-run the three mutations and re-record the transcript." >&2
+    exit 1
+  fi
+  if [ "$recorded_extent" != "$current_extent" ]; then
+    echo "ERROR: stale falsification transcript -- it was recorded against guarded-function extent $recorded_extent but prepareInterface(for: ASSavePasswordRequest) now hashes $current_extent. The guarded code changed since the guard was last proven to catch mutations of it; re-run the three mutations and re-record the transcript." >&2
+    exit 1
+  fi
+  echo "==> PASS: the cited transcript contains both OVERALL: FAIL and OVERALL: PASS lines AND its recorded fingerprint (gate logic + guarded-function extent) matches the current tree, so it is evidence about THIS tree rather than some earlier one. Note the standing boundary: this gate is structural -- it proves the lock check runs, runs first, and its result reaches the decision; it does NOT prove the decision is acted on (44-VERIFICATION.md M3/M4/M5)."
 }
 
 # gate_generator_ffi -- SC3's own CSPRNG-provenance gate (44-VERIFICATION.md truth #3): Swift never
