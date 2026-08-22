@@ -1,18 +1,26 @@
 // SavePasswordFormHarnessUITests.swift -- Phase 44 (zapisywanie-i-generowanie-hasel), Plan 44-03,
-// Task 1. Drives `SavePasswordFormView.swift`'s two real `UITextField`s (username / new-password,
-// both `UIViewRepresentable`-wrapped, carrying real `.textContentType`/`UITextInputPasswordRules`)
-// and taps "Submit" (which unfocuses both fields) -- then polls for whatever system chrome, if
-// any, the OS draws in response, tapping through a best-effort "Save Password"/"Continue"/"Not
-// Now" chain when found.
+// Task 1 (+ Task 1b / checkpoint resolution, run 2). Drives `SavePasswordFormView.swift`'s two
+// real `UITextField`s (username / new-password, both `UIViewRepresentable`-wrapped, carrying real
+// `.textContentType`/`UITextInputPasswordRules`) and taps "Submit" (which unfocuses both fields)
+// -- then polls for whatever system chrome, if any, the OS draws in response, tapping through a
+// best-effort "Save Password"/"Continue"/"Not Now" chain when found (`testDriveSavePasswordForm`).
+//
+// `testDriveGeneratePasswordAffordance` (added for the checkpoint resolution's item D) drives a
+// SEPARATE, narrower interaction: tap the new-password field WITHOUT typing, then poll for the
+// system's own "Suggest Strong Password" QuickType affordance -- the ONLY path, per the SDK
+// header, that can reach the interactive `prepareInterface(for: ASGeneratePasswordsRequest)`
+// override (the silent `performWithoutUserInteraction(generatePasswordsRequest:)` override cannot
+// trigger it).
 //
 // Structure duplicated from `NativeAppRegisterUITests.swift`'s own established shape (this
 // project's own discipline: no shared framework between separate UI test files) --
 // `.activate()` never `.launch()`, screenshot+hierarchy diagnostics at every meaningful step. This
 // test's own PASS/FAIL verdict is NOT the load-bearing evidence for this plan -- the extension
-// process's own `PVDIAG|method=prepareInterface(for:AS...)` log lines
-// (`scripts/ios-autofill-e44.sh probe`'s own log-capture step) are. This test's job is only to
-// perform the real, human-shaped interaction that MIGHT cause the system to invoke those
-// overrides, and to leave behind visual evidence of whatever the system actually showed.
+// process's own `PVDIAG|method=prepareInterface(for:AS...)` /
+// `PVDIAG|method=performWithoutUserInteraction...` log lines (`scripts/ios-autofill-e44.sh
+// probe`'s own log-capture step) are. This test's job is only to perform the real, human-shaped
+// interaction that MIGHT cause the system to invoke those overrides, and to leave behind visual
+// evidence of whatever the system actually showed.
 
 import Foundation
 import XCTest
@@ -164,6 +172,78 @@ final class SavePasswordFormHarnessUITests: XCTestCase {
         hierarchy.name = "\(label)-hierarchy"
         hierarchy.lifetime = .keepAlways
         add(hierarchy)
+    }
+
+    /// Plan 44-03 Task 1b / checkpoint resolution item D: the interactive
+    /// `prepareInterface(for: ASGeneratePasswordsRequest)` path is, per the SDK header, reachable
+    /// ONLY via the system's own user-initiated "Suggest Strong Password" affordance -- never
+    /// manufacturable by typing (`performWithoutUserInteraction(generatePasswordsRequest:)` above
+    /// cannot trigger it; the header states this explicitly). This test's own job, mirroring
+    /// `AutoFillFillUITests.swift`'s established "Passwords" keyboard-accessory-driving precedent
+    /// (phases 41/43): tap into the new-password field WITHOUT typing anything first (typing
+    /// replaces the QuickType strong-password suggestion with the user's own draft), then poll for
+    /// whatever system chrome offers a strong-password suggestion, across the harness's own window
+    /// AND the springboard/keyboard-owning process, and tap it if found. A negative result here is
+    /// recorded plainly as NOT YET PROVEN in this run -- never silently treated as equivalent proof
+    /// to a fired `PVDIAG|` line (this test's own PASS/FAIL is not the load-bearing evidence;
+    /// `scripts/ios-autofill-e44.sh probe`'s own log grep is, exactly as the header comment above
+    /// states for the save/generate-silent paths).
+    @MainActor
+    func testDriveGeneratePasswordAffordance() throws {
+        let harness = XCUIApplication(bundleIdentifier: Self.harnessBundleId)
+        harness.terminate()
+        harness.activate()
+
+        let passwordField = harness.secureTextFields["savePasswordForm.password"]
+        guard passwordField.waitForExistence(timeout: 10) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.password never appeared (generate-affordance run).")
+            return
+        }
+        attachDiagnostics(app: harness, label: "generate-before-tap")
+
+        passwordField.tap()
+        attachDiagnostics(app: harness, label: "generate-after-tap-no-typing")
+
+        // Best-effort poll across the harness's own window AND springboard (the keyboard/QuickType
+        // bar's owning process for system suggestions) -- unknown wording ahead of time, exactly
+        // Open Question 1/2's own uncertainty for this specific path. Restricted to `.button`
+        // (never `.any`), same false-positive discipline `firstHittableButton` above already
+        // established against this harness's own instructional StaticText.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let candidateApps = [harness, springboard]
+        let candidateLabels = ["Strong Password", "Suggest Strong Password", "Automatic Strong Password", "Passwords"]
+        let deadline = Date().addingTimeInterval(10)
+        var foundLabel: String?
+        var foundElement: XCUIElement?
+        while Date() < deadline && foundElement == nil {
+            for app in candidateApps {
+                for label in candidateLabels {
+                    if let element = Self.firstHittableButton(in: app, labelContains: label) {
+                        foundElement = element
+                        foundLabel = label
+                        break
+                    }
+                }
+                if foundElement != nil { break }
+            }
+            if foundElement == nil {
+                usleep(500_000)
+            }
+        }
+
+        if let element = foundElement, let label = foundLabel {
+            attachDiagnostics(app: harness, label: "generate-affordance-found-\(label.replacingOccurrences(of: " ", with: "-"))")
+            element.tap()
+            attachDiagnostics(app: harness, label: "generate-affordance-after-tap")
+            // Give the system time to route (or not) into the extension before this test tears
+            // down -- `scripts/ios-autofill-e44.sh probe`'s own log grep, not this assertion, is
+            // the real verdict.
+            usleep(1_500_000)
+        } else {
+            // Honest negative: no strong-password affordance was found and driveable from this
+            // harness in this run. Recorded plainly, never treated as a substitute proof.
+            attachDiagnostics(app: harness, label: "generate-affordance-NOT-FOUND")
+        }
     }
 
     @MainActor

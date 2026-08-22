@@ -32,7 +32,7 @@ BUNDLE_ID="cloud.blonie.PasskeyVault"
 HARNESS_BUNDLE_ID="cloud.blonie.PasskeyVaultHarness"
 
 usage() {
-  echo "Usage: $0 probe [--assert-only <path>]" >&2
+  echo "Usage: $0 probe [--run2] [--assert-only <path> [--run2]]" >&2
   exit 1
 }
 
@@ -106,9 +106,19 @@ ensure_provider_enabled() {
   xcrun simctl spawn "$udid" pluginkit -e use -i "${BUNDLE_ID}.AutoFill" >/dev/null 2>&1 || true
 }
 
-# `probe`: this plan's own live experiment.
+# `probe`: this plan's own live experiment. `--run2` (Task 1b / checkpoint resolution): drives
+# BOTH `SavePasswordFormHarnessUITests` methods (the original save/generate-silent-path drive PLUS
+# the new `testDriveGeneratePasswordAffordance`), writes to a NEW evidence file
+# (`44-03-probe-run2.log`), and greps for the two additional `performWithoutUserInteraction...`
+# markers on top of the original two `prepareInterface(for:AS...)` markers -- run 1's own evidence
+# file (`44-03-probe.log`) is never touched.
 cmd_probe() {
   mkdir -p "$EVIDENCE_DIR"
+
+  local run2=0
+  if [ "${1:-}" = "--run2" ]; then
+    run2=1
+  fi
 
   local udid
   udid=$(resolve_pinned_udid)
@@ -143,7 +153,19 @@ cmd_probe() {
   local run_start
   run_start=$(date '+%Y-%m-%d %H:%M:%S')
 
-  echo "==> probe: driving the harness form (SavePasswordFormHarnessUITests)"
+  local only_testing_args=(-only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests/testDriveSavePasswordForm)
+  local evidence_log="$EVIDENCE_DIR/44-03-probe.log"
+  if [ "$run2" = "1" ]; then
+    # Task 1b / checkpoint resolution: drive BOTH methods (original save/generate-silent-path
+    # drive + the new generate-with-UI affordance drive), write to a NEW evidence file, never
+    # touch run 1's.
+    only_testing_args=(-only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests)
+    evidence_log="$EVIDENCE_DIR/44-03-probe-run2.log"
+    echo "==> probe --run2: driving the harness form (BOTH SavePasswordFormHarnessUITests methods)"
+  else
+    echo "==> probe: driving the harness form (SavePasswordFormHarnessUITests)"
+  fi
+
   local ui_test_log
   ui_test_log=$(mktemp)
   local ui_result=0
@@ -151,13 +173,12 @@ cmd_probe() {
     -scheme PasskeyVault -configuration Debug \
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$DD_PATH" \
-    -only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests/testDriveSavePasswordForm \
+    "${only_testing_args[@]}" \
     -skip-testing:PasskeyVaultTests \
     -parallel-testing-enabled NO \
     -maximum-concurrent-test-simulator-destinations 1 \
     test > "$ui_test_log" 2>&1 || ui_result=$?
 
-  local evidence_log="$EVIDENCE_DIR/44-03-probe.log"
   : > "$evidence_log"
   echo "## XCUITest drive (exit $ui_result) -- see $ui_test_log for the full transcript" >> "$evidence_log"
   tail -60 "$ui_test_log" >> "$evidence_log" || true
@@ -173,7 +194,7 @@ cmd_probe() {
     --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
     2>&1 | grep 'PVDIAG|' >> "$evidence_log" || true
 
-  if assert_probe "$evidence_log"; then
+  if assert_probe "$evidence_log" "$run2"; then
     echo "PASS: probe -- see $evidence_log for the decisive fired/did-not-fire verdict"
     exit 0
   else
@@ -185,9 +206,11 @@ cmd_probe() {
 # Prints a decisive fired/did-not-fire verdict for EACH override independently. Exits 0 either
 # way (a decisive negative is a valid, informative result) -- only fails if the evidence file
 # itself is missing/unreadable/empty (a genuine harness malfunction, distinct from "the system
-# never called our override").
+# never called our override"). Second arg (optional, "1"): also check the two Task 1b /
+# checkpoint-resolution silent-path markers.
 assert_probe() {
   local target="$1"
+  local run2="${2:-0}"
   if [ ! -f "$target" ] || [ ! -r "$target" ] || [ ! -s "$target" ]; then
     echo "ERROR: probe evidence file missing/empty: $target" >&2
     return 1
@@ -201,6 +224,18 @@ assert_probe() {
     echo "VERDICT: ASGeneratePasswordsRequest override FIRED -- $(grep 'PVDIAG|method=prepareInterface(for:ASGeneratePasswordsRequest)' "$target" | head -1)"
   else
     echo "VERDICT: ASGeneratePasswordsRequest override DID NOT FIRE in this run"
+  fi
+  if [ "$run2" = "1" ]; then
+    if grep -q 'PVDIAG|method=performWithoutUserInteractionIfPossible(savePasswordRequest:)' "$target"; then
+      echo "VERDICT: performWithoutUserInteractionIfPossible(savePasswordRequest:) FIRED -- $(grep 'PVDIAG|method=performWithoutUserInteractionIfPossible(savePasswordRequest:)' "$target" | head -1)"
+    else
+      echo "VERDICT: performWithoutUserInteractionIfPossible(savePasswordRequest:) DID NOT FIRE in this run"
+    fi
+    if grep -q 'PVDIAG|method=performWithoutUserInteraction(generatePasswordsRequest:)' "$target"; then
+      echo "VERDICT: performWithoutUserInteraction(generatePasswordsRequest:) FIRED -- $(grep 'PVDIAG|method=performWithoutUserInteraction(generatePasswordsRequest:)' "$target" | head -1)"
+    else
+      echo "VERDICT: performWithoutUserInteraction(generatePasswordsRequest:) DID NOT FIRE in this run"
+    fi
   fi
   return 0
 }
@@ -221,13 +256,18 @@ main() {
           echo "ERROR: --assert-only requires a path" >&2
           exit 1
         fi
-        if assert_probe "$path"; then
+        shift || true
+        local assert_run2=0
+        if [ "${1:-}" = "--run2" ]; then
+          assert_run2=1
+        fi
+        if assert_probe "$path" "$assert_run2"; then
           exit 0
         else
           exit 1
         fi
       fi
-      cmd_probe
+      cmd_probe "${1:-}"
       ;;
     *)
       usage
