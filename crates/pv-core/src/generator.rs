@@ -275,6 +275,17 @@ pub fn parse_password_rules(rules_text: &str) -> Result<PasswordRules, CryptoErr
             }
             "max-consecutive" => {
                 if let Ok(n) = value.parse::<usize>() {
+                    // WR-12 (44-REVIEW.md): `trailing_run_char_at_limit(chars, 0)` computes
+                    // `run >= 0`, always true once `chars` is non-empty, so `max_consecutive: 0`
+                    // silently behaved identically to `max_consecutive: 1` instead of being
+                    // refused. A stated limit of zero consecutive characters is either
+                    // meaningless or unsatisfiable -- refuse explicitly, the same contract every
+                    // other unsatisfiable numeric rule in this parser already honours.
+                    if n == 0 {
+                        return Err(CryptoError::InvalidInput(
+                            "unsatisfiable rule: max-consecutive of 0 admits no password",
+                        ));
+                    }
                     rules.max_consecutive = Some(n);
                 }
             }
@@ -1127,5 +1138,23 @@ mod tests {
         let password = generate_character_password_from_rules(&rules)
             .expect("minlength: 8; maxlength: 15; must be satisfiable");
         assert_eq!(password.chars().count(), 15);
+    }
+
+    /// WR-12 (44-REVIEW.md): `trailing_run_char_at_limit(chars, 0)` computes `run >= 0`, which is
+    /// always true once `chars` is non-empty -- so `max_consecutive: 0` used to behave IDENTICALLY
+    /// to `max_consecutive: 1` instead of being refused. A stated limit of zero consecutive
+    /// characters is either meaningless or unsatisfiable; silently reinterpreting an RP's numeric
+    /// rule as a different number is exactly the class of thing the `"unsatisfiable rule: "`
+    /// contract exists to make explicit, per this project's own two-stable-prefix convention.
+    #[test]
+    fn parse_password_rules_refuses_max_consecutive_of_zero() {
+        let err = parse_password_rules("max-consecutive: 0; allowed: digit;").unwrap_err();
+        match err {
+            CryptoError::InvalidInput(msg) => assert!(
+                msg.starts_with("unsatisfiable rule: "),
+                "expected the stable 'unsatisfiable rule: ' prefix, got: {msg}"
+            ),
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
     }
 }
