@@ -44,7 +44,17 @@ pub use ceremony::{
     make_credential_ctap2, CreateProviderResult, GetAssertionCtap2Result,
     GetProviderAssertionResult, MakeCredentialCtap2Result,
 };
-pub use credential_store::{PvCredentialStore, PvUserValidation};
+// 43-09-PLAN.md Task 1 (deviation, Rule 3 -- blocking): `passkeys_from_json`
+// was `pub` inside the private `credential_store` module but never
+// re-exported here, so no external `tests/` integration-test crate could
+// call it (only in-crate `#[cfg(test)]` modules could, via `use
+// crate::credential_store::passkeys_from_json`). This plan's own byte-
+// identity round-trip test decodes BOTH `create_provider_credential`'s and
+// `make_credential_ctap2`'s `new_passkey_json` output through this SAME
+// function (never a second, hand-rolled JSON parse) to prove they produce
+// structurally identical `Passkey` values -- re-exporting it is the minimal
+// fix, not a functional change to any ceremony entry point.
+pub use credential_store::{passkeys_from_json, PvCredentialStore, PvUserValidation};
 pub use error::PvProviderError;
 
 #[cfg(test)]
