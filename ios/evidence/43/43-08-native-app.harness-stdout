@@ -1,0 +1,5 @@
+2026-08-22 02:42:22.121957+0200 0xbe6b8d   Default     0x209a2ed            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=start corrupt=false
+2026-08-22 02:42:22.184199+0200 0xbe6b8d   Default     0x209a2ed            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=challenge status=ok bytes=32
+2026-08-22 02:42:26.141993+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=ceremony status=ok
+2026-08-22 02:42:26.165981+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=network status=ok ok=true reason=verified
+2026-08-22 02:42:26.166026+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=complete status=ok

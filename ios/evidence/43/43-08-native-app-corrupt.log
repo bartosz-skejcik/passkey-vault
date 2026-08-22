@@ -1,0 +1,80 @@
+## XCUITest drive (exit 65) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.K60scBAS7w for the full transcript
+    t =     4.92s Checking existence of `"nativeSignIn.status" StaticText`
+    t =     4.92s Find the "nativeSignIn.status" StaticText
+    t =     4.93s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     4.93s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =     4.94s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =     4.94s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     4.98s Checking existence of `Any (Element at index 0)`
+    t =     5.01s Find the Any (Element at index 0)
+    t =     5.05s Find the Application 'com.apple.springboard'
+    t =     5.20s Added attachment named 'continue-found-poll3-screenshot'
+    t =     5.20s Requesting snapshot of accessibility hierarchy for app with pid 13345
+    t =     5.75s Requesting snapshot of accessibility hierarchy for app with pid 13345
+    t =     5.79s Added attachment named 'continue-found-poll3-hierarchy'
+    t =     5.79s Tap "ASAuthorizationControllerContinueButton" Other
+    t =     5.79s     Wait for com.apple.springboard to idle
+    t =     5.79s     Find the "ASAuthorizationControllerContinueButton" Other
+    t =     6.83s         Find the "ASAuthorizationControllerContinueButton" Other (retry 1)
+    t =     7.88s         Find the "ASAuthorizationControllerContinueButton" Other (retry 2)
+    t =     7.91s Requesting snapshot of accessibility hierarchy for app with pid 13345
+/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/PasskeyVaultUITests/NativeAppSignInUITests.swift:149: error: -[PasskeyVaultUITests.NativeAppSignInUITests testNativeSignIn] : Failed to tap "ASAuthorizationControllerContinueButton" Other: No matches found for Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"' from input {(
+    Window (Main), identifier: 'SBTransientOverlayWindow',
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    AX element pid: 13345, elementOrHash.elementID: 10936154555867175428.9999,
+    AX element pid: 52333, elementOrHash.elementID: 4639480832.369,
+    AX element pid: 52333, elementOrHash.elementID: 4389198720.370,
+    AX element pid: 52333, elementOrHash.elementID: 4578966528.371,
+    AX element pid: 52333, elementOrHash.elementID: 4389207040.372,
+    AX element pid: 52333, elementOrHash.elementID: 4387575936.373,
+    AX element pid: 52333, elementOrHash.elementID: 4387575040.374,
+    AX element pid: 52333, elementOrHash.elementID: 4387576832.375,
+    AX element pid: 52333, elementOrHash.elementID: 4387577280.376,
+    AX element pid: 52333, elementOrHash.elementID: 4577016832.377
+)}
+    t =     8.26s Tear Down
+Test Case '-[PasskeyVaultUITests.NativeAppSignInUITests testNativeSignIn]' failed (8.294 seconds).
+Test Suite 'NativeAppSignInUITests' failed at 2026-08-22 2:29:12.463 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 8.294 (8.294) seconds
+Test Suite 'PasskeyVaultUITests.xctest' failed at 2026-08-22 2:29:12.463 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 8.294 (8.295) seconds
+Test Suite 'Selected tests' failed at 2026-08-22 2:29:12.463 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 8.294 (8.296) seconds
+2026-08-22 02:29:28.276 xcodebuild[58499:12452273] [MT] IDETestOperationsObserverDebug: 26.469 elapsed -- Testing started completed.
+2026-08-22 02:29:28.276 xcodebuild[58499:12452273] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 02:29:28.276 xcodebuild[58499:12452273] [MT] IDETestOperationsObserverDebug: 26.469 sec, +26.469 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_2-28-47-+0200.xcresult
+
+Failing tests:
+	NativeAppSignInUITests.testNativeSignIn()
+
+** TEST FAILED **
+
+Testing started
+
+## PasskeyVaultHarness's own stdout (PVHARNESS| markers), this run
+2026-08-22 02:29:05.633495+0200 0xbe0191   Default     0x208d03d            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=start corrupt=true
+2026-08-22 02:29:05.669070+0200 0xbe0191   Default     0x208d03d            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=challenge status=ok bytes=32
+2026-08-22 02:29:09.470587+0200 0xbe0191   Default     0x208e2f3            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=ceremony status=ok
+2026-08-22 02:29:09.470646+0200 0xbe0191   Default     0x208e2f3            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=corrupt status=applied
+2026-08-22 02:29:09.490303+0200 0xbe0191   Default     0x208e2f3            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=network status=ok ok=false reason=An OpenSSL Error has occurred
+2026-08-22 02:29:09.490359+0200 0xbe0191   Default     0x208e2f3            58494  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=complete status=failed
+
+## crates/rp-fixture stdout, this run
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running `target/debug/rp-fixture --port 8900 --origin 'vault.blonie.cloud=https://vault.blonie.cloud'`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=vault.blonie.cloud origin=https://vault.blonie.cloud/ status=created
+RPFIXTURE|route=/challenge/register rp_id=vault.blonie.cloud user_name=ios-native-sc2 status=issued
+RPFIXTURE|route=/register/finish rp_id=vault.blonie.cloud ok=true reason=registered
+RPFIXTURE|route=/challenge/assert rp_id=vault.blonie.cloud status=issued
+RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=false reason=An OpenSSL Error has occurred

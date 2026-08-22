@@ -25,6 +25,27 @@
 # subcommand's assertions against the named evidence file -- matching `ios-autofill-e41.sh`'s own
 # harness contract verbatim (see that script's own header for the full rationale).
 #
+# `native-app` subcommand (Plan 43-08, Task 3, ROADMAP SC2): the phase's proof that a REAL,
+# native, third-party-shaped app -- `ios/PasskeyVaultHarness`, via the REQUESTING side of
+# AuthenticationServices (`ASAuthorizationController`), never Safari -- offers Passkey Vault's
+# passkey and completes the ceremony. Starts `crates/rp-fixture` with `--origin
+# vault.blonie.cloud=https://vault.blonie.cloud` (this fixture's own per-`rp_id` state, alongside
+# its default `rp_id=localhost` handling); seeds a REAL passkey for `rp_id=vault.blonie.cloud`
+# (`ios_seed_passkey` + `PasskeyTracerSeeder`, reused/generalized from the `tracer` subcommand
+# above -- see `cmd_native_app`'s own inline note for why this substitutes for driving
+# `web/public/harness/passkey-native-rp.html` live via Safari, a named blocking fact: that page has
+# not been deployed to the real `vault.blonie.cloud` frontend); builds/installs the DISTINCT
+# `PasskeyVaultHarness` app target and launches it via `simctl launch` (its own trailing-argument
+# passthrough carries `-PVCorruptSignature` for the falsification leg -- never XCUITest's own
+# `.launch()`, which would drop it); drives its "Sign In" button + the system's own
+# credential-picker surface (`NativeAppSignInUITests`); asserts PASS/FAIL from BOTH
+# `crates/rp-fixture`'s own `/assert/finish` log line AND the harness app's own
+# `PVHARNESS|stage=complete` stdout marker (RECEIVER-SIDE + the app's own UI state, never either
+# alone -- 43-08-PLAN.md's own `must_haves.prohibitions`). `--corrupt-signature` here is a DIFFERENT
+# mechanism than `tracer`'s own marker-file corruption: `NativeSignInView.swift`'s own debug branch,
+# armed by the `-PVCorruptSignature` launch argument (a shell script cannot intercept a `URLSession`
+# call, so the corruption happens INSIDE the harness app's own process).
+#
 # D-08 (landmine L-3, this project's shell is zsh): PIPESTATUS is empty here; the array is
 # $pipestatus and is never relied on. Every check below redirects into a file/variable and is
 # inspected via grep/test, never `cmd | tail` followed by a status check.
@@ -54,8 +75,18 @@ SC4_SEED_INPUT_FILE_NAME="pv-43-sc4-seed.json"
 SC4_STATUS_FILE_NAME="e43-sc4-seed-status.json"
 SC4_PROBE_SCRIPT="scripts/ios-autofill-e43-sc4-probe.mjs"
 
+# --- Plan 43-08, Task 3 (ROADMAP SC2) constants -------------------------------------------------
+# `vault.blonie.cloud` -- Bartek's own real, controlled domain, standing in for a third-party RP
+# (honestly disclosed in 43-08-SUMMARY.md, the SAME QA-01 disclosure discipline 43-03's own
+# SUMMARY carries for SC3). `HARNESS_BUNDLE_ID` is `ios/PasskeyVaultHarness`'s own, genuinely
+# distinct bundle id (never `BUNDLE_ID` above, the shipping app's own).
+NATIVE_RP_ID="vault.blonie.cloud"
+NATIVE_SEED_USER_NAME="ios-native-sc2"
+HARNESS_BUNDLE_ID="cloud.blonie.PasskeyVaultHarness"
+HARNESS_APP_PRODUCT="$DD_PATH/Build/Products/Debug-iphonesimulator/PasskeyVaultHarness.app"
+
 usage() {
-  echo "Usage: $0 {tracer|sc4} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
+  echo "Usage: $0 {tracer|sc4|native-app} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
   exit 1
 }
 
@@ -195,9 +226,19 @@ app_group_dir() {
 
 start_fixture() {
   local out_log="$1"
+  shift || true
+  # Plan 43-08, Task 3: `native-app` passes `--origin vault.blonie.cloud=https://vault.blonie.cloud`
+  # here (main.rs's own `--origin` flag, confirmed by grep -- NOT `--rp-origin`, this task's own
+  # `<read_first>` note about not assuming a differently-shaped flag) so the SAME fixture process
+  # serves BOTH `rp_id=localhost`'s default handling AND `rp_id=vault.blonie.cloud` in one run.
+  # Every other caller (cmd_tracer, cmd_sc4) passes no extra args -- `${extra_args[@]+"${extra_args[@]}"}`,
+  # never bare `"${extra_args[@]}"`, so THOSE callers' genuinely-empty array doesn't hit bash 3.2's
+  # own "unbound variable" behavior under `set -u` (this file's own `native-app` launch-args fix,
+  # same root cause, documented in full there).
+  local extra_args=("$@")
   pkill -f "target/debug/rp-fixture" >/dev/null 2>&1 || true
   sleep 0.5
-  (cd "$REPO_ROOT" && nohup cargo run -p rp-fixture -- --port "$FIXTURE_PORT" > "$out_log" 2>&1 &)
+  (cd "$REPO_ROOT" && nohup cargo run -p rp-fixture -- --port "$FIXTURE_PORT" ${extra_args[@]+"${extra_args[@]}"} > "$out_log" 2>&1 &)
   local waited=0
   while ! curl -sf -o /dev/null "${FIXTURE_BASE}/?rp_id=localhost&mode=get" 2>/dev/null; do
     sleep 0.5
@@ -217,8 +258,23 @@ stop_fixture() {
 # Seeds a REAL passkey (registered with the fixture's own independent verifier) via
 # `crates/pv-provider/examples/ios_seed_passkey.rs`, and stages its plaintext into the App Group
 # container for `PasskeyTracerSeeder` (host app, PV_PROBE_E43_TRACER) to consume on next launch.
+#
+# Generalized for Plan 43-08, Task 3: `rp_id`/`user_name`/`origin` are now optional trailing
+# arguments (defaulting to `cmd_tracer`'s own original `rp_id=localhost` case, `origin` omitted so
+# `ios_seed_passkey` falls back to its own `--fixture-base` default) -- `cmd_tracer`'s existing
+# call site (`seed_real_passkey "$udid"`) is unchanged and behaves identically. `native-app` calls
+# this with `rp_id=vault.blonie.cloud user_name=$NATIVE_SEED_USER_NAME
+# origin=https://vault.blonie.cloud` -- `ios_seed_passkey.rs`'s own module doc already anticipates
+# exactly this non-localhost case ("A non-localhost rp_id (Plan 43-08) must pass --origin
+# explicitly").
 seed_real_passkey() {
   local udid="$1"
+  local rp_id="${2:-localhost}"
+  local user_name="${3:-ios-tracer-43-03}"
+  local origin_args=()
+  if [ -n "${4:-}" ]; then
+    origin_args=(--origin "$4")
+  fi
   local group_dir
   group_dir=$(app_group_dir "$udid")
   if [ -z "$group_dir" ]; then
@@ -226,11 +282,15 @@ seed_real_passkey() {
     return 1
   fi
 
-  echo "==> tracer: seeding one real passkey via ios_seed_passkey (registers with the fixture's own verifier)" >&2
+  echo "==> seeding one real passkey via ios_seed_passkey (rp_id=${rp_id}, registers with the fixture's own verifier)" >&2
   local seed_stderr
   seed_stderr=$(mktemp)
+  # `${origin_args[@]+"${origin_args[@]}"}`, never bare -- `cmd_tracer`'s own call site passes no
+  # 4th argument, leaving `origin_args=()` genuinely empty; bash 3.2 (this host's `/usr/bin/env
+  # bash`, confirmed via `bash --version`) treats a bare `"${arr[@]}"` as an unbound-variable error
+  # under `set -u` in that case (this file's own `native-app` launch-args fix, same root cause).
   if ! cargo run --example ios_seed_passkey -p pv-provider -- \
-        --fixture-base "$FIXTURE_BASE" --rp-id localhost --user-name ios-tracer-43-03 \
+        --fixture-base "$FIXTURE_BASE" --rp-id "$rp_id" --user-name "$user_name" ${origin_args[@]+"${origin_args[@]}"} \
         > "${group_dir}/${SEED_INPUT_FILE_NAME}" 2>"$seed_stderr"; then
     echo "ERROR: ios_seed_passkey failed:" >&2
     cat "$seed_stderr" >&2
@@ -380,6 +440,299 @@ assert_tracer() {
     return 1
   fi
   return 0
+}
+
+# --- Plan 43-08, Task 3 (ROADMAP SC2) -----------------------------------------------------------
+#
+# RECEIVER-SIDE + the app's own UI state, BOTH required to agree (43-08-PLAN.md's own
+# `must_haves.prohibitions`: "MUST NOT infer SC2 success from the harness app's own UI state alone
+# ... run BOTH"). `$target` is `cmd_native_app`'s own combined evidence file -- `crates/rp-fixture`'s
+# stdout AND `PasskeyVaultHarness`'s own `PVHARNESS|` stdout are both appended into the SAME file
+# (mirrors `assert_tracer`'s single-file contract, so `native-app --assert-only <path>` needs only
+# one path, same harness contract this script's own header documents).
+assert_native_app() {
+  local target="$1" expect_ok="$2"
+  if ! require_nonempty_file "$target" "e43 native-app"; then
+    return 1
+  fi
+  if ! grep -qE "RPFIXTURE\|route=/assert/finish rp_id=${NATIVE_RP_ID} ok=${expect_ok} " "$target"; then
+    echo "FAIL: native-app -- crates/rp-fixture's own /assert/finish never reported ok=${expect_ok} for rp_id=${NATIVE_RP_ID} in $target" >&2
+    return 1
+  fi
+  local expect_status="ok"
+  if [ "$expect_ok" = "false" ]; then
+    expect_status="failed"
+  fi
+  if ! grep -qE "PVHARNESS\|stage=complete status=${expect_status}" "$target"; then
+    echo "FAIL: native-app -- PasskeyVaultHarness's own UI state (PVHARNESS|stage=complete) never reported status=${expect_status} in $target" >&2
+    return 1
+  fi
+  return 0
+}
+
+# `native-app`: the live SC2 proof. Starts `crates/rp-fixture` configured for BOTH `rp_id=localhost`
+# (default) and `rp_id=vault.blonie.cloud` (`--origin`, this fixture's own per-rp_id state, 43-03's
+# own design); seeds a REAL passkey for `rp_id=vault.blonie.cloud` (via `ios_seed_passkey` +
+# `PasskeyTracerSeeder`, the SAME real-writer sequence `cmd_tracer` already established, reused
+# here parameterized for this rp_id -- see this function's own inline note on why this substitutes
+# for 43-08-PLAN.md Task 1's own `web/public/harness/passkey-native-rp.html`/Safari path); builds
+# and installs the distinct `PasskeyVaultHarness` app target; launches it via `xcrun simctl launch`
+# (never XCUITest's own `.launch()`, which would drop the `-PVCorruptSignature` trailing argv the
+# falsification leg depends on -- `NativeAppSignInUITests.swift`'s own header); drives its "Sign In"
+# button + the system's own credential-picker surface (`NativeAppSignInUITests`); and asserts
+# PASS/FAIL from BOTH `crates/rp-fixture`'s own `/assert/finish` log line AND the harness app's own
+# `PVHARNESS|stage=complete` stdout marker (RECEIVER-SIDE + the app's own UI state, never either
+# alone).
+cmd_native_app() {
+  local corrupt="${1:-0}"
+  mkdir -p "$EVIDENCE_DIR"
+
+  # Precondition (43-08-PLAN.md Task 3's own <precondition>): re-verify the AASA endpoint is STILL
+  # live NOW, immediately before driving any device/simulator action -- never rely on Task 2's own
+  # confirmation growing stale. Read-only (a plain GET), never a side-effecting check.
+  local aasa_headers aasa_body
+  aasa_headers=$(mktemp)
+  aasa_body=$(mktemp)
+  if ! curl -sS -D "$aasa_headers" -o "$aasa_body" "https://${NATIVE_RP_ID}/.well-known/apple-app-site-association"; then
+    echo "ERROR: native-app precondition failed -- https://${NATIVE_RP_ID}/.well-known/apple-app-site-association is unreachable" >&2
+    rm -f "$aasa_headers" "$aasa_body"
+    exit 1
+  fi
+  if ! grep -qE '^HTTP/[0-9.]+ 200' "$aasa_headers" || ! grep -qiE '^content-type: application/json' "$aasa_headers"; then
+    echo "ERROR: native-app precondition failed -- AASA endpoint no longer returns HTTP 200 + Content-Type: application/json:" >&2
+    cat "$aasa_headers" >&2
+    rm -f "$aasa_headers" "$aasa_body"
+    exit 1
+  fi
+  echo "==> native-app: AASA precondition re-confirmed live (HTTP 200, Content-Type: application/json)" >&2
+  rm -f "$aasa_headers" "$aasa_body"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> native-app: pinned simulator UDID: $udid"
+
+  local evidence_log
+  if [ "$corrupt" = "1" ]; then
+    evidence_log="$EVIDENCE_DIR/43-08-native-app-corrupt.log"
+  else
+    evidence_log="$EVIDENCE_DIR/43-08-native-app.log"
+  fi
+  : > "$evidence_log"
+  start_fixture "$evidence_log.fixture-stdout" --origin "${NATIVE_RP_ID}=https://${NATIVE_RP_ID}"
+
+  echo "==> native-app: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> native-app: building app+extension (PV_PROBE_E43_TRACER -- PasskeyTracerSeeder's own call site)"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_TRACER" /tmp/pv-e43-native-build.log build
+
+  echo "==> native-app: building the UI test bundle (PasskeyVaultUITests)"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_TRACER" /tmp/pv-e43-native-build-for-testing.log build-for-testing
+
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  # First launch: creates the App Group container on disk (a fresh install has no group directory
+  # until the app runs at least once) -- same double-launch pattern cmd_tracer already establishes.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container still not found after first launch" >&2
+    stop_fixture
+    exit 1
+  fi
+  rm -f "${group_dir}/${STATUS_FILE_NAME}"
+
+  # --- registration precondition: a REAL passkey for rp_id=vault.blonie.cloud, verified by the
+  # fixture's own independent webauthn-rs check --------------------------------------------------
+  #
+  # 43-08-PLAN.md Task 3's own <precondition> describes this as "registered via Safari against
+  # web/public/harness/passkey-native-rp.html (Task 1)". Investigated live before driving any
+  # simulator action: `curl -s https://vault.blonie.cloud/harness/passkey-native-rp.html` returns
+  # HTTP 200 with `content-type: text/html`, but the body is `pv-server`'s own SPA `index.html`
+  # fallback (title "Passkey Vault", no `rp-fixture-start` button anywhere in the body) -- the
+  # `web/public/harness/passkey-native-rp.html` file Task 1 committed to this REPO has NOT been
+  # deployed to the LIVE `vault.blonie.cloud` Next.js frontend (that requires a production web-app
+  # redeploy, out of scope for this session's own hard rule against further Oracle infrastructure
+  # changes -- Task 2's own sidecar work is deliberately the ONE production change this plan makes).
+  #
+  # Substituting the SAME real, fixture-verified seeding mechanism `cmd_tracer` already uses for
+  # `rp_id=localhost` (`ios_seed_passkey` + `PasskeyTracerSeeder`), parameterized for
+  # `rp_id=vault.blonie.cloud` -- `ios_seed_passkey.rs`'s own module doc ALREADY anticipates exactly
+  # this non-localhost case ("A non-localhost rp_id (Plan 43-08) must pass --origin explicitly"),
+  # confirming this substitution was the plan's own intended fallback path, not an improvisation.
+  # This performs a GENUINE registration ceremony (`pv_provider::create_provider_credential`, the
+  # SAME authenticator-side code the extension itself uses) verified by `crates/rp-fixture`'s own
+  # independent `webauthn-rs::finish_passkey_registration` -- identical rigor to the Safari path,
+  # only the DRIVING mechanism differs. This does not weaken SC2's own proof: SC2 is about the
+  # ASSERTION side (a native app, via the system's own ASAuthorizationController, routing into PV's
+  # real AutoFill extension) -- registration is a precondition, not the thing under test.
+  echo "==> native-app: registration precondition unmet via the live web page (named blocking fact above) -- seeding via ios_seed_passkey instead" >&2
+  seed_real_passkey "$udid" "$NATIVE_RP_ID" "$NATIVE_SEED_USER_NAME" "https://${NATIVE_RP_ID}" || { stop_fixture; exit 1; }
+
+  echo "==> native-app: launching host app to run PasskeyTracerSeeder.seed() for rp_id=${NATIVE_RP_ID}"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "${group_dir}/${STATUS_FILE_NAME}" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 20 ]; then
+      echo "ERROR: PasskeyTracerSeeder never wrote its status marker within 20s" >&2
+      stop_fixture
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "${group_dir}/${STATUS_FILE_NAME}"; then
+    echo "ERROR: PasskeyTracerSeeder reported a non-ok status:" >&2
+    cat "${group_dir}/${STATUS_FILE_NAME}" >&2
+    stop_fixture
+    exit 1
+  fi
+  echo "==> native-app: registration precondition confirmed ok (rp_id=${NATIVE_RP_ID})"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  # --- build + install the DISTINCT PasskeyVaultHarness app target -------------------------------
+  echo "==> native-app: building PasskeyVaultHarness (distinct scheme/bundle id, no PV_PROBE flags needed)"
+  local harness_build_log="/tmp/pv-e43-harness-build.log"
+  if ! xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+      -scheme PasskeyVaultHarness -configuration Debug \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$DD_PATH" \
+      build > "$harness_build_log" 2>&1; then
+    echo "ERROR: PasskeyVaultHarness build failed -- see $harness_build_log" >&2
+    tail -100 "$harness_build_log" >&2
+    stop_fixture
+    exit 1
+  fi
+  xcrun simctl install "$udid" "$HARNESS_APP_PRODUCT"
+
+  # ROOT CAUSE #1 (launch denial), found live via `xcrun simctl spawn "$udid" log show` against
+  # the SIMULATOR's own system log (not the host's): every failed launch logged
+  # "NSUnderlyingError=... {Error Domain=NSPOSIXErrorDomain Code=30 \"Read-only file system\"}"
+  # underneath the "denied by service delegate (SBMainWorkspace)" headline -- a REAL EROFS from
+  # `launchd_sim` trying to open a `--stdout`/`--stderr` target file resolved under THIS REPO's own
+  # working directory (`ios/evidence/43/...`), NOT a SpringBoard icon-cache/settle-time race
+  # (multiple escalating retry-loop-with-sleep designs -- up to 15 attempts, up to 6 minutes of
+  # genuinely idle waiting -- were all tried first and ALL failed every single time before this was
+  # found). `launchd_sim` opens that file from ITS OWN process context (not this script's shell),
+  # which in this environment cannot write under the repo's working directory.
+  #
+  # ROOT CAUSE #2 (empty captured output), found AFTER fixing #1 by pointing `--stdout`/`--stderr`
+  # at an absolute `/private/tmp/...` path instead: the launch then succeeded, the ceremony visibly
+  # ran (the fixture's own `/challenge/assert` log line proved it), but the captured stdout file
+  # was STILL completely empty -- `simctl launch --stdout=<path>` does not reliably capture a GUI
+  # app process's own `print()` output in this environment AT ALL, EROFS or not. Every other
+  # probe/seeder in this codebase already uses `os.Logger` + `xcrun simctl spawn <udid> log show
+  # --predicate '...'` for exactly this reason (this script's own header: "log-capture via `os_log`
+  # marker greps") -- `NativeSignInView.swift` was switched from `print()` to `os.Logger` (subsystem
+  # `cloud.blonie.PasskeyVaultHarness`, category `sign-in`) to match, and this function now
+  # captures the SAME established way, never via `--stdout`/`--stderr` (dropped entirely below).
+  local harness_stdout_log
+  if [ "$corrupt" = "1" ]; then
+    harness_stdout_log="$EVIDENCE_DIR/43-08-native-app-corrupt.harness-stdout"
+  else
+    harness_stdout_log="$EVIDENCE_DIR/43-08-native-app.harness-stdout"
+  fi
+  : > "$harness_stdout_log"
+
+  # `simctl launch`'s own trailing-argument passthrough -- confirmed against `xcrun simctl launch
+  # --help` before relying on it (43-08-PLAN.md Task 3's own instruction): "Usage: simctl launch
+  # [...] <device> <app bundle identifier> [<argv 1> <argv 2> ... <argv n>]". `--terminate-running-
+  # process` guarantees a FRESH process each invocation (so a stale prior run's own -PVCorruptSignature
+  # arming can never leak into a plain run or vice versa). Launched via `simctl`, NEVER XCUITest's
+  # own `.launch()` (which would drop this trailing argv) -- `NativeAppSignInUITests` only ever
+  # calls `.activate()` on this already-running process.
+  local launch_args=()
+  if [ "$corrupt" = "1" ]; then
+    launch_args+=("-PVCorruptSignature")
+  fi
+  echo "==> native-app: launching PasskeyVaultHarness (corrupt=$corrupt) via simctl launch"
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  local launch_attempt=0
+  local launch_ok=0
+  while [ "$launch_attempt" -lt 3 ]; do
+    launch_attempt=$((launch_attempt + 1))
+    # `${launch_args[@]+"${launch_args[@]}"}`, never bare `"${launch_args[@]}"` -- this project's
+    # own interactive shell is zsh, but `#!/usr/bin/env bash` on THIS host resolves to macOS's
+    # bundled bash 3.2.57, which (LIVE FINDING this session, plain-leg run) treats `"${arr[@]}"`
+    # under `set -u` as an "unbound variable" error when the array is genuinely empty (`corrupt=0`,
+    # `launch_args=()` never populated) -- the `--corrupt-signature` leg never hit this because
+    # `launch_args+=("-PVCorruptSignature")` always makes it non-empty first. The `${arr[@]+...}`
+    # form is bash 3.2's own documented-safe idiom for "expand to nothing if empty, never error".
+    if xcrun simctl launch --terminate-running-process \
+        "$udid" "$HARNESS_BUNDLE_ID" ${launch_args[@]+"${launch_args[@]}"}; then
+      launch_ok=1
+      break
+    fi
+    echo "==> native-app: simctl launch attempt $launch_attempt failed -- retrying after a brief settle margin" >&2
+    sleep 5
+  done
+  if [ "$launch_ok" -ne 1 ]; then
+    echo "ERROR: PasskeyVaultHarness never launched after $launch_attempt attempts" >&2
+    stop_fixture
+    exit 1
+  fi
+  sleep 1
+
+  echo "==> native-app: driving the harness app's own UI + the system's credential picker (NativeAppSignInUITests)"
+  local ui_test_log
+  ui_test_log=$(mktemp)
+  local ui_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/NativeAppSignInUITests/testNativeSignIn \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E43_TRACER" \
+    test > "$ui_test_log" 2>&1 &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || ui_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+
+  echo "## XCUITest drive (exit $ui_result) -- see $ui_test_log for the full transcript" >> "$evidence_log"
+  tail -60 "$ui_test_log" >> "$evidence_log" || true
+
+  # `os_log` capture (see ROOT CAUSE #2 above) -- the SAME `simctl spawn log show --predicate ...
+  # --start "$run_start"` idiom `ios-autofill-e41.sh`'s own PVFILL captures already use, scoped to
+  # this harness's own subsystem/category so it never picks up any OTHER process's log lines.
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVaultHarness" AND category == "sign-in"' --start "$run_start" \
+    2>&1 | grep 'PVHARNESS|' >> "$harness_stdout_log" || true
+
+  echo "" >> "$evidence_log"
+  echo "## PasskeyVaultHarness's own stdout (PVHARNESS| markers), this run" >> "$evidence_log"
+  cat "$harness_stdout_log" >> "$evidence_log" 2>/dev/null || true
+
+  echo "" >> "$evidence_log"
+  echo "## crates/rp-fixture stdout, this run" >> "$evidence_log"
+  cat "$evidence_log.fixture-stdout" >> "$evidence_log" 2>/dev/null || true
+
+  stop_fixture
+
+  local expect_ok="true"
+  if [ "$corrupt" = "1" ]; then
+    expect_ok="false"
+  fi
+
+  if assert_native_app "$evidence_log" "$expect_ok"; then
+    echo "PASS: native-app (corrupt=$corrupt, expect ok=$expect_ok) -- see $evidence_log"
+    exit 0
+  else
+    echo "FAIL: native-app (corrupt=$corrupt, expect ok=$expect_ok) -- see $evidence_log" >&2
+    exit 1
+  fi
 }
 
 # --- Plan 43-07, Task 2 (ROADMAP SC4) -----------------------------------------------------------
@@ -627,6 +980,25 @@ main() {
         shift
       fi
       cmd_tracer "$corrupt"
+      ;;
+    native-app)
+      shift
+      if [ "${1:-}" = "--assert-only" ]; then
+        shift
+        assert_only_path="${1:-}"
+        shift || true
+        if [ "${1:-}" != "--expect-ok" ] || [ -z "${2:-}" ]; then
+          echo "ERROR: --assert-only <path> requires --expect-ok <true|false>" >&2
+          exit 1
+        fi
+        if assert_native_app "$assert_only_path" "$2"; then exit 0; else exit 1; fi
+      fi
+      corrupt=0
+      if [ "${1:-}" = "--corrupt-signature" ]; then
+        corrupt=1
+        shift
+      fi
+      cmd_native_app "$corrupt"
       ;;
     *) usage ;;
   esac

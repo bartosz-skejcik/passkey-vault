@@ -1,0 +1,9 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s
+     Running `target/debug/rp-fixture --port 8900 --origin 'vault.blonie.cloud=https://vault.blonie.cloud'`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=vault.blonie.cloud origin=https://vault.blonie.cloud/ status=created
+RPFIXTURE|route=/challenge/register rp_id=vault.blonie.cloud user_name=ios-native-sc2 status=issued
+RPFIXTURE|route=/register/finish rp_id=vault.blonie.cloud ok=true reason=registered
+RPFIXTURE|route=/challenge/assert rp_id=vault.blonie.cloud status=issued
+RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=false reason=An OpenSSL Error has occurred

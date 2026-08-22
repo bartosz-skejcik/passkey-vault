@@ -50,6 +50,18 @@
 import AuthenticationServices
 import Combine
 import SwiftUI
+import os
+
+/// `PVHARNESS|` markers -- switched from `print()` to `os.Logger` (LIVE FINDING this session):
+/// `xcrun simctl launch --stdout=<path>` never captured a SINGLE line of this app's own `print()`
+/// output, even though the fixture's own `/challenge/assert` log line proved the app's code WAS
+/// running and reaching that point -- `simctl launch`'s stdout/stderr file redirection does not
+/// reliably capture a GUI app process's own stdout in this environment. Every OTHER probe/seeder
+/// in this codebase (`PasskeyTracerSeeder`, `ProbeSeeder`, etc.) already uses `os.Logger` +
+/// `xcrun simctl spawn <udid> log show --predicate '...'` (this script's own header: "log-capture
+/// via `os_log` marker greps") -- this file now follows that SAME established, reliable pattern
+/// rather than the stdout-redirection approach this plan's own action text assumed.
+private let harnessLogger = Logger(subsystem: "cloud.blonie.PasskeyVaultHarness", category: "sign-in")
 
 /// `rp_id` this harness always requests against -- `vault.blonie.cloud`, Bartek's own real,
 /// controlled domain, standing in for a third-party RP (honestly disclosed in this plan's own
@@ -125,16 +137,16 @@ final class NativeSignInCoordinator: NSObject, ObservableObject {
     private let corruptSignature = CommandLine.arguments.contains("-PVCorruptSignature")
 
     func signIn() {
-        print("PVHARNESS|stage=start corrupt=\(corruptSignature)")
+        harnessLogger.log("PVHARNESS|stage=start corrupt=\(self.corruptSignature, privacy: .public)")
         statusText = "Requesting challenge..."
         Task {
             do {
                 let challenge = try await fetchChallenge()
-                print("PVHARNESS|stage=challenge status=ok bytes=\(challenge.count)")
+                harnessLogger.log("PVHARNESS|stage=challenge status=ok bytes=\(challenge.count, privacy: .public)")
                 statusText = "Requesting passkey..."
                 requestAssertion(challenge: challenge)
             } catch {
-                print("PVHARNESS|stage=challenge status=failed reason=\(error)")
+                harnessLogger.error("PVHARNESS|stage=challenge status=failed reason=\(String(describing: error), privacy: .public)")
                 statusText = "Failed: \(error)"
             }
         }
@@ -178,12 +190,12 @@ final class NativeSignInCoordinator: NSObject, ObservableObject {
     // independent verifier.
 
     fileprivate func handleAssertion(_ assertion: ASAuthorizationPlatformPublicKeyCredentialAssertion) {
-        print("PVHARNESS|stage=ceremony status=ok")
+        harnessLogger.log("PVHARNESS|stage=ceremony status=ok")
         statusText = "Verifying..."
         var signatureBytes: Data = assertion.signature
         if corruptSignature, signatureBytes.count > 0 {
             signatureBytes[signatureBytes.startIndex] ^= 0xFF
-            print("PVHARNESS|stage=corrupt status=applied")
+            harnessLogger.log("PVHARNESS|stage=corrupt status=applied")
         }
         let payload = AssertCredentialPayload(
             id: Base64URL.encode(assertion.credentialID),
@@ -217,13 +229,13 @@ final class NativeSignInCoordinator: NSObject, ObservableObject {
                 throw NativeSignInError.finishRequestFailed
             }
             let result = try JSONDecoder().decode(VerifyResult.self, from: data)
-            print("PVHARNESS|stage=network status=ok ok=\(result.ok) reason=\(result.reason)")
+            harnessLogger.log("PVHARNESS|stage=network status=ok ok=\(result.ok, privacy: .public) reason=\(result.reason, privacy: .public)")
             statusText = result.ok ? "Signed in" : "Failed: \(result.reason)"
-            print("PVHARNESS|stage=complete status=\(result.ok ? "ok" : "failed")")
+            harnessLogger.log("PVHARNESS|stage=complete status=\(result.ok ? "ok" : "failed", privacy: .public)")
         } catch {
-            print("PVHARNESS|stage=network status=failed reason=\(error)")
+            harnessLogger.error("PVHARNESS|stage=network status=failed reason=\(String(describing: error), privacy: .public)")
             statusText = "Failed: \(error)"
-            print("PVHARNESS|stage=complete status=failed")
+            harnessLogger.log("PVHARNESS|stage=complete status=failed")
         }
     }
 }
@@ -231,18 +243,18 @@ final class NativeSignInCoordinator: NSObject, ObservableObject {
 extension NativeSignInCoordinator: ASAuthorizationControllerDelegate {
     func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
         guard let assertion = authorization.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else {
-            print("PVHARNESS|stage=ceremony status=failed reason=unexpected-credential-type")
+            harnessLogger.error("PVHARNESS|stage=ceremony status=failed reason=unexpected-credential-type")
             statusText = "Failed: unexpected credential type"
-            print("PVHARNESS|stage=complete status=failed")
+            harnessLogger.log("PVHARNESS|stage=complete status=failed")
             return
         }
         handleAssertion(assertion)
     }
 
     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        print("PVHARNESS|stage=ceremony status=failed reason=\(error)")
+        harnessLogger.error("PVHARNESS|stage=ceremony status=failed reason=\(String(describing: error), privacy: .public)")
         statusText = "Failed: \(error.localizedDescription)"
-        print("PVHARNESS|stage=complete status=failed")
+        harnessLogger.log("PVHARNESS|stage=complete status=failed")
     }
 }
 

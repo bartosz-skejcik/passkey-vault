@@ -1,0 +1,79 @@
+## XCUITest drive (exit 65) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.iWEt16HiQV for the full transcript
+    t =     5.06s Checking existence of `"nativeSignIn.status" StaticText`
+    t =     5.07s Find the "nativeSignIn.status" StaticText
+    t =     5.08s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     5.08s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =     5.08s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =     5.09s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     5.12s Checking existence of `Any (Element at index 0)`
+    t =     5.16s Find the Any (Element at index 0)
+    t =     5.20s Find the Application 'com.apple.springboard'
+    t =     5.32s Added attachment named 'continue-found-poll3-screenshot'
+    t =     5.32s Requesting snapshot of accessibility hierarchy for app with pid 13345
+    t =     5.67s Requesting snapshot of accessibility hierarchy for app with pid 13345
+    t =     5.71s Added attachment named 'continue-found-poll3-hierarchy'
+    t =     5.71s Tap "ASAuthorizationControllerContinueButton" Other
+    t =     5.71s     Wait for com.apple.springboard to idle
+    t =     5.72s     Find the "ASAuthorizationControllerContinueButton" Other
+    t =     6.75s         Find the "ASAuthorizationControllerContinueButton" Other (retry 1)
+    t =     7.78s         Find the "ASAuthorizationControllerContinueButton" Other (retry 2)
+    t =     7.81s Requesting snapshot of accessibility hierarchy for app with pid 13345
+/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/PasskeyVaultUITests/NativeAppSignInUITests.swift:149: error: -[PasskeyVaultUITests.NativeAppSignInUITests testNativeSignIn] : Failed to tap "ASAuthorizationControllerContinueButton" Other: No matches found for Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"' from input {(
+    Window (Main), identifier: 'SBTransientOverlayWindow',
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    Other,
+    AX element pid: 13345, elementOrHash.elementID: 16372272649308413688.9999,
+    AX element pid: 52333, elementOrHash.elementID: 4640452096.442,
+    AX element pid: 52333, elementOrHash.elementID: 4641688704.443,
+    AX element pid: 52333, elementOrHash.elementID: 4641689344.444,
+    AX element pid: 52333, elementOrHash.elementID: 4641690624.445,
+    AX element pid: 52333, elementOrHash.elementID: 4332712192.446,
+    AX element pid: 52333, elementOrHash.elementID: 4332710400.447,
+    AX element pid: 52333, elementOrHash.elementID: 4332707264.448,
+    AX element pid: 52333, elementOrHash.elementID: 4332712640.449,
+    AX element pid: 52333, elementOrHash.elementID: 4641688064.450
+)}
+    t =     7.92s Tear Down
+Test Case '-[PasskeyVaultUITests.NativeAppSignInUITests testNativeSignIn]' failed (7.943 seconds).
+Test Suite 'NativeAppSignInUITests' failed at 2026-08-22 2:42:28.542 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 7.943 (7.944) seconds
+Test Suite 'PasskeyVaultUITests.xctest' failed at 2026-08-22 2:42:28.542 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 7.943 (7.944) seconds
+Test Suite 'Selected tests' failed at 2026-08-22 2:42:28.543 AM.
+	 Executed 1 test, with 1 failure (0 unexpected) in 7.943 (7.949) seconds
+2026-08-22 02:42:44.594 xcodebuild[61937:12479416] [MT] IDETestOperationsObserverDebug: 26.257 elapsed -- Testing started completed.
+2026-08-22 02:42:44.594 xcodebuild[61937:12479416] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 02:42:44.594 xcodebuild[61937:12479416] [MT] IDETestOperationsObserverDebug: 26.257 sec, +26.257 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_2-42-03-+0200.xcresult
+
+Failing tests:
+	NativeAppSignInUITests.testNativeSignIn()
+
+** TEST FAILED **
+
+Testing started
+
+## PasskeyVaultHarness's own stdout (PVHARNESS| markers), this run
+2026-08-22 02:42:22.121957+0200 0xbe6b8d   Default     0x209a2ed            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=start corrupt=false
+2026-08-22 02:42:22.184199+0200 0xbe6b8d   Default     0x209a2ed            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=challenge status=ok bytes=32
+2026-08-22 02:42:26.141993+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=ceremony status=ok
+2026-08-22 02:42:26.165981+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=network status=ok ok=true reason=verified
+2026-08-22 02:42:26.166026+0200 0xbe6b8d   Default     0x209b4b3            61931  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:sign-in] PVHARNESS|stage=complete status=ok
+
+## crates/rp-fixture stdout, this run
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running `target/debug/rp-fixture --port 8900 --origin 'vault.blonie.cloud=https://vault.blonie.cloud'`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=vault.blonie.cloud origin=https://vault.blonie.cloud/ status=created
+RPFIXTURE|route=/challenge/register rp_id=vault.blonie.cloud user_name=ios-native-sc2 status=issued
+RPFIXTURE|route=/register/finish rp_id=vault.blonie.cloud ok=true reason=registered
+RPFIXTURE|route=/challenge/assert rp_id=vault.blonie.cloud status=issued
+RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=true reason=verified

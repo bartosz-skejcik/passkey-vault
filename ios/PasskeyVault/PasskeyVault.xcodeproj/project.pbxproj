@@ -63,19 +63,19 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4A1F6B2C8D3E907F5C1A2B33 /* Exceptions for "../PasskeyVaultHarness" folder in "PasskeyVaultHarness" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				"AASA-DEPLOY.md",
+			);
+			target = 9AB3CA3E39BF34809663F83D /* PasskeyVaultHarness */;
+		};
 		D2445DE6872C32C424D63DCD /* Exceptions for "PasskeyVaultAutoFill" folder in "PasskeyVaultAutoFill" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
 			target = 3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */;
-		};
-		4A1F6B2C8D3E907F5C1A2B33 /* Exceptions for "PasskeyVaultHarness" folder in "PasskeyVaultHarness" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				AASA-DEPLOY.md,
-			);
-			target = 9AB3CA3E39BF34809663F83D /* PasskeyVaultHarness */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -86,6 +86,14 @@
 				D2445DE6872C32C424D63DCD /* Exceptions for "PasskeyVaultAutoFill" folder in "PasskeyVaultAutoFill" target */,
 			);
 			path = PasskeyVaultAutoFill;
+			sourceTree = "<group>";
+		};
+		653E80F42AF6DC96FC6232B1 /* ../PasskeyVaultHarness */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4A1F6B2C8D3E907F5C1A2B33 /* Exceptions for "../PasskeyVaultHarness" folder in "PasskeyVaultHarness" target */,
+			);
+			path = ../PasskeyVaultHarness;
 			sourceTree = "<group>";
 		};
 		A1B2C3D4E5F641039C7D0F12 /* Shared */ = {
@@ -101,14 +109,6 @@
 		F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = PasskeyVault;
-			sourceTree = "<group>";
-		};
-		653E80F42AF6DC96FC6232B1 /* PasskeyVaultHarness */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				4A1F6B2C8D3E907F5C1A2B33 /* Exceptions for "PasskeyVaultHarness" folder in "PasskeyVaultHarness" target */,
-			);
-			path = ../PasskeyVaultHarness;
 			sourceTree = "<group>";
 		};
 		F4C1A4BC302B0A9C00C58DEB /* PasskeyVaultTests */ = {
@@ -132,18 +132,18 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		C256139CC24DF37B10C1B98E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F4C1A4A9302B0A9A00C58DEB /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				35238C90CC1A6DD53B37A40B /* PvFfi.xcframework in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		C256139CC24DF37B10C1B98E /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -169,7 +169,7 @@
 			children = (
 				F4C1A4AE302B0A9A00C58DEB /* PasskeyVault */,
 				0B428FE9E49C0BB22AF61E01 /* PasskeyVaultAutoFill */,
-				653E80F42AF6DC96FC6232B1 /* PasskeyVaultHarness */,
+				653E80F42AF6DC96FC6232B1 /* ../PasskeyVaultHarness */,
 				F4C1A4BC302B0A9C00C58DEB /* PasskeyVaultTests */,
 				F4C1A4C6302B0A9C00C58DEB /* PasskeyVaultUITests */,
 				B3D215715977AE7886AF8663 /* PvShared */,
@@ -195,28 +195,6 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		9AB3CA3E39BF34809663F83D /* PasskeyVaultHarness */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = FCFF755364BE54E954FD3CB7 /* Build configuration list for PBXNativeTarget "PasskeyVaultHarness" */;
-			buildPhases = (
-				CC6FF735671F449F9C2648CE /* Sources */,
-				C256139CC24DF37B10C1B98E /* Frameworks */,
-				D218F4D703A1A671F1F0A409 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				653E80F42AF6DC96FC6232B1 /* PasskeyVaultHarness */,
-			);
-			name = PasskeyVaultHarness;
-			packageProductDependencies = (
-			);
-			productName = PasskeyVaultHarness;
-			productReference = 524CDFDE34A90C3A8BE35444 /* PasskeyVaultHarness.app */;
-			productType = "com.apple.product-type.application";
-		};
 		3995FEC5A108122F43B310EA /* PasskeyVaultAutoFill */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = EA071133E5DBDFAB41659D4F /* Build configuration list for PBXNativeTarget "PasskeyVaultAutoFill" */;
@@ -240,6 +218,28 @@
 			productName = PasskeyVaultAutoFill;
 			productReference = 439108F12317FDDD29406623 /* PasskeyVaultAutoFill.appex */;
 			productType = "com.apple.product-type.app-extension";
+		};
+		9AB3CA3E39BF34809663F83D /* PasskeyVaultHarness */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FCFF755364BE54E954FD3CB7 /* Build configuration list for PBXNativeTarget "PasskeyVaultHarness" */;
+			buildPhases = (
+				CC6FF735671F449F9C2648CE /* Sources */,
+				C256139CC24DF37B10C1B98E /* Frameworks */,
+				D218F4D703A1A671F1F0A409 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				653E80F42AF6DC96FC6232B1 /* ../PasskeyVaultHarness */,
+			);
+			name = PasskeyVaultHarness;
+			packageProductDependencies = (
+			);
+			productName = PasskeyVaultHarness;
+			productReference = 524CDFDE34A90C3A8BE35444 /* PasskeyVaultHarness.app */;
+			productType = "com.apple.product-type.application";
 		};
 		F4C1A4AB302B0A9A00C58DEB /* PasskeyVault */ = {
 			isa = PBXNativeTarget;
@@ -327,6 +327,9 @@
 					3995FEC5A108122F43B310EA = {
 						CreatedOnToolsVersion = 26.6;
 					};
+					9AB3CA3E39BF34809663F83D = {
+						CreatedOnToolsVersion = 26.6;
+					};
 					F4C1A4AB302B0A9A00C58DEB = {
 						CreatedOnToolsVersion = 26.6;
 					};
@@ -337,9 +340,6 @@
 					F4C1A4C2302B0A9C00C58DEB = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = F4C1A4AB302B0A9A00C58DEB;
-					};
-					9AB3CA3E39BF34809663F83D = {
-						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -423,18 +423,18 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		CC6FF735671F449F9C2648CE /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		585CEF5501C74197B7FE3827 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				885B8A3979461D4BA7554003 /* pv_ffi.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CC6FF735671F449F9C2648CE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -534,6 +534,39 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		D8A9C8AA5156BF5B32A723D2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = ../PasskeyVaultHarness/PasskeyVaultHarness.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 4S7F2M7YLW;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = cloud.blonie.PasskeyVaultHarness;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
@@ -821,39 +854,6 @@
 				TEST_TARGET_NAME = PasskeyVault;
 			};
 			name = Release;
-		};
-		D8A9C8AA5156BF5B32A723D2 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = ../PasskeyVaultHarness/PasskeyVaultHarness.entitlements;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 4S7F2M7YLW;
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = cloud.blonie.PasskeyVaultHarness;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = NO;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_ENABLE_EXPLICIT_MODULES = NO;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
 		};
 		F8D5135D42B5D95A8A3F63FB /* Release */ = {
 			isa = XCBuildConfiguration;
