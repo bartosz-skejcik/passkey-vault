@@ -129,12 +129,16 @@ exactly the line that gets cut.
   from `INFOPLIST_KEY_*` build settings; there is no hand-written `Info.plist` for the app target
   to edit instead). Gates TOTP QR scanning (`TotpScanView.swift`, this task); scan card remains
   ungated because it remains unbuilt (see DR-38-F).
-- **The app cannot be built in Release** — landmine **L-14**, a `swift-frontend` crash in generated
-  UniFFI code. Debug only; do not try to work around it. **UPDATE, Phase 44 (`DR-44-A` addendum,
-  `ios/IOS-SPIKE-LOG.md` §1o):** re-probed twice at the new iOS 26.2 deployment floor, both runs
-  `** BUILD SUCCEEDED **`, zero crash markers — not yet confirmed durable across a future session,
-  but no longer demonstrated-broken as of this plan. Read the addendum before treating this bullet
-  as still current.
+- ~~**The app cannot be built in Release** — landmine **L-14**, a `swift-frontend` crash in generated
+  UniFFI code.~~ **CLOSED, Phase 44 (§23, Plan 44-07, 2026-08-22).** Re-probed a THIRD time, this
+  session, against this phase's complete final state: `** BUILD SUCCEEDED **`, zero crash markers,
+  the same result as 44-01's own two probes (`DR-44-A` addendum, §1o). Three consecutive clean
+  Release builds at the 26.2 floor now match the evidentiary weight of the three consecutive
+  crashes this same landmine reproduced at the OLD 18.0 floor (2026-08-16 original, 2026-08-20
+  Phase 42 re-probe, 2026-08-22 Phase 43 re-probe) — 3-for-3 clean against 3-for-3 crashed. The WHY
+  (a different target-triple selecting a different `swift-frontend` codegen path for the same
+  generated bindings) remains an inference, never independently confirmed — only the OUTCOME is the
+  load-bearing, closed fact. Read §23 before treating this as still open.
 - **`.planning/` never survives this worktree.** Anything that matters goes in this file,
   `ios/evidence/`, or `docs/`.
 - **`pv-server`'s `family_wide_sharing.rs` has a pre-existing test-isolation flake, found by
@@ -6899,3 +6903,217 @@ never that the system invokes it this way in production.
 Evidence: `ios/evidence/44/44-06-sc-insert-pvfill.log` (empty),
 `ios/evidence/44/44-06-sc-insert-totp-fixture.json` (the independently-known fixture secret/
 algorithm/digits/period), full `sc-insert` transcript in 44-06-SUMMARY.md.
+
+## 23. Phase 44 — whole-phase closing gate, all seven structural gates re-run fresh, SC1-5 roll-up (Plan 44-07, 2026-08-22)
+
+Mirrors §20's own Phase 43 closing pattern: every structural gate re-run FRESH against this phase's
+COMPLETE final state (not cited from any individual plan's own earlier SUMMARY run), then all five
+ROADMAP Phase 44 success criteria answered one by one with a specific evidence citation each. Landmine
+**L-44** (recorded §17/§21, this phase) stays load-bearing for how this section is worded: the system
+calls a SILENT entry point first for save/generate; `prepareInterface(for:)` is second and
+conditional. SC2's and SC3's own ROADMAP wording (`prepareInterfaceForSavePasswordRequest:` /
+`prepareInterfaceForGeneratePasswordsRequest:`) names only the UI-presenting half as if it were THE
+entry point — it is not, and this record does not repeat that error.
+
+### Gate commands, each run fresh this session (not carried forward)
+
+**`scripts/check-ios-gate.sh`'s seven sub-gates, full composer run (no `--only` slicing this time —
+the plan's own acceptance criteria ask for the whole thing, exit code taken from the composer
+itself, not inferred from any individual sub-gate):**
+
+```
+==> SUMMARY: executed sub-gate(s): qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register asset_resolution
+exit 0
+```
+
+Per-gate `PASS[...]` lines, all seven, this run:
+
+1. `PASS[qa05]`: zero `.planning/` commits authored on this branch itself since
+   `6bbee654a1a591970e7c6db4d7c933d580061b07` (excluding `origin/main`); positive control 384
+   commit(s) found under `-- ios/`; `commit_docs` precondition holds.
+2. `PASS[ffi_build]`: `scripts/build-ios.sh` completed — both triples built, Swift bindings
+   generated, XCFramework assembled, its own slice gate ran.
+3. `PASS[ffi_falsifiable]`: `--verify-falsifiable` proved both slice-gate halves (device+simulator)
+   and the WR-03 pv-ffi-object guard can genuinely fail.
+4. `PASS[ffi_opaque]`: bindings provably fresh; zero raw-byte accessors outside sanctioned
+   exceptions.
+5. `PASS[swift_tests]`: scheme `PasskeyVault` present; `xcodebuild test` exit=0 (after 1 L-41
+   retry, the same documented transitional flake §5258 names, not a regression); executed-test
+   count=5 (>0); all five required FFI identifiers matched
+   (`FfiRoundTripTests`×3, `FfiPanicSafetyTests`×2).
+6. `PASS[qa_register]`: every IN-COVERAGE phase with SUMMARY files on disk has a register section
+   carrying at least one row; all 150 row(s) resolve to a real file:line with a non-empty excerpt.
+7. `PASS[asset_resolution]`: for target `PasskeyVaultAutoFill` — 10 distinct asset name(s)
+   referenced (up from §20's 6 — this phase's three new screens each add PV token references), all
+   10 resolve in the target's own synced catalogs (23 distinct resolvable names total, synced
+   folders now include `ios/PasskeyVault/Shared` and `ios/PasskeyVault/PvShared`, where this
+   phase's `SavePasswordConfirmView.swift`/`GeneratePasswordOfferView.swift`/
+   `TextToInsertListView.swift` all live).
+
+**Four standalone audit scripts named by this plan's own `<action>` text, each run fresh against
+this phase's complete file set:**
+
+8. **`bash scripts/audit-extension-network-scope.sh`** — exit 0. `PASS: the AutoFill extension
+   constructs VaultAPI ONLY from the reviewed allow-list
+   (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift), and every such
+   construction site calls ONLY .createItem( (T-43-10, DR-43-A)` — unchanged allow-list; this
+   phase's own SAVE-01 self-heal write (44-04) reuses the same single construction site, not a new
+   one.
+9. **`bash scripts/audit-generator-uses-ffi.sh`** — exit 0. `OVERALL: PASS -- all five checks hold
+   (3 negative, 2 positive)`. Check 2 (a real Swift call site outside the generated bindings) now
+   counts 6 (up from Plan 44-05's own closing count of 6 — unchanged since, confirmed by re-run this
+   session), citing both `GeneratorSheet.swift`'s 3 pre-existing calls and
+   `Shared/GeneratePasswordDispatch.swift:42,59`'s two SAVE-02 dispatch call sites; check 3 confirms
+   all three generator symbols (`generateCharacterPassword`, `generatePassphrase`,
+   `generatePasswordFromRules`) present in the regenerated bindings at `pv_ffi.swift:2509/2523/2545`.
+10. **`python3 scripts/audit-ios-extension-asset-resolution.py`** — exit 0. `PASS -- every
+    referenced asset name resolves in a catalog 'PasskeyVaultAutoFill' actually ships` — this run
+    specifically re-scans the phase's three new screens (`SavePasswordConfirmView.swift`,
+    `GeneratePasswordOfferView.swift`, `TextToInsertListView.swift`, all in `Shared/`), not merely
+    trusting each plan's own earlier pass; per-file coverage is implicit in the target-wide 10/10
+    resolution count (no unresolved name survives a re-scan of the union).
+11. **`bash scripts/audit-ios-identity-store-chokepoint.sh`** — exit 0. `PASS: the identity store is
+    written ONLY from the reviewed allow-list
+    (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift
+    ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 8 enumerated mutation call
+    sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)` — the
+    count is 8, not §20's own 7: Plan 44-04's SAVE-01 self-heal write is the eighth entry
+    (`44-04-SUMMARY.md`'s own chokepoint falsification transcript,
+    `ios/evidence/44/44-04-t2-chokepoint-falsification.log`).
+
+**PHASE-GATE: 11/11 named commands above (7 composer sub-gates + 4 standalone audits) exit 0, this
+session, against this phase's complete final state.** No gate cited from an earlier plan's own
+narrower run without a fresh re-execution here (T-44-15).
+
+### L-14 (Release-configuration UniFFI crash) — re-probed a THIRD time, THIS session
+
+Plan 44-01's own DR-44-A addendum (§1o) recorded two clean Release builds at the new 26.2 floor as
+"newly-fixed, NOT durably proven from two probes alone" and explicitly flagged re-confirmation for
+this closing gate. Re-probed here:
+
+```
+xcodebuild build -configuration Release -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+  -scheme PasskeyVault -destination "platform=iOS Simulator,id=$(cat /private/tmp/pv16.udid)"
+```
+
+**Exit 0, `** BUILD SUCCEEDED **`.** Zero occurrences of `UniffiHandleMap`, `crash`, `Fatal error`,
+or `Segmentation` in the log (`ios/evidence/44/44-07-l14-reprobe-run3.log`). Confirmed as a genuine
+fresh Whole-Module-Optimization compile, not a stale cache reporting success: the log contains 4
+`SwiftDriverJobDiscovery`/`CompileSwift` entries and references this phase's own new files
+(`PVDockGlass`, `SavePasswordConfirmView`, `GeneratePasswordOfferView`, `TextToInsertListView`, 4
+hits each), and the compiler invocation targets `arm64-apple-ios26.2-simulator` (confirmed via a
+literal grep of the swiftc command line in the log), matching DR-44-A's own inferred mechanism (a
+different target-triple selects a different `swift-frontend` codegen path for the same generated
+UniFFI bindings). `IPHONEOS_DEPLOYMENT_TARGET = 26.2` confirmed independently via
+`xcodebuild -showBuildSettings` and 8/8 occurrences in `project.pbxproj`.
+
+**Verdict, stated plainly: L-14 is now closed with evidence, not left open with a count.** Three
+consecutive clean Release builds at the 26.2 floor (44-01's two, `ios/evidence/44/
+44-01-l14-reprobe.log` + `44-01-l14-reprobe-run2.log`, plus this plan's own third,
+`44-07-l14-reprobe-run3.log`) now match the evidentiary weight of the three consecutive crashes this
+same landmine reproduced at the OLD 18.0 floor (2026-08-16 original, 2026-08-20 Phase 42 re-probe,
+2026-08-22 Phase 43 re-probe, §20's own SC6 citation) — 3-for-3 clean against 3-for-3 crashed is a
+matched sample size, not an asymmetric one-off. This record still does not claim the WHY is
+verified (the target-triple-selects-different-codegen-path mechanism remains an inference, never
+independently confirmed via disassembly or a `swift-frontend` bug report) — only the OUTCOME (the
+Release build no longer crashes, reproduced 3/3 at the new floor after crashing 3/3 at the old one)
+is the load-bearing, closed fact. The "Known open items carried into 38" bullet (this file, near
+line 132) is updated in place, revision-not-overwrite, struck through and citing this section — not
+silently dropped.
+
+### ROADMAP Phase 44's five success criteria, answered one by one
+
+**SC1 — deployment floor raised to iOS 26.2, decision recorded, price named.** DR-44-A (§1o,
+`ios/IOS-SPIKE-LOG.md`, Plan 44-01) revises IOS-03 in place (never overwrites it), names the price
+(iOS 18.0–26.1 users lose the app on any future TestFlight/ad-hoc install), names the rejected
+alternative (conditional `@available(iOS 26.2, *)` gating). Verified through the build system, not
+merely read from a file, twice — once by 44-01 (`vtool -show-build-version` on a named
+`pv_ffi*.o` object reporting `minos 26.2`) and again this session (`xcodebuild -showBuildSettings`
+reporting `26.2`, 8/8 `IPHONEOS_DEPLOYMENT_TARGET` occurrences in `project.pbxproj`). All six
+`#available(iOS 26.0, *)` branches and `AvailableFallbackCreateButton` are deleted (44-01); the "iOS
+18 dock fallback untested" open item is closed as no-longer-applicable, not silently dropped.
+**MET.**
+
+**SC2 — SAVE-01, save password.** `prepareInterface(for: ASSavePasswordRequest)` (the header-correct
+name, not ROADMAP's own stale `prepareInterfaceForSavePasswordRequest:` — see L-44) is implemented
+and proven LIVE, system-routed, receiver-side, not the pre-authorized did-not-fire fallback (Plan
+44-04). `scripts/ios-autofill-e44.sh sc-save` drives the generate-seeded chain (configuration X,
+44-03's own finding) against a real, isolated `pv-server`; the extension's own `PVFILL|` log shows
+the full pipeline completing (`ios/evidence/44/44-04-sc-save-pvfill.log`). Receiver-side proof: an
+INDEPENDENT `pv-wasm` client (never this extension's own process) decrypts the server-visible item
+and byte-matches the harness's own separately-captured ground truth —
+`ios/evidence/44/44-04-sc-save-before.json` (`found:false`, the absence control) →
+`ios/evidence/44/44-04-sc-save-after.json` (`found:true`, byte-matched password). **MET, and this is
+the one surface among the three this phase built that is genuinely live-system-routed, not merely
+handled-and-correct-when-invoked** — see SC3/SC4/SC5's own honest limitations below.
+
+**SC3 — SAVE-02, generate.** `prepareInterface(for: ASGeneratePasswordsRequest)` (again the
+header-correct name) and its silent sibling both share one real, `pv-ffi`-sourced, rules-aware
+dispatch (`Shared/GeneratePasswordDispatch.swift`, Plan 44-05); the candidate genuinely comes from
+`pv-core`'s CSPRNG through `pv-ffi`, never Swift's native RNG —
+`scripts/audit-generator-uses-ffi.sh` OVERALL: PASS, re-confirmed this session (see gate command #9
+above). **The system's own QuickType "Strong Password" affordance can only ever reach the SILENT
+handler on this toolchain** — `prepareInterface(for: ASGeneratePasswordsRequest)` (the interactive
+UI variant) does NOT fire even once the silent handler answers with a real candidate, settled live
+and negative by Plan 44-05 (`ios/IOS-SPIKE-LOG.md` §21), falsifying 44-03's own hypothesis that a
+real (non-`.userCanceled`) answer would cause escalation. **MET (handled and CSPRNG-correct), with
+the explicit limitation that only the silent variant is ever observed to fire live** —
+`ios/evidence/44/44-05-sc-generate-pvfill.log` shows `entry=generate-silent stage=generate
+status=ok`; no `generate-ui` line exists in any captured transcript across this phase.
+
+**SC4 — SAVE-03, text-to-insert.** `prepareInterfaceForUserChoosingTextToInsert()` (the
+capability's actual name, iOS 18+, no 26.2 gate) is a real, lock-gated implementation: scans the
+cold cache only (no network call, FILL-05's offline discipline) for genuine `type == "totp"` items,
+bounds to 5, sorts by name, recomputes the code FRESH at selection time via `pv-ffi`'s `totpNow`
+(Plan 44-06). **Two independent, dedicated live-drive attempts across two plans (44-03's own probe
+with no cached item to offer, then 44-06's genuinely fresh attempt with a real seeded TOTP item, a
+new `.oneTimeCode` harness field, and two independent trigger shapes) both concluded the same
+negative: this override never fired.** `ios/evidence/44/44-06-sc-insert-pvfill.log` is empty — no
+`PVFILL|entry=text-insert` line in the run. Receiver-correctness (the override's own decode/recompute
+logic, proven correct when invoked) comes from the plan's own pre-authorized direct-invocation
+fallback: a real XCUITest tap exercises the SAME `TextToInsertDispatch.freshCode` call the production
+override makes, matching an INDEPENDENT RFC 6238 oracle (`scripts/totp-oracle.py`) for the same
+secret/time. **MET (handled, with the capability correctly declared), but never observed firing live
+on this toolchain after a genuine, dedicated attempt** — this is the phase's weakest-evidenced
+criterion of the three feature SCs, stated plainly rather than flattened into a bare PASS.
+
+**SC5 — SAVE-04, all three surfaces render visibly (pixel assertion, not accessibility-tree
+presence).** `.planning/REQUIREMENTS.md`'s own SAVE-04 comment (Plan 44-06's per-surface ledger,
+quoted here verbatim rather than paraphrased) is the authoritative record: **surface 1 (save
+confirm, 44-04) is a LIVE, system-routed screenshot — the only one of the three that actually passed
+through the real AutoFill system** (`ios/evidence/44/44-04-sc-save-confirm-GREEN.png`, 1156/267059
+matching samples; RED control 0 matching samples, genuinely unresolved asset, never a wrong-hex
+substitution). **Surfaces 2 (generate offer, 44-05) and 3 (text-to-insert list, 44-06) are BOTH
+direct-invocation proofs** — the plan's own pre-authorized fallback for a surface whose live routing
+could not be reached, rendering the EXACT production SwiftUI view from a debug-gated host-app route
+(`GeneratePasswordOfferPreviewHost`/`PV_PROBE_E44_05_OFFER`,
+`TextToInsertListPreviewHost`/`PV_PROBE_E44_06_INSERT`), each with its own RED-then-GREEN pair
+(`44-05-sc-generate-offer-RED.png`→`GREEN.png`, 0/74→818/269558 samples;
+`44-06-sc-insert-list-RED.png`→`GREEN.png`, 0/24→657/324453 samples). **Stated precisely, per this
+plan's own non-negotiable instruction: three pixel proofs exist, but only ONE of them went through
+the real system — this is NOT "all three surfaces render in the real flow," it is "all three
+surfaces render correctly when invoked, and one of the three invocations was ever proven to happen
+live."** **MET, under that stated limitation.**
+
+### Standing limitation, restated for the whole phase (ROADMAP's own "Ograniczenie dowodu")
+
+**Real-hardware behavior of the two brand-new iOS 26.2 methods remains entirely unverified by this
+phase.** Every proof above is simulator-only (pinned `PV-iPhone16`, iOS 26.5 SDK via Xcode 26.6);
+Bartek's own real device runs iOS 27.0, a newer SDK than this toolchain can target, and is the
+final judge — exactly the standing limitation Phase 43's own closing gate (§20) stated for SC2/SC3,
+where two real defects (the "Add Passkey" vs "Continue" label mismatch, the deprecated-overload
+question §19a settled) surfaced only on device. This phase's own SC2/SC3-analogous negative
+findings (the interactive generate variant and the text-to-insert picker never firing live on the
+simulator) are RECORDED AS SIMULATOR FINDINGS, not extrapolated to real hardware — it remains
+possible, not merely hoped, that iOS 27.0 on real hardware routes either or both differently than
+this toolchain's 26.5-SDK simulator does. No claim in this section should be read as covering that
+gap.
+
+### A caught defect from mid-phase, noted rather than hidden
+
+Plan 44-04's own executor marked SAVE-04 `[x]` in `REQUIREMENTS.md` while the third surface
+(text-to-insert) did not yet exist — this was reverted and closed properly by Plan 44-06 once the
+third pixel proof actually landed. Recorded here as exactly the class of defect this project's own
+QA-01/§19 discipline exists to catch (a checkbox marked true in the artifact before it was true in
+reality), not as a scandal — the correction happened within the same phase, before this closing gate
+ever ran.
