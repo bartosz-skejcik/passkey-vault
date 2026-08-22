@@ -1013,6 +1013,24 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
         let runSavePipeline: () -> Void = { [weak self] in
             guard let self else { return }
+            // WR-01 (44-REVIEW.md): expiry in this codebase is LAZY -- it only happens when
+            // `checkAndExpireIfNeeded` is called, which is what deletes the key artifact. The
+            // preflight check above ran once, at the TOP of `prepareInterface`, BEFORE the
+            // confirmation sheet was ever shown; this closure runs later, after an
+            // unbounded user-visible delay (the user reading/confirming the sheet). A session
+            // that crosses its ceiling while the sheet is on screen would otherwise never be
+            // expired, `SessionKeyReader.importUserKey()` would still succeed, and the write
+            // would proceed against a session that should be locked. Re-run the SAME gate here,
+            // before the key read, never merely trusting the earlier result.
+            guard
+                SessionLifecycle.checkAndExpireIfNeeded(
+                    entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete
+                ) == .unlocked
+            else {
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=confirm status=expired-before-write")
+                self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                return
+            }
             Task {
                 let itemId = UUID().uuidString.lowercased()
                 // `<action>` (44-04-PLAN.md): `name` derived from `request.title` when present and
