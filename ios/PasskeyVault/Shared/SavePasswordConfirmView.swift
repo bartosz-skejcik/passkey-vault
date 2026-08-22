@@ -38,6 +38,15 @@ struct SavePasswordConfirmView: View {
     let onConfirm: () -> Void
     let onCancel: () -> Void
 
+    /// WR-02 (44-REVIEW.md): the button was not disabled after the first tap, so a double-tap
+    /// invoked `onConfirm` twice -- `CredentialProviderViewController`'s own `saveCompleted`
+    /// one-shot flag is the load-bearing fix (this is a SwiftUI view, re-created per system
+    /// presentation, so it cannot itself be the single source of truth across the extension's
+    /// lifetime) -- but disabling the button here too is real defense in depth: it stops the
+    /// SECOND tap from ever calling `onConfirm` at all, rather than relying solely on the VC
+    /// discarding a call it didn't need.
+    @State private var confirmTapped = false
+
     private var displayUsername: String {
         username.isEmpty ? "this account" : username
     }
@@ -100,7 +109,11 @@ struct SavePasswordConfirmView: View {
             .padding(.bottom, 16)
 
             VStack(spacing: 9) {
-                Button(action: onConfirm) {
+                Button(action: {
+                    guard !confirmTapped else { return }
+                    confirmTapped = true
+                    onConfirm()
+                }) {
                     Text(verbatim: "Save password")
                         .font(.system(size: 17, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -110,6 +123,7 @@ struct SavePasswordConfirmView: View {
                 .foregroundStyle(Color("PVOnAccent"))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityIdentifier("savePassword.confirm")
+                .disabled(confirmTapped)
 
                 Button(action: onCancel) {
                     Text(verbatim: "Cancel")
@@ -119,6 +133,7 @@ struct SavePasswordConfirmView: View {
                 }
                 .foregroundStyle(Color("PVTextMuted"))
                 .accessibilityIdentifier("savePassword.cancel")
+                .disabled(confirmTapped)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 10)

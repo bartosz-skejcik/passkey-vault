@@ -44,6 +44,11 @@ struct GeneratePasswordOfferView: View {
     let onUse: () -> Void
     let onCancel: () -> Void
 
+    /// WR-02 (44-REVIEW.md): mirrors `SavePasswordConfirmView`'s own `confirmTapped` fix --
+    /// `CredentialProviderViewController`'s `generatePasswordOfferUsed` one-shot flag is the
+    /// load-bearing fix; disabling here too stops the second tap from calling `onUse` at all.
+    @State private var useTapped = false
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
@@ -114,7 +119,11 @@ struct GeneratePasswordOfferView: View {
             .padding(.bottom, 16)
 
             VStack(spacing: 9) {
-                Button(action: onUse) {
+                Button(action: {
+                    guard !useTapped else { return }
+                    useTapped = true
+                    onUse()
+                }) {
                     Text(verbatim: "Use this password")
                         .font(.system(size: 17, weight: .semibold))
                         .frame(maxWidth: .infinity)
@@ -124,6 +133,7 @@ struct GeneratePasswordOfferView: View {
                 .foregroundStyle(Color("PVOnAccent"))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .accessibilityIdentifier("generatePassword.use")
+                .disabled(useTapped)
 
                 Button(action: onCancel) {
                     Text(verbatim: "Cancel")
@@ -133,6 +143,7 @@ struct GeneratePasswordOfferView: View {
                 }
                 .foregroundStyle(Color("PVTextMuted"))
                 .accessibilityIdentifier("generatePassword.cancel")
+                .disabled(useTapped)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 10)

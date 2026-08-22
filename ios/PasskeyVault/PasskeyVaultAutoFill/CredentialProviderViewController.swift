@@ -922,6 +922,25 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// silently accepted.
     private static let saveFieldMaxBytes = 4096
 
+    /// WR-02 (44-REVIEW.md): `Button(action: onConfirm)` in `SavePasswordConfirmView` is not
+    /// disabled after the first tap, and `runSavePipeline` (below) spawns a fresh detached `Task`
+    /// on every invocation with a fresh `UUID()` -- two rapid taps therefore produced two
+    /// encrypted items, two `POST /api/vault/items`, two `IdentityStoreSync.upsertOne` writes, and
+    /// two `completeSavePasswordRequest` calls on the SAME `extensionContext` (completing an
+    /// already-completed extension context is not a supported operation). Checked-and-set at the
+    /// very top of `runSavePipeline`, before any async work starts, so at most one invocation per
+    /// `ASSavePasswordRequest` ever proceeds -- one instance of this view controller serves
+    /// exactly one system request, so this is safe as a plain instance property (no actor
+    /// isolation needed: both the direct `.generatedPasswordFilled` call and the confirm-sheet
+    /// `onConfirm` call happen on the main thread, same as every other AutoFill entry point in
+    /// this file).
+    private var saveCompleted = false
+
+    /// WR-02 (44-REVIEW.md), the same double-tap shape as `saveCompleted` above, applied to
+    /// `GeneratePasswordOfferView`'s own "Use this password" -- see the `onUse` closure in
+    /// `prepareInterface(for: ASGeneratePasswordsRequest)` for the load-bearing check-and-set.
+    private var generatePasswordOfferUsed = false
+
     /// Phase 44 (44-04-PLAN.md, SAVE-01), real implementation. The SYSTEM'S ACTUAL first entry
     /// point for a save (Landmine L-44, `ios/IOS-SPIKE-LOG.md`) -- per the SDK header
     /// (`ASCredentialProviderViewController.h`, "Attempt to save a password credential" doc
@@ -1013,6 +1032,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
 
         let runSavePipeline: () -> Void = { [weak self] in
             guard let self else { return }
+            // WR-02 (44-REVIEW.md): checked-and-set BEFORE any other work, including the WR-01
+            // lock re-check below -- a double-tap on "Save password" (or a duplicate
+            // `.generatedPasswordFilled` dispatch) must never reach a second attempt at all, not
+            // merely fail a later check.
+            guard !self.saveCompleted else {
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=confirm status=already-completed")
+                return
+            }
+            self.saveCompleted = true
             // WR-01 (44-REVIEW.md): expiry in this codebase is LAZY -- it only happens when
             // `checkAndExpireIfNeeded` is called, which is what deletes the key artifact. The
             // preflight check above ran once, at the TOP of `prepareInterface`, BEFORE the
@@ -1225,6 +1253,15 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 candidate: value,
                 onUse: { [weak self] in
                     guard let self else { return }
+                    // WR-02 (44-REVIEW.md): the same double-tap shape as `SavePasswordConfirmView`
+                    // -- `completeGeneratePasswordRequest` on an already-completed
+                    // `extensionContext` is not a supported operation. Checked-and-set BEFORE the
+                    // completion call, never after.
+                    guard !self.generatePasswordOfferUsed else {
+                        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=offer status=already-used")
+                        return
+                    }
+                    self.generatePasswordOfferUsed = true
                     Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=offer status=used")
                     self.extensionContext.completeGeneratePasswordRequest(
                         results: [Self.makeGeneratedPassword(value)], completionHandler: nil
