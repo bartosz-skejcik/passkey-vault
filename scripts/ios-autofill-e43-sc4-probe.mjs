@@ -230,6 +230,52 @@ async function doFindLogin(email, password, wantUsername, outFile) {
   console.log(JSON.stringify({ found: result.found, rowCount: rows.length, decryptFailures, parseFailures }));
 }
 
+/** Plan 44-06, Task 2 (`sc-insert`'s own seeding step). Signs in to an ALREADY-registered account
+ * and creates ONE real, server-visible TOTP item -- via THIS independent `pv-wasm` client's own
+ * `encryptItem` call, never iOS's own encryption path, so the secret/algorithm/digits/period this
+ * script already knows are a genuine independent ground truth for the RFC 6238 oracle comparison
+ * later (`scripts/totp-oracle.py`). Mirrors `createVaultItem`'s own real production shape
+ * (`web/src/lib/vault/store.ts`): mint the id client-side, `encryptItem(uk, plaintext, id, 1)`,
+ * split the combined `{enc_key, enc_data}` JSON into the two independently-stringified columns
+ * `POST /api/vault/items` expects (`splitCombinedEncryptedItem`'s own documented shape). Writes
+ * `{id, name, secretB32, algorithm, digits, period}` to `outFile` -- the plaintext parameters the
+ * driving script needs for its own independent oracle comparison, never anything server-derived. */
+async function doCreateTotp(email, password, name, secretB32, algorithm, digits, period, outFile) {
+  const { mod, uk, token } = await signIn(email, password);
+
+  const id = crypto.randomUUID();
+  const fields = {
+    type: "totp",
+    name,
+    folderId: null,
+    tags: [],
+    secret: secretB32,
+    issuer: "",
+    algorithm,
+    digits: Number(digits),
+    period: Number(period),
+    notes: "",
+  };
+  const plaintext = JSON.stringify(fields);
+  const combinedJson = mod.encryptItem(uk, plaintext, id, 1);
+  const combined = JSON.parse(combinedJson);
+  const encKey = JSON.stringify(combined.enc_key);
+  const encData = JSON.stringify(combined.enc_data);
+
+  const created = await req("POST", "/api/vault/items", {
+    body: { id, enc_key: encKey, enc_data: encData },
+    token,
+  });
+  if (created.status !== 201) fail(`create-totp: expected 201, got ${created.status}: ${JSON.stringify(created.body)}`);
+
+  const fs = await import("node:fs");
+  fs.writeFileSync(
+    outFile,
+    JSON.stringify({ id, name, secretB32, algorithm, digits: Number(digits), period: Number(period) }, null, 2),
+  );
+  console.log(JSON.stringify({ id, status: created.status }));
+}
+
 async function main() {
   if (action === "register") {
     const [email, password] = rest;
@@ -243,8 +289,14 @@ async function main() {
     const [email, password, wantUsername, outFile] = rest;
     if (!email || !password || !wantUsername || !outFile) fail("find-login requires <email> <password> <wantUsername> <outFile>");
     await doFindLogin(email, password, wantUsername, outFile);
+  } else if (action === "create-totp") {
+    const [email, password, name, secretB32, algorithm, digits, period, outFile] = rest;
+    if (!email || !password || !name || !secretB32 || !algorithm || !digits || !period || !outFile) {
+      fail("create-totp requires <email> <password> <name> <secretB32> <algorithm> <digits> <period> <outFile>");
+    }
+    await doCreateTotp(email, password, name, secretB32, algorithm, digits, period, outFile);
   } else {
-    fail(`unknown action: ${action} (expected register|snapshot|find-login)`);
+    fail(`unknown action: ${action} (expected register|snapshot|find-login|create-totp)`);
   }
 }
 

@@ -1,0 +1,8 @@
+{
+  "id": "5e64c3f9-b99e-43a1-9fd5-89f2851a39bc",
+  "name": "PV Live TOTP",
+  "secretB32": "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
+  "algorithm": "SHA1",
+  "digits": 8,
+  "period": 30
+}

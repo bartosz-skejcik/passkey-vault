@@ -553,6 +553,136 @@ final class SavePasswordFormHarnessUITests: XCTestCase {
         attachDiagnostics(app: harness, label: "sc-save-final-state-confirmTapped=\(confirmTapped)")
     }
 
+    /// Plan 44-06, Task 2 (`sc-insert`'s own live drive attempt). Unlike `testDriveSaveViaGeneratedPassword`
+    /// (a proven-fires configuration), this surface's own live-invocation history
+    /// (`ios/IOS-SPIKE-LOG.md`: never observed to fire, Plan 44-03) means this method is a genuine
+    /// experiment, not a proven-configuration replay -- reported honestly either way via a named,
+    /// distinctly-attached screenshot, never silently treated as equivalent to the other outcome.
+    ///
+    /// Taps `savePasswordForm.otpField` (`.textContentType(.oneTimeCode)`, added this plan) with
+    /// NO typing (typing would replace any QuickType suggestion with the user's own draft, the
+    /// SAME precondition `testDriveGeneratePasswordAffordance`'s own header documents for the
+    /// generate path), then polls across `[harness, springboard]` for either a directly-driveable
+    /// QuickType suggestion OR the "Passwords" keyboard-accessory -> "PasskeyVault" provider-row
+    /// chain `testDriveGeneratePasswordOffer`'s own header already establishes as this codebase's
+    /// second, independent trigger shape for reaching a specific provider surface. If either path
+    /// leads to our own `textToInsert.row.*` accessibility identifiers appearing, taps the first
+    /// one found.
+    @MainActor
+    func testDriveTextToInsertAffordance() throws {
+        let harness = XCUIApplication(bundleIdentifier: Self.harnessBundleId)
+        harness.terminate()
+        harness.activate()
+
+        let otpField = harness.textFields["savePasswordForm.otpField"]
+        guard otpField.waitForExistence(timeout: 10) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.otpField never appeared (sc-insert run).")
+            return
+        }
+        attachDiagnostics(app: harness, label: "insert-before-tap")
+
+        otpField.tap()
+        attachDiagnostics(app: harness, label: "insert-after-tap-no-typing")
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let candidateApps = [harness, springboard]
+
+        // Poll directly for our OWN row identifiers first -- covers a QuickType suggestion that
+        // routes straight into `prepareInterfaceForUserChoosingTextToInsert()` with no
+        // intermediate affordance tap.
+        let directDeadline = Date().addingTimeInterval(8)
+        var rowElement: XCUIElement?
+        while Date() < directDeadline && rowElement == nil {
+            for app in candidateApps {
+                let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "textToInsert.row.")
+                let query = app.descendants(matching: .any).matching(predicate)
+                if query.count > 0, query.firstMatch.exists, query.firstMatch.isHittable {
+                    rowElement = query.firstMatch
+                    break
+                }
+            }
+            if rowElement == nil {
+                usleep(500_000)
+            }
+        }
+
+        if rowElement == nil {
+            // Second trigger shape: the "Passwords" keyboard-accessory -> provider-row chain
+            // (`testDriveGeneratePasswordOffer`'s own established precedent).
+            let affordanceLabels = ["Passwords", "AutoFill", "PasskeyVault"]
+            let affordanceDeadline = Date().addingTimeInterval(8)
+            var affordanceElement: XCUIElement?
+            var affordanceLabelMatched: String?
+            while Date() < affordanceDeadline && affordanceElement == nil {
+                for app in candidateApps {
+                    for label in affordanceLabels {
+                        if let element = Self.firstHittableButton(in: app, labelContains: label) {
+                            affordanceElement = element
+                            affordanceLabelMatched = label
+                            break
+                        }
+                    }
+                    if affordanceElement != nil { break }
+                }
+                if affordanceElement == nil { usleep(500_000) }
+            }
+            if let affordanceElement {
+                affordanceElement.tap()
+                attachDiagnostics(app: harness, label: "insert-affordance-tapped-\(affordanceLabelMatched ?? "?")")
+
+                if affordanceLabelMatched != "PasskeyVault" {
+                    let providerRowDeadline = Date().addingTimeInterval(5)
+                    var providerRow: XCUIElement?
+                    while Date() < providerRowDeadline && providerRow == nil {
+                        for app in candidateApps {
+                            if let element = Self.firstHittableButton(in: app, labelContains: "PasskeyVault") {
+                                providerRow = element
+                                break
+                            }
+                        }
+                        if providerRow == nil { usleep(300_000) }
+                    }
+                    if let providerRow {
+                        attachDiagnostics(app: harness, label: "insert-provider-row-found")
+                        providerRow.tap()
+                        attachDiagnostics(app: harness, label: "insert-provider-row-tapped")
+                    } else {
+                        attachDiagnostics(app: harness, label: "insert-provider-row-NOT-FOUND")
+                    }
+                }
+
+                let rowDeadline = Date().addingTimeInterval(10)
+                while Date() < rowDeadline && rowElement == nil {
+                    for app in candidateApps {
+                        let predicate = NSPredicate(format: "identifier BEGINSWITH %@", "textToInsert.row.")
+                        let query = app.descendants(matching: .any).matching(predicate)
+                        if query.count > 0, query.firstMatch.exists, query.firstMatch.isHittable {
+                            rowElement = query.firstMatch
+                            break
+                        }
+                    }
+                    if rowElement == nil { usleep(500_000) }
+                }
+            } else {
+                attachDiagnostics(app: harness, label: "insert-affordance-NOT-FOUND")
+            }
+        }
+
+        guard let rowElement else {
+            // Honest negative -- recorded plainly, never treated as a substitute for a positive
+            // finding. `scripts/ios-autofill-e44.sh sc-insert`'s own `PVFILL|` log grep (not this
+            // test's PASS/FAIL) is the load-bearing evidence either way.
+            attachDiagnostics(app: harness, label: "insert-row-NOT-FOUND")
+            return
+        }
+
+        attachDiagnostics(app: harness, label: "insert-row-found")
+        rowElement.tap()
+        attachDiagnostics(app: harness, label: "insert-row-after-tap")
+        sleep(2)
+        attachDiagnostics(app: harness, label: "insert-final-state")
+    }
+
     private static let harnessLogger = Logger(subsystem: "cloud.blonie.PasskeyVaultHarness", category: "sc-generate")
 
     @MainActor

@@ -38,6 +38,8 @@ SC_GENERATE_SERVER_PORT=8902
 # SC_GENERATE_SERVER_PORT (8902) -- all three throwaway-server scripts can run in the same session
 # without colliding.
 SC_SAVE_SERVER_PORT=8903
+# Plan 44-06, Task 2: a distinct port again from all three above.
+SC_INSERT_SERVER_PORT=8904
 # Reused, never duplicated -- `scripts/ios-autofill-e43-sc4-probe.mjs`'s own `find-login` action
 # (added by this plan) is the SAME real `pv-wasm` client `sc4`/`sc-generate`'s own receiver-side
 # proofs already trust (the E-W1 precedent).
@@ -47,6 +49,7 @@ usage() {
   echo "Usage: $0 probe [--run2] [--assert-only <path> [--run2]]" >&2
   echo "       $0 sc-generate [--skip-red-control]" >&2
   echo "       $0 sc-save [--skip-red-control]" >&2
+  echo "       $0 sc-insert [--skip-red-control]" >&2
   exit 1
 }
 
@@ -997,6 +1000,398 @@ sc_save_direct_invocation_pixel_proof() {
   echo "CONFIRMED RED: measure-ios-color-token.py correctly FAILED against the genuinely unresolved-asset render (exit $red_status)"
 }
 
+# `sc-insert`: Plan 44-06, Task 2 (SAVE-03's own live drive + receiver-correctness proof + SAVE-04
+# pixel proof for the text-to-insert surface). Seeds a REAL, throwaway account against a REAL,
+# isolated, throwaway `pv-server` and creates ONE real, server-visible TOTP item via an
+# INDEPENDENT `pv-wasm` client (`scripts/ios-autofill-e43-sc4-probe.mjs create-totp` -- never this
+# app's own encryption path, so the secret/algorithm/digits/period are a genuine independent
+# ground truth). Then signs IN (`TotpInsertSc6Seeder`, real sync pull, `PasskeyInteropSeeder`'s own
+# established shape) so the extension's own cold cache genuinely holds the item, and attempts ONE
+# genuine live drive (`testDriveTextToInsertAffordance`) before falling back to the plan's own
+# pre-authorized direct-invocation route if `prepareInterfaceForUserChoosingTextToInsert()` does
+# not fire live (this surface's own historical finding, `ios/IOS-SPIKE-LOG.md`: never observed to
+# fire, Plan 44-03).
+#
+# `--skip-red-control`: skip the mandatory RED-control mutation/rebuild/revert cycle
+# (44-PLAN-CHECK.md W4) -- only for a quick iteration re-run; the plan's own acceptance criteria
+# require the RED control to have been run and recorded at least once.
+cmd_sc_insert() {
+  mkdir -p "$EVIDENCE_DIR"
+  local skip_red_control=0
+  if [ "${1:-}" = "--skip-red-control" ]; then
+    skip_red_control=1
+  fi
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> sc-insert: pinned simulator UDID: $udid"
+
+  # --- throwaway, isolated pv-server (D-23 discipline: never the developer's own data/pv.db) ----
+  local server_pid="" db_dir=""
+  cleanup_sc_insert() {
+    if [ -n "${server_pid:-}" ]; then
+      kill "$server_pid" >/dev/null 2>&1 || true
+      wait "$server_pid" 2>/dev/null || true
+    fi
+    if [ -n "${db_dir:-}" ]; then
+      rm -rf "$db_dir"
+    fi
+  }
+  trap cleanup_sc_insert EXIT
+
+  if lsof -nP -i ":${SC_INSERT_SERVER_PORT}" 2>/dev/null | grep -q LISTEN; then
+    echo "ERROR: something is already listening on :${SC_INSERT_SERVER_PORT} -- refusing to proceed" >&2
+    exit 1
+  fi
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+    exit 1
+  fi
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e44-06-sc-insert.XXXXXX")
+  local db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+  local server_base="http://127.0.0.1:${SC_INSERT_SERVER_PORT}"
+  PV_ADDR="127.0.0.1:${SC_INSERT_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "${db_dir}/pv-server.log" 2>&1 &
+  server_pid=$!
+  local healthy=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+    cat "${db_dir}/pv-server.log" >&2
+    exit 1
+  fi
+  echo "==> sc-insert: pv-server healthy on ${server_base} (isolated, throwaway db)"
+
+  # --- real, throwaway account + one real TOTP item, via the SAME real pv-wasm client
+  # scripts/ios-autofill-e43.sh's own sc4 already trusts (E-W1) -----------------------------------
+  local wasm_glue="${REPO_ROOT}/web/src/lib/crypto/wasm/pv_wasm.js"
+  local wasm_bytes="${REPO_ROOT}/web/public/wasm/pv_wasm_bg.wasm"
+  if [ ! -f "$wasm_glue" ] || [ ! -f "$wasm_bytes" ]; then
+    echo "ERROR: pv-wasm artifact missing (${wasm_glue} / ${wasm_bytes}). Run scripts/build-wasm.sh first." >&2
+    exit 1
+  fi
+  local sc_insert_email sc_insert_password
+  sc_insert_email="pv-e44-06-sc-insert-$(date +%s)@example.invalid"
+  sc_insert_password="pv-e44-06 sc-insert fixture password $(date +%s) $$"
+  # RFC 6238 Appendix B's own SHA1 test secret -- the SAME literal `TotpFfiTests.swift`/
+  # `TextToInsertDispatchTests.swift`/`scripts/totp-oracle.py --selftest` all already trust
+  # (never a fresh, unvalidated secret for this plan's own live drive).
+  local totp_name="PV Live TOTP" totp_secret="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" totp_algo="SHA1" totp_digits=8 totp_period=30
+
+  echo "==> sc-insert: registering throwaway account ${sc_insert_email} + one real TOTP item via independent pv-wasm client"
+  node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "$sc_insert_password" \
+    >> "${db_dir}/sc-insert.log" 2>&1 || { echo "ERROR: account registration failed -- see ${db_dir}/sc-insert.log" >&2; exit 1; }
+  local totp_out_file="$EVIDENCE_DIR/44-06-sc-insert-totp-fixture.json"
+  node "$SC4_PROBE_SCRIPT" create-totp "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "$sc_insert_password" \
+    "$totp_name" "$totp_secret" "$totp_algo" "$totp_digits" "$totp_period" "$totp_out_file" \
+    >> "${db_dir}/sc-insert.log" 2>&1 || { echo "ERROR: create-totp failed -- see ${db_dir}/sc-insert.log" >&2; cat "${db_dir}/sc-insert.log" >&2; exit 1; }
+  echo "==> sc-insert: one real, server-visible TOTP item created ($totp_out_file)"
+
+  # --- build+install app+extension (PV_PROBE_E44_06_SEED, for the real-sign-in+real-sync seeder)
+  # + harness ---------------------------------------------------------------------------------------
+  echo "==> sc-insert: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> sc-insert: building PasskeyVault app+extension (PV_PROBE_E44_06_SEED)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-build.log build "PV_PROBE_E44_06_SEED"
+
+  echo "==> sc-insert: building PasskeyVaultHarness app"
+  build_with_l10_retry "$udid" "PasskeyVaultHarness" /tmp/pv-e44-06-harness-build.log build
+
+  echo "==> sc-insert: building the UI test bundle (PasskeyVaultUITests)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-build-for-testing.log build-for-testing "PV_PROBE_E44_06_SEED"
+
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl install "$udid" "$HARNESS_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+
+  # First launch: creates the App Group container on disk.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+
+  local seed_input_file="${group_dir}/pv-44-06-sc-insert-seed.json"
+  local status_file="${group_dir}/e44-06-sc-insert-seed-status.json"
+  rm -f "$status_file"
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${sc_insert_email}\",\"password\":\"${sc_insert_password}\"}" \
+    > "$seed_input_file"
+  echo "==> sc-insert: launching host app to seed a REAL sign-in + REAL sync pull (TotpInsertSc6Seeder)"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "$status_file" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: TotpInsertSc6Seeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "$status_file"; then
+    echo "ERROR: TotpInsertSc6Seeder reported a non-ok status:" >&2
+    cat "$status_file" >&2
+    exit 1
+  fi
+  echo "==> sc-insert: seed confirmed ok (real sign-in + real sync pull -- the TOTP item is genuinely cached)"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  xcrun simctl launch --terminate-running-process "$udid" "$HARNESS_BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 1
+
+  local out_root="ios/PasskeyVault/build/sc-insert"
+  rm -rf "$out_root"
+  mkdir -p "$out_root"
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+
+  local result="$out_root/result.xcresult"
+  local ui_test_log="$out_root/xcodebuild.log"
+  local ui_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests/testDriveTextToInsertAffordance \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    -resultBundlePath "$result" \
+    test > "$ui_test_log" 2>&1 || ui_result=$?
+
+  echo "==> sc-insert: XCUITest drive exit $ui_result (see $ui_test_log)"
+
+  # --- routing verdict: from the EXTENSION process's own os_log --------------------------------
+  local ext_log="$out_root/extension-pvfill.log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep 'PVFILL|entry=text-insert' > "$ext_log" || true
+  cp "$ext_log" "$EVIDENCE_DIR/44-06-sc-insert-pvfill.log"
+
+  local fired=0
+  if grep -q 'PVFILL|entry=text-insert stage=select status=ok' "$ext_log"; then
+    fired=1
+    echo "VERDICT: prepareInterfaceForUserChoosingTextToInsert() FIRED and a selection was completed -- $(grep 'PVFILL|entry=text-insert stage=select' "$ext_log" | head -1)"
+  elif grep -q 'PVFILL|entry=text-insert' "$ext_log"; then
+    echo "VERDICT: prepareInterfaceForUserChoosingTextToInsert() fired, but no selection was completed in this run:"
+    grep 'PVFILL|entry=text-insert' "$ext_log"
+  else
+    echo "VERDICT: prepareInterfaceForUserChoosingTextToInsert() did NOT fire in this run (this surface's own historical finding, ios/IOS-SPIKE-LOG.md -- reported honestly, not assumed)"
+  fi
+
+  # --- SAVE-04 pixel proof + receiver-correctness ------------------------------------------------
+  local pv_accent_hex pv_bg_hex
+  pv_accent_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVAccent.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+  pv_bg_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVBackground.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+
+  if [ "$fired" = "1" ]; then
+    echo "==> sc-insert: TextToInsertListView appeared via LIVE system routing this run -- capturing GREEN pixel proof from the live route"
+    local exported="$out_root/attachments"
+    xcrun xcresulttool export attachments --path "$result" --output-path "$exported" >/dev/null
+    local screenshot_file
+    screenshot_file="$(python3 - "$exported/manifest.json" "insert-row-found" <<'PY'
+import json, sys
+manifest_path, wanted = sys.argv[1], sys.argv[2]
+with open(manifest_path) as f:
+    manifest = json.load(f)
+for test in manifest:
+    for att in test.get("attachments", []):
+        name = att.get("suggestedHumanReadableName") or ""
+        if name == wanted or name.startswith(wanted + "_"):
+            print(att["exportedFileName"])
+            sys.exit(0)
+sys.exit(1)
+PY
+)" || { echo "ERROR: 'insert-row-found' attachment not in the result bundle" >&2; exit 1; }
+    local live_dest="$EVIDENCE_DIR/44-06-sc-insert-list-GREEN.png"
+    cp "$exported/$screenshot_file" "$live_dest"
+    python3 scripts/measure-ios-color-token.py "$live_dest" \
+      --expect "PVAccent=$pv_accent_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+    echo "==> sc-insert: GREEN pixel proof PASSED against the LIVE system-routed screenshot -- SAVE-03 fired and completed a real, system-routed selection against a genuinely cached TOTP item; the receiver-correctness byte-comparison below still runs through the direct-invocation route, since the live path's own PVFILL| line never carries the code value (T-44-14)."
+    sc_insert_direct_invocation_proof "$udid" "$skip_red_control" "$pv_accent_hex" "$pv_bg_hex" "1"
+  else
+    echo "==> sc-insert: prepareInterfaceForUserChoosingTextToInsert() did NOT appear via live system routing (this surface's own historical finding repeats) -- capturing SAVE-04's pixel proof AND the receiver-correctness proof via the plan's own pre-authorized direct-invocation fallback"
+    sc_insert_direct_invocation_proof "$udid" "$skip_red_control" "$pv_accent_hex" "$pv_bg_hex" "0"
+  fi
+
+  exit 0
+}
+
+# The plan's own pre-authorized fallback (and, regardless of live routing, the cheap standalone
+# route for the mandatory RED control -- see `TextToInsertListPreviewHost.swift`'s own header).
+# ALSO the receiver-correctness proof's own route regardless of live-fire outcome (the live path's
+# own `PVFILL|` line never carries the code value, T-44-14, so a byte-level oracle comparison needs
+# a real tap somewhere this script can read the resulting value back from -- `UserDefaults`, never
+# a log line). W4 (44-PLAN-CHECK.md): the RED control MUST be a genuinely unresolved-asset render,
+# never a deliberately-wrong-hex substitution -- temporarily renames `Color("PVAccent")`/
+# `Color("PVBackground")` in `TextToInsertListView.swift` to an unresolvable name, rebuilds,
+# screenshots the resulting (genuinely blank) render, asserts `measure-ios-color-token.py` FAILS
+# against it (`--tolerance 2`, `ios/IOS-SPIKE-LOG.md`'s own §19 anti-false-positive precedent), then
+# reverts and rebuilds to restore the real GREEN artifact.
+sc_insert_direct_invocation_proof() {
+  local udid="$1" skip_red_control="$2" pv_accent_hex="$3" pv_bg_hex="$4" live_fired="$5"
+
+  if [ "$live_fired" != "1" ]; then
+    echo "==> sc-insert: direct-invocation GREEN -- building PasskeyVault with PV_PROBE_E44_06_INSERT"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-insert-build.log build "PV_PROBE_E44_06_INSERT"
+    xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 2
+    local green_dest="$EVIDENCE_DIR/44-06-sc-insert-list-GREEN.png"
+    xcrun simctl io "$udid" screenshot "$green_dest"
+    echo "==> sc-insert: wrote $green_dest (direct-invocation, system routing UNPROVEN for this screen)"
+    python3 scripts/measure-ios-color-token.py "$green_dest" \
+      --expect "PVAccent=$pv_accent_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+    echo "==> sc-insert: direct-invocation GREEN pixel proof PASSED"
+  else
+    echo "==> sc-insert: building PasskeyVault with PV_PROBE_E44_06_INSERT (receiver-correctness route only -- GREEN pixel proof already captured from the live route)"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-insert-build.log build "PV_PROBE_E44_06_INSERT"
+    xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  fi
+
+  # Clear any stale ground-truth marker from a prior run before this one -- UserDefaults on the
+  # HOST app's own bundle id (T-44-06: never App Group, this is the direct-invocation host).
+  xcrun simctl spawn "$udid" defaults delete "$BUNDLE_ID" pv-e44-06-sc-insert-observed-code >/dev/null 2>&1 || true
+  xcrun simctl spawn "$udid" defaults delete "$BUNDLE_ID" pv-e44-06-sc-insert-observed-time >/dev/null 2>&1 || true
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+
+  # Drive a REAL tap on the SwiftUI row -- exercises the SAME `TextToInsertDispatch.freshCode` call
+  # `completeTextToInsert` makes, capturing a genuinely fresh recompute for the receiver-correctness
+  # comparison below.
+  local tap_log="/tmp/pv-e44-06-insert-tap.log"
+  local tap_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/TextToInsertPreviewHostUITests/testTapPreviewRow \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E44_06_INSERT" \
+    test > "$tap_log" 2>&1 || tap_result=$?
+  echo "==> sc-insert: direct-invocation tap drive exit $tap_result (see $tap_log)"
+
+  # LIVE FINDING, this session: `UserDefaults.synchronize()` is a documented no-op on modern iOS
+  # (Apple's own header: "this method is unnecessary and shouldn't be used") -- it does NOT force
+  # an immediate disk flush, unlike what its name/`SavePasswordFormView.swift`'s own comment
+  # implies. The plist write lands asynchronously, on the OS's own schedule, typically within
+  # ~1-2s of the in-memory `set()` call. Reading the plist back IMMEDIATELY after `xcodebuild test`
+  # returns raced this write and lost (`observed-code` present, `observed-time` absent, observed
+  # live). Polled with a bounded retry instead of a single read.
+  local app_container observed_code="" observed_time=""
+  app_container=$(xcrun simctl get_app_container "$udid" "$BUNDLE_ID" data 2>/dev/null || true)
+  if [ -n "$app_container" ]; then
+    local prefs_plist="${app_container}/Library/Preferences/${BUNDLE_ID}.plist"
+    local attempt=0
+    while [ "$attempt" -lt 10 ]; do
+      attempt=$((attempt + 1))
+      if [ -f "$prefs_plist" ]; then
+        observed_code=$(plutil -extract "pv-e44-06-sc-insert-observed-code" raw -o - "$prefs_plist" 2>/dev/null || true)
+        observed_time=$(plutil -extract "pv-e44-06-sc-insert-observed-time" raw -o - "$prefs_plist" 2>/dev/null || true)
+      fi
+      if [ -n "$observed_code" ] && [ -n "$observed_time" ]; then
+        break
+      fi
+      sleep 1
+    done
+  fi
+
+  if [ -n "$observed_code" ] && [ -n "$observed_time" ]; then
+    local oracle_json oracle_code
+    oracle_json=$(python3 scripts/totp-oracle.py --secret GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ --algorithm SHA1 --digits 8 --period 30 --time "$observed_time" --json)
+    oracle_code=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['code'])" "$oracle_json")
+    echo "==> sc-insert: direct-invocation selection observed at t=$observed_time"
+    if [ "$observed_code" = "$oracle_code" ]; then
+      echo "PASS: sc-insert -- the inserted code matches an INDEPENDENT RFC 6238 oracle for the same secret/time (direct-invocation route; recomputed through the SAME TextToInsertDispatch.freshCode call completeTextToInsert makes)"
+    else
+      echo "FAIL: sc-insert -- inserted code ($observed_code) does NOT match the independent oracle ($oracle_code) at t=$observed_time" >&2
+      exit 1
+    fi
+  else
+    echo "ERROR: direct-invocation tap drive never captured an observed code/time -- receiver-correctness proof not obtained this run" >&2
+    exit 1
+  fi
+
+  if [ "$skip_red_control" = "1" ]; then
+    echo "==> sc-insert: --skip-red-control set -- restoring the ordinary (non-probe) build and skipping the RED control"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-restore-build.log build
+    return 0
+  fi
+
+  local view_file="ios/PasskeyVault/Shared/TextToInsertListView.swift"
+  echo "==> sc-insert: RED control -- unresolving PVAccent/PVBackground in $view_file"
+  cp "$view_file" "/tmp/pv-e44-06-listview-backup.swift"
+  sed -i '' \
+    -e 's/Color("PVAccent")/Color("PVAccentZZZUNRESOLVED")/g' \
+    -e 's/Color("PVBackground")/Color("PVBackgroundZZZUNRESOLVED")/g' \
+    "$view_file"
+
+  local restored=0
+  restore() {
+    if [ "$restored" = "0" ]; then
+      cp "/tmp/pv-e44-06-listview-backup.swift" "$view_file"
+      restored=1
+    fi
+  }
+  trap restore EXIT
+
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-red-build.log build "PV_PROBE_E44_06_INSERT"
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  local red_dest="$EVIDENCE_DIR/44-06-sc-insert-list-RED.png"
+  xcrun simctl io "$udid" screenshot "$red_dest"
+  echo "==> sc-insert: RED control screenshot -- $red_dest"
+
+  restore
+  trap - EXIT
+  echo "==> sc-insert: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-restore-build.log build
+
+  set +e
+  python3 scripts/measure-ios-color-token.py "$red_dest" \
+    --expect "PVAccent=$pv_accent_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+  local red_status=$?
+  set -e
+  if [ "$red_status" -eq 0 ]; then
+    echo "ERROR: RED control unexpectedly PASSED -- the unresolved-asset render was not genuinely blank" >&2
+    exit 1
+  fi
+  echo "CONFIRMED RED: measure-ios-color-token.py correctly FAILED against the genuinely unresolved-asset render (exit $red_status)"
+}
+
 main() {
   if [ $# -lt 1 ]; then
     usage
@@ -1031,6 +1426,9 @@ main() {
       ;;
     sc-save)
       cmd_sc_save "${1:-}"
+      ;;
+    sc-insert)
+      cmd_sc_insert "${1:-}"
       ;;
     *)
       usage

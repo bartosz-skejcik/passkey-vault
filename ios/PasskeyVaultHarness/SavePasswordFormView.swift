@@ -111,6 +111,18 @@ struct SavePasswordFormView: View {
     /// the system actually watches for.
     @State private var formDismissed = false
 
+    /// Plan 44-06 (SAVE-03's own live drive). A separate, plain (non-secure) field carrying
+    /// `.textContentType(.oneTimeCode)` -- the content type Apple's own AutoFill design ties to
+    /// verification-code suggestions; `ProvidesTextToInsert`'s own doc comment
+    /// (`ASCredentialProviderViewController.h`) names "a list of any insertable text with
+    /// selectable fields" as this override's own trigger shape, and a one-time-code field is the
+    /// one place iOS already shows a THIRD-PARTY-extensible QuickType suggestion for arbitrary
+    /// inserted text (SMS/Mail codes today; `ProvidesTextToInsert` is this extension's own path
+    /// into that same list). `otpField`'s own `onCreate` capture mirrors `usernameField`/
+    /// `passwordField` above.
+    @State private var otpText: String = ""
+    @State private var otpField: UITextField?
+
     var body: some View {
         VStack(spacing: 16) {
             Text("New-account form (SAVE-01/02 tracer). rpId=vault.blonie.cloud")
@@ -145,6 +157,19 @@ struct SavePasswordFormView: View {
                     submit()
                 }
                 .accessibilityIdentifier("savePasswordForm.submit")
+
+                // Plan 44-06 -- deliberately OUTSIDE the username/password pair above, its own
+                // separate field so tapping it never disturbs the save/generate fields' own state.
+                PVAutoFillTextField(
+                    text: $otpText,
+                    placeholder: "Verification code",
+                    textContentType: .oneTimeCode,
+                    passwordRules: nil,
+                    isSecure: false,
+                    accessibilityId: "savePasswordForm.otpField",
+                    onCreate: { otpField = $0 }
+                )
+                .frame(height: 36)
             } else {
                 Text("Form removed from screen (formDidDisappear signal)")
                     .font(.caption)

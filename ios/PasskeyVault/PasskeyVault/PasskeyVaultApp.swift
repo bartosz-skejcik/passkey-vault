@@ -213,6 +213,19 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 44, Plan 44-06 (SAVE-03's own live drive). Signs IN (never registers) to an
+        // account `scripts/ios-autofill-e44.sh sc-insert` already registered and populated with
+        // one real TOTP item (an independent `pv-wasm` client's own `POST /api/vault/items`), then
+        // drives the SAME production `VaultStore.refresh()` sync pull every other seeder in this
+        // file establishes. Compiled in only under `PV_PROBE_E44_06_SEED` -- inert for every other
+        // probe. See `TotpInsertSc6Seeder.swift`'s own header for why this deviates from
+        // files_modified (Rule 2, documented in 44-06-SUMMARY.md).
+        #if PV_PROBE_E44_06_SEED
+        Task {
+            await TotpInsertSc6Seeder.seed()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing
@@ -254,6 +267,12 @@ struct PasskeyVaultApp: App {
             // `SavePasswordConfirmView` -- compiled in only under `PV_PROBE_E44_04_CONFIRM`, inert
             // for every other build (never reachable in a real user session).
             SavePasswordConfirmPreviewHost()
+            #elseif PV_PROBE_E44_06_INSERT
+            // Plan 44-06, Task 2 (SAVE-04 direct-invocation route, `TextToInsertListPreviewHost
+            // .swift`'s own header): swaps the ENTIRE root view for a direct render of the real
+            // `TextToInsertListView` -- compiled in only under `PV_PROBE_E44_06_INSERT`, inert for
+            // every other build (never reachable in a real user session).
+            TextToInsertListPreviewHost()
             #else
             ContentView()
                 .snapshotCoverOverlay()
