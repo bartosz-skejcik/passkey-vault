@@ -74,24 +74,17 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 
-    /// The DEPRECATED `ASPasswordCredentialIdentity`-typed sibling of `provideCredentialWithoutUserInteraction(for:)`
-    /// below -- this file's own header (top of file) already names this exact overload as "the
-    /// shipped Xcode 26.6 template walks straight into" trap for PASSWORD identities: it compiles,
-    /// appears to work, and silently never fills, because the current, non-deprecated
-    /// request-typed overload is the one actually used. Logged here purely to settle whether iOS
-    /// 27 (Bartek's real device) reintroduces or prefers this legacy overload for ANY request
-    /// shape, passkey included -- never expected to fire, but never assumed either.
-    override func provideCredentialWithoutUserInteraction(for credentialIdentity: ASPasswordCredentialIdentity) {
-        Self.diagLogger.log("PVDIAG|method=provideCredentialWithoutUserInteraction(for:ASPasswordCredentialIdentity)")
-        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
-    }
-
-    /// The DEPRECATED `ASPasswordCredentialIdentity`-typed sibling of `prepareInterfaceToProvideCredential(for:)`
-    /// below -- same rationale as the override immediately above.
-    override func prepareInterfaceToProvideCredential(for credentialIdentity: ASPasswordCredentialIdentity) {
-        Self.diagLogger.log("PVDIAG|method=prepareInterfaceToProvideCredential(for:ASPasswordCredentialIdentity)")
-        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
-    }
+    // The two DEPRECATED `ASPasswordCredentialIdentity`-typed overloads
+    // (`provideCredentialWithoutUserInteraction(for:)` / `prepareInterfaceToProvideCredential(for:)`)
+    // were overridden here temporarily as pure diagnostics, to settle whether iOS 27 -- newer than
+    // this toolchain's 26.5 SDK -- reintroduces or prefers the legacy shape for any request,
+    // passkey included. MEASURED AND ANSWERED (2026-08-22, spike log section 19a): across every
+    // real-device capture Bartek took on iOS 27.0 -- password fills, passkey assertion in Safari,
+    // passkey registration in Discord and on X -- neither `PVDIAG` line EVER appeared, while
+    // `viewDidLoad`/`viewWillAppear`/`viewDidAppear` and the request-typed overloads did. The
+    // legacy overloads are dead on 27 exactly as they are on 26.5, so the overrides are removed:
+    // they existed to answer a question, the question is answered, and keeping them would ship a
+    // deprecated spelling that `scripts/audit-ios-autofill-deprecated-apis.sh` correctly refuses.
 
     /// Never implemented in production (no `ProvidesTextToInsert` capability declared) -- logged
     /// purely for completeness of "every AS* override this class can implement".

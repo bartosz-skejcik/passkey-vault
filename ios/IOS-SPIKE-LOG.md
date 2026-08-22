@@ -6374,3 +6374,26 @@ source; the SC2/SC3 controlled-stand-in disclosure carried forward rather than d
 whole-phase gate is thirteen-of-fourteen individually-verified green with the fourteenth's red
 state investigated to its root cause and recorded plainly. L-14 remains open, unchanged by this
 phase, and remains Bartek's own call.**
+
+## 19a. The legacy `ASPasswordCredentialIdentity` overloads are dead on iOS 27 too — measured, then removed
+
+**2026-08-22.** While root-causing the blank-registration-sheet report, `cf1dfad` temporarily
+overrode the two DEPRECATED `ASPasswordCredentialIdentity`-typed entry points
+(`provideCredentialWithoutUserInteraction(for:)`, `prepareInterfaceToProvideCredential(for:)`)
+purely to log. The question they existed to answer was real and could not be answered here: Bartek's
+device runs **iOS 27.0** while this toolchain tops out at the **iOS 26.5 SDK**, so "does a newer OS
+reintroduce or prefer the legacy shape?" was genuinely open, and L-1's own lesson says not to assume
+either way.
+
+**Answered by measurement, on real hardware.** Across every capture Bartek took on iOS 27.0 —
+password fills, passkey assertion in Safari, passkey registration in the Discord app and on X —
+neither `PVDIAG|method=provideCredentialWithoutUserInteraction(for:ASPasswordCredentialIdentity)`
+nor its `prepareInterfaceToProvideCredential` sibling **ever appeared**, while
+`PVDIAG|method=viewDidLoad`/`viewWillAppear`/`viewDidAppear` and the request-typed overloads did.
+The absence is informative precisely because the sibling lines in the same log prove the diagnostic
+was live and capable of printing.
+
+**So they were removed** (gate `scripts/audit-ios-autofill-deprecated-apis.sh` went red on them, and
+it was right to: shipping a deprecated spelling is exactly what it exists to refuse). A diagnostic
+that has discharged its question is debt, not evidence — the finding belongs in this log, not in the
+shipped class.
