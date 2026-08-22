@@ -6413,3 +6413,21 @@ was live and capable of printing.
 it was right to: shipping a deprecated spelling is exactly what it exists to refuse). A diagnostic
 that has discharged its question is debt, not evidence — the finding belongs in this log, not in the
 shipped class.
+
+## 8e. Phase 43 — human-verify backlog (2026-08-22, orchestrator disposition)
+
+Phase 43 closed after one gap-closure cycle. Owed to a human / later work:
+
+1. **SC2's ASSERTION clause on a genuine third-party app.** Bartek's real-device attestation
+   (iPhone 16 / iOS 27.0) covers passkey **registration** in the Discord app and on X — real
+   services, and it earned its keep by surfacing two real defects (§18 the locked-vault hang, §19
+   the invisible confirm UI). The *assertion* half is proven against PV's own harness app and PV's
+   own RP fixture. Honest disposition: mechanism proven receiver-side and falsifiably; the
+   third-party-app assertion path is attested-adjacent, not captured.
+2. **43-11 never executed** — the safety-designed real-hardware plan. Its product substance is
+   largely discharged by Bartek's own device testing, but its *evidence* substance is not: no
+   captured device artifact, the Face ID gate never observed under it, and the throwaway-account
+   safety protocol never ran.
+3. **L-14 remains the milestone's ship blocker** — re-probed live 2026-08-22, still exits 65 with
+   the same `UniffiHandleMap…deinit` / `EarlyPerfInliner` crash. **Every Phase 43 proof is a Debug
+   build**; no claim in this phase covers Release.
