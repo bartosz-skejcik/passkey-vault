@@ -7220,3 +7220,35 @@ plaintext-in-git-history business decision (`03a4c30`, nothing pushed yet) — n
 defect this cycle's own gap items asked to close, and manufacturing a code fix for either here would
 be exactly the "answered a question nobody asked" shape this project's own review discipline warns
 against.
+
+## §25 -- CR-04: historia przepisana przed pushem (decyzja Bartka, 2026-08-22)
+
+`44-REVIEW.md` CR-04: odszyfrowane haslo w plaintext ("85LiR9hCOB") wraz z
+`"urls": ["vault.blonie.cloud"]` zostalo scommitowane jako artefakt dowodowy w
+`ios/evidence/44/44-04-sc-save-after.json` (oryginalny commit `03a4c30`, obecne w 8 commitach).
+Bylo to poswiadczenie konta testowego na jednorazowym, izolowanym `pv-server`, nie produkcyjne --
+ale nadal sekret w historii repo.
+
+Naprawa dwuetapowa:
+1. **Kod i biezacy stan** (`5ed2072`): plik zredagowany (digest + dlugosc zamiast wartosci),
+   `scripts/ios-autofill-e44.sh` i `scripts/ios-autofill-e43-sc4-probe.mjs` porownuja hashe zamiast
+   zapisywac plaintext, nowy gate `scripts/audit-evidence-no-plaintext-secrets.sh` wlaczony do
+   `check-ios-gate.sh` i do CI. Potwierdzone realnym ponownym uruchomieniem live (`d293f21`):
+   nowe artefakty czyste, skaner exit 0.
+2. **Historia** (2026-08-22, decyzja Bartka -- "przepisz historie teraz", podjeta ZANIM cokolwiek
+   trafilo na origin): `git filter-branch --index-filter` po zakresie `origin/ios/spike..HEAD`
+   podmienil wartosc na `REDACTED-CR-04-see-44-UAT.md` we wszystkich 8 commitach.
+   Kontrola pozytywna przed zaufaniem wynikowi: `git grep` ZNAJDUJE ciag w oryginalnym `03a4c30`
+   (wiec wyszukiwanie dziala), a nie znajduje go w zadnym commicie przepisanego zakresu.
+   Kopia zapasowa: galaz `backup/pre-cr04-rewrite-2026-08-22` (lokalna, NIEwypushowana) --
+   do skasowania razem z `refs/original/` po potwierdzeniu, ze nic nie zginelo.
+
+SHA commitow od `03a4c30` w gore ULEGLY ZMIANIE. Artefakty `.planning/` faz 44 cytuja stare SHA:
+`03a4c30` -> `e31f470`, HEAD `f3e2dc2` -> `335407b`. Wczesniejsze commity fazy (44-01, 44-02,
+44-03, 44-05 oraz dwa pierwsze commity 44-04) zachowaly swoje SHA.
+
+Stan `.planning/` w tym worktree zostal zdjety do snapshotu przed `filter-branch` (ktory odmawia
+pracy przy niescommitowanych zmianach w sledzonych plikach) i przywrocony bajt w bajt po nim --
+`git status --porcelain -- .planning/` identyczny przed i po. Nie uzyto `git stash`: `refs/stash`
+jest wspoldzielony miedzy worktree, a rownolegla sesja pracuje na `main`.
+
