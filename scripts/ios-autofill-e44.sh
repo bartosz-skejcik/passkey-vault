@@ -315,8 +315,17 @@ cmd_sc_generate() {
     if [ -n "${db_dir:-}" ]; then
       rm -rf "$db_dir"
     fi
+    # 44-VERIFICATION.md gap 2 item 3, same CR-04 discipline `cmd_sc_save`'s own `cleanup_sc_save`
+    # already applies: the harness's `savePasswordForm.password` field (SHARED with sc-save) is
+    # persisted to UserDefaults for off-device reading, unlogged -- best-effort delete on every
+    # exit path (normal completion, RED control, or failure) so a live-generated candidate never
+    # lingers in the simulator container indefinitely.
+    xcrun simctl spawn "$udid" defaults delete "$HARNESS_BUNDLE_ID" pv-e44-04-sc-save-observed-password >/dev/null 2>&1 || true
   }
   trap cleanup_sc_generate EXIT
+  # A STALE value from a PRIOR run (sc-save or a previous sc-generate) must never be read back as
+  # if it were THIS run's own candidate -- delete before driving anything, not only after.
+  xcrun simctl spawn "$udid" defaults delete "$HARNESS_BUNDLE_ID" pv-e44-04-sc-save-observed-password >/dev/null 2>&1 || true
 
   local stray_port="$SC_GENERATE_SERVER_PORT"
   if lsof -nP -i ":${stray_port}" >/dev/null 2>&1; then
@@ -458,19 +467,106 @@ cmd_sc_generate() {
   xcrun simctl spawn "$udid" log show \
     --predicate 'subsystem == "cloud.blonie.PasskeyVaultHarness"' --start "$run_start" \
     2>&1 | grep 'PVHARNESS|stage=candidate-observed' > "$harness_log" || true
-  cp "$harness_log" "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
   local offer_found=0
   if [ -s "$harness_log" ]; then
     offer_found=1
-    echo "== candidate compliance (rules descriptor: minlength 10-20, lower/upper/digit) =="
+    cp "$harness_log" "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
+    echo "== candidate compliance (rules descriptor: minlength 10-20, lower/upper/digit, max-consecutive 4), via the interactive offer screen =="
     cat "$harness_log"
     if grep -q 'lengthOk=false\|hasLower=false\|hasUpper=false\|hasDigit=false' "$harness_log"; then
       echo "FAIL: the offered candidate violates the harness's own rules descriptor" >&2
       exit 1
     fi
     echo "PASS: the offered candidate satisfies the harness's own rules descriptor"
-  else
-    echo "== no candidate-observed line -- the interactive offer screen's own candidate text was never read this run =="
+  fi
+
+  # 44-VERIFICATION.md gap 2 item 3: the interactive offer screen's own `candidate-observed` log
+  # line (above) requires the INTERACTIVE variant to have fired, which -- per this plan's own L1
+  # finding -- never happens live on this toolchain (the QuickType affordance always routes to the
+  # SILENT entry point). The 0-byte `44-05-sc-generate-candidate-compliance.log` this gap names is
+  # the direct consequence: nothing was ever there to read. This is the SAME real toolchain
+  # limitation, not a bug fixed by re-running -- so the fix is a SECOND, independent evidence path
+  # for the SAME live candidate: `savePasswordForm.password` (the harness field the silent
+  # generate ALSO autofills, confirmed live by `sc-save`'s own byte-match proof re-using the
+  # identical field/persistence mechanism) is read back off-device via the harness's own
+  # UserDefaults persistence (`cmd_sc_save`'s established CR-04-safe technique, verbatim) -- the
+  # PLAINTEXT candidate is read into a shell variable ONLY to compute compliance BOOLEANS in this
+  # process, and is NEVER written to any evidence artifact, matching T-44-06/CR-04 exactly.
+  if [ "$offer_found" != "1" ] && [ "$silent_fired" = "1" ]; then
+    local harness_container observed_password=""
+    harness_container=$(xcrun simctl get_app_container "$udid" "$HARNESS_BUNDLE_ID" data 2>/dev/null || true)
+    if [ -n "$harness_container" ]; then
+      local prefs_plist="${harness_container}/Library/Preferences/${HARNESS_BUNDLE_ID}.plist"
+      if [ -f "$prefs_plist" ]; then
+        observed_password=$(plutil -extract "pv-e44-04-sc-save-observed-password" raw -o - "$prefs_plist" 2>/dev/null || true)
+      fi
+    fi
+    if [ -n "$observed_password" ]; then
+      local candidate_len="${#observed_password}"
+      local has_lower=false has_upper=false has_digit=false
+      case "$observed_password" in *[a-z]*) has_lower=true ;; esac
+      case "$observed_password" in *[A-Z]*) has_upper=true ;; esac
+      case "$observed_password" in *[0-9]*) has_digit=true ;; esac
+      local length_within_bounds=false
+      if [ "$candidate_len" -ge 10 ] && [ "$candidate_len" -le 20 ]; then
+        length_within_bounds=true
+      fi
+      # CR-03's own regression shape, checked directly against a REAL live candidate: the pre-fix
+      # bug collapsed `minlength: 10; maxlength: 20` down to exactly 10 (the minimum, treated as a
+      # target). A length of exactly 10 here would be consistent with that regression having
+      # returned; the corrected behaviour (44-VERIFICATION.md truth #7, unit-tested as
+      # `generate_with_minlength_10_and_maxlength_20_produces_the_default_20_not_the_minimum`) is
+      # asserted LIVE below, receiver-side, not merely re-trusted from the unit test.
+      local honours_minlength_floor=false
+      if [ "$candidate_len" -ne 10 ]; then
+        honours_minlength_floor=true
+      fi
+      # max-consecutive: 4 -- scan for the longest run of the SAME character; must not exceed 4.
+      local max_run=0 run=1 prev="" i c
+      for (( i = 0; i < candidate_len; i++ )); do
+        c="${observed_password:$i:1}"
+        if [ "$c" = "$prev" ]; then
+          run=$((run + 1))
+        else
+          run=1
+        fi
+        if [ "$run" -gt "$max_run" ]; then
+          max_run="$run"
+        fi
+        prev="$c"
+      done
+      local max_consecutive_ok=false
+      if [ "$max_run" -le 4 ]; then
+        max_consecutive_ok=true
+      fi
+      {
+        echo "== 44-05 live generator-candidate compliance (SILENT entry point -- the interactive offer screen never fires live on this toolchain, see L1) =="
+        echo "source: savePasswordForm.password, autofilled by the SAME live performWithoutUserInteraction(generatePasswordsRequest:) call this run's own PVFILL log confirms fired; read back off-device via the harness's UserDefaults (cmd_sc_save's own CR-04-safe technique) -- plaintext read into this shell process ONLY to compute the booleans below, never written to any artifact"
+        echo "candidateLength=${candidate_len}"
+        echo "lengthWithinBounds(10..20)=${length_within_bounds}"
+        echo "honoursMinlengthAsFloor(length!=10)=${honours_minlength_floor}"
+        echo "hasLower=${has_lower}"
+        echo "hasUpper=${has_upper}"
+        echo "hasDigit=${has_digit}"
+        echo "longestRunOfSameChar=${max_run}"
+        echo "maxConsecutiveOk(<=4)=${max_consecutive_ok}"
+      } > "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
+      echo "== candidate compliance (rules descriptor: minlength 10-20, lower/upper/digit, max-consecutive 4), via the SILENT entry point's own autofilled field =="
+      cat "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
+      if [ "$length_within_bounds" != "true" ] || [ "$honours_minlength_floor" != "true" ] \
+        || [ "$has_lower" != "true" ] || [ "$has_upper" != "true" ] || [ "$has_digit" != "true" ] \
+        || [ "$max_consecutive_ok" != "true" ]; then
+        echo "FAIL: the live-generated candidate violates the harness's own rules descriptor" >&2
+        exit 1
+      fi
+      echo "PASS: the live-generated candidate (from the SILENT entry point, the one that actually fires on this toolchain) satisfies the harness's own rules descriptor, including max-consecutive"
+    else
+      echo "== no observed password captured from the silent-fill event this run -- writing an honest empty-with-explanation marker, never a bare 0-byte file =="
+      echo "NO CANDIDATE OBSERVED: performWithoutUserInteraction(generatePasswordsRequest:) reported status=ok this run but savePasswordForm.password's own UserDefaults persistence captured nothing -- see ${EVIDENCE_DIR}/44-05-sc-generate-pvfill.log for the routing verdict." > "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
+    fi
+  elif [ "$offer_found" != "1" ]; then
+    echo "== neither the interactive offer screen nor the silent entry point produced a candidate this run -- writing an honest empty-with-explanation marker =="
+    echo "NO CANDIDATE OBSERVED: neither the interactive offer screen's candidate-observed log line nor a successful silent-generate PVFILL entry appeared this run -- see ${EVIDENCE_DIR}/44-05-sc-generate-pvfill.log for the routing verdict." > "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
   fi
 
   # --- SAVE-04 pixel proof ---------------------------------------------------------------------

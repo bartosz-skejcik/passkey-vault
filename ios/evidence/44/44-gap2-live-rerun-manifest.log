@@ -1,0 +1,83 @@
+=== 44-VERIFICATION.md gap 2 -- live re-run manifest ===
+Recorded: 2026-08-22T20:04:00Z (see individual file mtimes below for exact per-artifact times)
+
+WHY THIS FILE EXISTS: the sc-save and sc-generate evidence artifacts (44-04-sc-save-*,
+44-05-sc-generate-*) are overwritten IN PLACE by each live run of
+`scripts/ios-autofill-e44.sh sc-save` / `sc-generate` -- there is no separate "old" and "new"
+filename on disk. 44-VERIFICATION.md's own gap 2 instruction #1 asks to "make it unambiguous on
+disk which run corresponds to which tree state" -- this manifest is that disambiguation. The
+PRIOR run's artifacts are not lost: they are fully recoverable from git history at the commit
+hashes named below (`git show <hash>:<path>`); this repo's own `commit_docs: false` convention
+keeps `.planning/` out of git, but `ios/evidence/` is a real, git-tracked source directory, so
+every prior version is a real, addressable git blob, not merely a claim.
+
+--- PRIOR RUN (stale, predates six commits to the exercised save/generate pipeline) ---
+44-04-sc-save-{before,after}.json, 44-04-sc-save-confirm-{GREEN,RED}.png, 44-04-sc-save-probe.log,
+44-04-sc-save-pvfill.log: last committed at 5ed2072 (fix(44): CR-04 redact committed plaintext
+credential, hash instead of compare plaintext), 2026-08-22 20:50:48 +0200. The receiver-side proof
++ pixel proof themselves were originally captured at 03a4c30 (feat(44-04): live receiver-side proof
+...), ~19:17 local time per 44-VERIFICATION.md's own citation -- BEFORE these six commits to the
+exercised path: CR-01 24300c6, CR-03 7c0213a, WR-01 1fe55a0, WR-02 fa80773, WR-12 2e632ab, and
+44-06's 47c9983. Recover with, e.g.:
+  git show 5ed2072:ios/evidence/44/44-04-sc-save-after.json
+  git show 03a4c30:ios/evidence/44/44-04-sc-save-after.json   # the PRE-CR-04-redaction version;
+                                                                # 44-VERIFICATION.md's own open item
+                                                                # notes this still carries the
+                                                                # plaintext `password` key in git
+                                                                # history -- a deliberate, separately
+                                                                # tracked business decision, not
+                                                                # resolved by this manifest
+
+44-05-sc-generate-candidate-compliance.log (0 bytes -- 44-VERIFICATION.md's own gap 2 item):
+  last committed at 1dacf97 (feat(44-05): close the generator-audit gate GREEN, settle L-44's
+  interactive-generate open question live, SAVE-04 pixel proof)
+  git show 1dacf97:ios/evidence/44/44-05-sc-generate-candidate-compliance.log   # confirm: 0 bytes
+
+--- CURRENT RUN (this gap-closure; captured against the tree at HEAD d8efe07 plus the
+    preflight-ordering re-anchor (24db855) and the three-gate composition (d8efe07) this same
+    gap-closure task performed) ---
+`bash scripts/ios-autofill-e44.sh sc-save`   -- re-run in full: real ceremony on the pinned
+  simulator (PV-iPhone16, iOS 26.5 SDK), a real isolated throwaway pv-server (port 8903, fresh
+  sqlite db, deleted on exit), and the independent pv-wasm client decrypting the server-side row.
+  BEFORE snapshot confirmed absent (found:false, rowCount:0) -- the pre-save absence control is
+  real, not assumed. AFTER snapshot: found:true, rowCount:1, a fresh SHA-256 byte-match between the
+  server-decrypted password and the harness's own independently-captured fill value (never
+  plaintext-compared, CR-04's own discipline preserved). GREEN pixel proof from the LIVE
+  system-routed SavePasswordConfirmView; RED control genuinely unresolved-asset render, confirmed
+  FAIL. Extension's own PVFILL log shows the full pipeline: generate-silent (unrelated prior
+  candidate from the harness's own generate-affordance probe earlier in the same session) ->
+  save-silent entry -> preflight ok -> confirm confirmed -> encrypt ok -> network ok ->
+  identity-store ok -> complete ok. Full transcript: this run's stdout, captured to
+  /private/tmp/.../scratchpad/sc-save-run.log during execution (not committed -- ephemeral); the
+  committed artifacts below ARE the evidence.
+  Files: 44-04-sc-save-after.json, 44-04-sc-save-before.json, 44-04-sc-save-confirm-GREEN.png,
+  44-04-sc-save-confirm-RED.png, 44-04-sc-save-probe.log, 44-04-sc-save-pvfill.log
+
+`bash scripts/ios-autofill-e44.sh sc-generate`   -- re-run in full, against the SAME tree state.
+  Confirms LIVE: performWithoutUserInteraction(generatePasswordsRequest:) (the SILENT entry point,
+  the one that actually fires on this toolchain per L1) fired and answered with a real candidate.
+  The interactive prepareInterface(for: ASGeneratePasswordsRequest) variant did NOT fire -- the
+  SAME settled negative finding as before (L1, unrelated to this gap; not re-litigated here).
+  NEW for this gap-closure: 44-05-sc-generate-candidate-compliance.log is no longer 0 bytes.
+  Since the interactive offer screen (the log line's ORIGINAL, sole source) never fires live, a
+  SECOND, independent live path was added: `savePasswordForm.password` -- the SAME harness field
+  the silent generate call ALSO autofills, read back off-device via the harness's own UserDefaults
+  persistence (the identical CR-04-safe technique `sc-save` already used for its own byte-match
+  proof). The rules descriptor itself was extended (SavePasswordFormView.swift) with
+  `max-consecutive: 4;`, which `GeneratePasswordDispatch.resolve` passes through UNPARSED to
+  pv-core's real `parse_password_rules` (DR-44-B) -- so this is a genuinely richer live-exercised
+  descriptor, not merely a re-run of the old one. Observed, live, this run: candidateLength=20 (NOT
+  10 -- the exact CR-03 regression shape, checked against a REAL candidate, not only a unit test),
+  lengthWithinBounds=true, honoursMinlengthAsFloor=true, hasLower/hasUpper/hasDigit=true,
+  longestRunOfSameChar=1, maxConsecutiveOk=true. The plaintext candidate was read into the shell
+  process ONLY to compute these booleans and was NEVER written to any evidence artifact (verified:
+  `bash scripts/audit-evidence-no-plaintext-secrets.sh` exits 0 against the full post-run
+  ios/evidence/ tree, and the harness's own UserDefaults key was deleted immediately after, both
+  before and after the drive -- confirmed absent via `xcrun simctl spawn <udid> defaults read
+  cloud.blonie.PasskeyVaultHarness pv-e44-04-sc-save-observed-password` -> "does not exist").
+  Files: 44-05-sc-generate-candidate-compliance.log, 44-05-sc-generate-offer-{GREEN,RED}.png,
+  44-05-sc-generate-pvfill.log
+
+--- Independently re-confirmed after both re-runs ---
+`bash scripts/audit-evidence-no-plaintext-secrets.sh` -> OVERALL: PASS (0 plaintext
+password/secret values anywhere under ios/evidence/, including both freshly-written files above).

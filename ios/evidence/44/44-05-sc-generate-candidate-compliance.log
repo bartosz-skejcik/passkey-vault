@@ -1,0 +1,10 @@
+== 44-05 live generator-candidate compliance (SILENT entry point -- the interactive offer screen never fires live on this toolchain, see L1) ==
+source: savePasswordForm.password, autofilled by the SAME live performWithoutUserInteraction(generatePasswordsRequest:) call this run's own PVFILL log confirms fired; read back off-device via the harness's UserDefaults (cmd_sc_save's own CR-04-safe technique) -- plaintext read into this shell process ONLY to compute the booleans below, never written to any artifact
+candidateLength=20
+lengthWithinBounds(10..20)=true
+honoursMinlengthAsFloor(length!=10)=true
+hasLower=true
+hasUpper=true
+hasDigit=true
+longestRunOfSameChar=1
+maxConsecutiveOk(<=4)=true

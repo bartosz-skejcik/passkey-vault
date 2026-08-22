@@ -1,11 +1,9 @@
 {
   "found": true,
-  "id": "07aca00c-89ae-4558-b035-669608f41f38",
-  "username": "pv-e44-04-sc-save-user-1787418953",
-  "passwordRedacted": true,
-  "_redactionNote": "CR-04 (44-REVIEW.md): the original decrypted plaintext password committed here was replaced with a non-reversible digest post-fix. The value it replaces remains in this repository's history at commit 03a4c30 -- history was NOT rewritten as part of this fix; that is being raised with the human separately. scripts/ios-autofill-e43-sc4-probe.mjs and scripts/ios-autofill-e44.sh no longer write a decrypted plaintext password to any evidence artifact going forward.",
-  "passwordSha256": "7ca2a71ce0355769e18842edffeb16b584c7aa6c9296549c002ad1f4f1d5efce",
-  "passwordLength": 10,
+  "id": "dbfdda0c-bf86-4a35-a4a8-27570a9278c6",
+  "username": "pv-e44-04-sc-save-user-1787428630",
+  "passwordSha256": "b54b50811e5f1b668303bd6fd080d227d0abf8d1bdc922a81de62a198c5f9c91",
+  "passwordLength": 20,
   "urls": [
     "vault.blonie.cloud"
   ],

@@ -98,8 +98,15 @@ struct SavePasswordFormView: View {
 
     /// A real, non-trivial rules descriptor -- the SAME DSL shape Plan 44-02's
     /// `parse_password_rules` was built against (minlength/maxlength/required lower/upper/digit).
+    ///
+    /// `max-consecutive: 4;` added for 44-VERIFICATION.md gap 2 item 3 -- `GeneratePasswordDispatch
+    /// .resolve` passes `rulesText` through to `generatePasswordFromRules` COMPLETELY UNPARSED on
+    /// the Swift side (DR-44-B, that type's own header) straight into `pv-core`'s real
+    /// `parse_password_rules`, which DOES support `max-consecutive` (unlike the coarse,
+    /// per-class-only mapping 44-RESEARCH.md's Decision A3 explicitly rejected) -- so this clause
+    /// is genuinely honoured by a live-generated candidate, not merely accepted by the parser.
     private let newPasswordRules = UITextInputPasswordRules(
-        descriptor: "minlength: 10; maxlength: 20; required: lower; required: upper; required: digit;"
+        descriptor: "minlength: 10; maxlength: 20; required: lower; required: upper; required: digit; max-consecutive: 4;"
     )
 
     /// Set true after Submit -- conditionally removes BOTH fields from the view hierarchy
