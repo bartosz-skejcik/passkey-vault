@@ -522,11 +522,7 @@ private struct PVDockGlass<S: Shape>: ViewModifier {
     let interactive: Bool
 
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
-        } else {
-            content.background(.regularMaterial, in: shape)
-        }
+        content.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
     }
 }
 

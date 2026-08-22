@@ -660,90 +660,84 @@ struct ItemListView: View {
             // modifier on a different view and does not activate this role.
             // Verified by the shelf pill still being the only way in.)
             //
-            // GUARDED ON 26 AS A DESIGN CHOICE, NOT AN AVAILABILITY ONE.
-            // `TabRole.search` is iOS 18.0, so this compiles on the floor --
-            // but on 18 it renders as an ordinary fifth tab item labelled
-            // "Add item", which is a worse affordance than a plain floating
-            // button. Below 26 the Tab is therefore omitted and
-            // `AvailableFallbackCreateButton` supplies the button instead.
-            // `TabContentBuilder.buildLimitedAvailability` (SwiftUI
-            // .swiftinterface:9729) is what makes an `if #available` legal
-            // inside this builder at all.
-            if #available(iOS 26.0, *) {
-                Tab(value: DockSlot.plus, role: .search) {
-                    // Never shown: `dockSelection`'s getter can never return
-                    // `.plus`, so this content view has no reachable state.
-                    Color.clear
-                } label: {
-                    // ONE `Image` whose `systemName` CHANGES -- not two images
-                    // in an if/else. `.symbolEffect(.replace)` is a *content*
-                    // transition, so it needs the same view identity across
-                    // the change or it degrades to an instant swap. And the
-                    // `Label { } icon: { }` form, so the modifier lands on the
-                    // `Image` rather than on the whole `Label`
-                    // (DOCK-PANEL-RESEARCH.md §3, proven on video because
-                    // every still showed the glyph already swapped).
-                    Label {
-                        // The title carries the STATE, and it is deliberately
-                        // the same string as the `accessibilityLabel` below --
-                        // see the note after this closure on why belt and braces
-                        // is warranted here. A constant "Add item" would keep
-                        // announcing "add" while the glyph shows ✕.
-                        //
-                        // The detached slot draws no text (measured: a 62×62
-                        // circle holding only the glyph when the bar is
-                        // expanded, 48×48 when minimised), so this is announced
-                        // and not drawn.
-                        Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
-                    } icon: {
-                        Image(systemName: isCreateExpanded ? "xmark" : "plus")
-                            .contentTransition(.symbolEffect(.replace))
-                    }
-                    .accessibilityLabel(
-                        Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
-                    )
-                    .accessibilityIdentifier("vault.create.plusMenu")
+            // Unconditional since Phase 44's deployment-floor raise to iOS 26.2
+            // (DR-44-A, `ios/IOS-SPIKE-LOG.md` §1o) -- there is no longer any
+            // supported OS version below 26, so the plain-floating-button
+            // fallback this comment used to describe was deleted along with
+            // the `#available` guard that selected it.
+            Tab(value: DockSlot.plus, role: .search) {
+                // Never shown: `dockSelection`'s getter can never return
+                // `.plus`, so this content view has no reachable state.
+                Color.clear
+            } label: {
+                // ONE `Image` whose `systemName` CHANGES -- not two images
+                // in an if/else. `.symbolEffect(.replace)` is a *content*
+                // transition, so it needs the same view identity across
+                // the change or it degrades to an instant swap. And the
+                // `Label { } icon: { }` form, so the modifier lands on the
+                // `Image` rather than on the whole `Label`
+                // (DOCK-PANEL-RESEARCH.md §3, proven on video because
+                // every still showed the glyph already swapped).
+                Label {
+                    // The title carries the STATE, and it is deliberately
+                    // the same string as the `accessibilityLabel` below --
+                    // see the note after this closure on why belt and braces
+                    // is warranted here. A constant "Add item" would keep
+                    // announcing "add" while the glyph shows ✕.
+                    //
+                    // The detached slot draws no text (measured: a 62×62
+                    // circle holding only the glyph when the bar is
+                    // expanded, 48×48 when minimised), so this is announced
+                    // and not drawn.
+                    Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
+                } icon: {
+                    Image(systemName: isCreateExpanded ? "xmark" : "plus")
+                        .contentTransition(.symbolEffect(.replace))
                 }
-                // ACCESSIBILITY, and the second point is a MEASURED CORRECTION
-                // of a conclusion this file briefly carried in the wrong form.
-                //
-                // 1. The caveat, flagged rather than absorbed: this control
-                //    occupies the semantic SEARCH slot, because
-                //    `Tab(role: .search)` is the only stock API that produces a
-                //    detached circle and there is no `TabRole.add`. With the
-                //    explicit label above, VoiceOver announces an add/create
-                //    action rather than "Search" -- but the ROLE underneath is
-                //    still search, and any future system affordance keyed to it
-                //    (a search shortcut, Spotlight hand-off, `.searchable`
-                //    activation) will still treat it as search. **Bartek's call
-                //    on whether that is acceptable is still pending.**
-                //
-                // 2. **The accessibility identifier survives onto the tab item
-                //    only while the bar is EXPANDED.** Measured, both states, in
-                //    the tree dump `VaultDockEvidenceUITests.dumpDockButtons`
-                //    prints:
-                //
-                //      expanded : label=Create item id=vault.create.plusMenu
-                //                 frame=(310.0, 769.0, 62.0, 62.0)
-                //      minimised: label=Create item id=<empty>
-                //                 frame=(317.0, 776.0, 48.0, 48.0)
-                //
-                //    While minimised the whole bar collapses to one circle plus
-                //    the detached ＋, and those collapsed items carry EMPTY
-                //    identifiers -- so does the type-tab circle, which reports
-                //    only the selected tab's label. An intermediate run of this
-                //    work concluded from the minimised state alone that
-                //    identifiers "do not propagate to a Tab at all", and wrote
-                //    that into three files. It is wrong: the real rule is that a
-                //    UI test must expand the bar before matching on identifiers,
-                //    and both earlier failures traced back to a restore-scroll
-                //    that had silently not worked.
-                //
-                //    (Which of the title text or the `accessibilityLabel`
-                //    actually supplies the announced string is NOT established
-                //    -- they are set to the same value, so the tree cannot
-                //    distinguish them. Both are kept rather than guessing.)
+                .accessibilityLabel(
+                    Text(verbatim: isCreateExpanded ? "Close create menu" : "Create item")
+                )
+                .accessibilityIdentifier("vault.create.plusMenu")
             }
+            // ACCESSIBILITY, and the second point is a MEASURED CORRECTION
+            // of a conclusion this file briefly carried in the wrong form.
+            //
+            // 1. The caveat, flagged rather than absorbed: this control
+            //    occupies the semantic SEARCH slot, because
+            //    `Tab(role: .search)` is the only stock API that produces a
+            //    detached circle and there is no `TabRole.add`. With the
+            //    explicit label above, VoiceOver announces an add/create
+            //    action rather than "Search" -- but the ROLE underneath is
+            //    still search, and any future system affordance keyed to it
+            //    (a search shortcut, Spotlight hand-off, `.searchable`
+            //    activation) will still treat it as search. **Bartek's call
+            //    on whether that is acceptable is still pending.**
+            //
+            // 2. **The accessibility identifier survives onto the tab item
+            //    only while the bar is EXPANDED.** Measured, both states, in
+            //    the tree dump `VaultDockEvidenceUITests.dumpDockButtons`
+            //    prints:
+            //
+            //      expanded : label=Create item id=vault.create.plusMenu
+            //                 frame=(310.0, 769.0, 62.0, 62.0)
+            //      minimised: label=Create item id=<empty>
+            //                 frame=(317.0, 776.0, 48.0, 48.0)
+            //
+            //    While minimised the whole bar collapses to one circle plus
+            //    the detached ＋, and those collapsed items carry EMPTY
+            //    identifiers -- so does the type-tab circle, which reports
+            //    only the selected tab's label. An intermediate run of this
+            //    work concluded from the minimised state alone that
+            //    identifiers "do not propagate to a Tab at all", and wrote
+            //    that into three files. It is wrong: the real rule is that a
+            //    UI test must expand the bar before matching on identifiers,
+            //    and both earlier failures traced back to a restore-scroll
+            //    that had silently not worked.
+            //
+            //    (Which of the title text or the `accessibilityLabel`
+            //    actually supplies the announced string is NOT established
+            //    -- they are set to the same value, so the tree cannot
+            //    distinguish them. Both are kept rather than guessing.)
         }
         .modifier(AvailableTabBarMinimizeBehavior())
         .modifier(AvailableDockShelf { searchShelf })
@@ -1112,11 +1106,6 @@ struct ItemListView: View {
                     )
             }
         }
-        // Below iOS 26 only: the ＋ as a plain floating button, since there is no
-        // detached tab slot to put it in. A no-op on 26+. Attached HERE rather
-        // than to the `TabView` for exactly the same reason as the panel -- inside
-        // the tab content, `.bottomTrailing` is already relative to the dock.
-        .modifier(AvailableFallbackCreateButton(isExpanded: $isCreateExpanded))
     }
 
     /// A GRADIENT, not a flat fill, and the reason is the edge. Stopping a flat
@@ -1910,15 +1899,7 @@ struct ItemListView: View {
 struct AvailableSectionIndexLabel: ViewModifier {
     let label: String
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.sectionIndexLabel(label)
-        } else {
-            // Below iOS 26 there is no native section index -- omitted
-            // entirely rather than bridged via `UIViewRepresentable` to
-            // `UITableView.sectionIndexTitles`, which would stop this being
-            // a stock `List` (design-conformance §2's explicit instruction).
-            content
-        }
+        content.sectionIndexLabel(label)
     }
 }
 
@@ -1929,11 +1910,7 @@ struct AvailableSectionIndexLabel: ViewModifier {
 /// own `List` too, quick fix 40-UX-01.
 struct AvailableListSectionIndexVisibility: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.listSectionIndexVisibility(.visible)
-        } else {
-            content
-        }
+        content.listSectionIndexVisibility(.visible)
     }
 }
 
@@ -1957,92 +1934,21 @@ struct AvailableListSectionIndexVisibility: ViewModifier {
 /// assertion can fail.
 private struct AvailableTabBarMinimizeBehavior: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.tabBarMinimizeBehavior(.onScrollDown)
-        } else {
-            content
-        }
+        content.tabBarMinimizeBehavior(.onScrollDown)
     }
 }
 
 /// `tabViewBottomAccessory(content:)` is iOS 26.0+ and lives on `View` in
 /// SwiftUI (the two-argument `isEnabled:` overload is 26.1+ and deliberately
-/// not used -- 26.1 is a higher floor than this needs).
-///
-/// Below iOS 26 there is no accessory shelf at all. That is a graceful
-/// degradation, not a fork: the tab bar still renders (as a standard,
-/// non-floating bar), and search still renders, because
-/// `AvailableVaultSearchable` puts the field inline in the navigation bar on
-/// that floor instead of behind the shelf's pill. The ＋ slot degrades to an
-/// ordinary sixth tab, which is still a working create affordance.
+/// not used -- 26.1 is a higher floor than this needs). Unconditional since
+/// Phase 44's deployment-floor raise to 26.2 (DR-44-A) -- there is no longer
+/// any supported OS version where this would need a fallback.
 private struct AvailableDockShelf<Shelf: View>: ViewModifier {
     @ViewBuilder var shelf: Shelf
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.tabViewBottomAccessory { shelf }
-        } else {
-            content
-        }
-    }
-}
-
-/// The iOS 18 substitute for the detached ＋. **A no-op on iOS 26+**, where the
-/// `Tab(role: .search)` in the body owns that slot.
-///
-/// Below 26 there is no detached slot at all, so the ＋ becomes an ordinary
-/// floating circular button in `.overlay(alignment: .bottomTrailing)`. It is
-/// attached INSIDE the tab content (see `dimmable`), so `.bottomTrailing` is
-/// already relative to the dock's top edge and the only number needed is the same
-/// gap the panel uses -- below 26 the inset it rides on measures the classic
-/// opaque tab bar plus the home-indicator gap rather than the glass dock, which
-/// is the right number for the same reason.
-///
-/// Filled `PVAccent` with a `PVOnAccent` glyph rather than any glass: there is
-/// no `glassEffect` on this floor, and `.regularMaterial` on a 54 pt circle
-/// floating over a list reads as a smudge, not a primary action. `PVOnAccent`
-/// and never `.white` -- white measures 3.34:1 on the dark-mode accent, which
-/// is what that token exists to fix.
-///
-/// **UNRENDERED. This has never been on a screen.** `xcrun simctl list
-/// runtimes` on this machine prints exactly one line, `iOS 26.5 (26.5 -
-/// 23F77)`, so there is no iOS 18 runtime to install the app onto. The
-/// availability floors are read out of the SDK interface files and the code
-/// compiles against them; that is a signature argument, not a picture. Install
-/// an iOS 18 runtime and shoot it before claiming this branch works.
-private struct AvailableFallbackCreateButton: ViewModifier {
-    @Binding var isExpanded: Bool
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content
-        } else {
-            content.overlay(alignment: .bottomTrailing) {
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    // Same one-Image-changing-systemName shape as the 26 branch,
-                    // so the replace transition works identically. `.symbolEffect
-                    // (.replace)` is iOS 17.0, comfortably under this floor.
-                    Image(systemName: isExpanded ? "xmark" : "plus")
-                        .font(.system(size: PVMetrics.dockPlusGlyphSize, weight: .light))
-                        .contentTransition(.symbolEffect(.replace))
-                        .foregroundStyle(Color("PVOnAccent"))
-                        .frame(width: PVMetrics.dockCapsuleSize, height: PVMetrics.dockCapsuleSize)
-                        .background(Color("PVAccent"), in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, PVMetrics.dockPanelHInset)
-                .padding(.bottom, PVMetrics.dockPanelGap)
-                .accessibilityLabel(
-                    Text(verbatim: isExpanded ? "Close create menu" : "Create item")
-                )
-                .accessibilityIdentifier("vault.create.plusMenu")
-            }
-        }
+        content.tabViewBottomAccessory { shelf }
     }
 }
 
@@ -2104,26 +2010,18 @@ private struct AvailableMinimizedSearchToolbar: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            // STATE-DEPENDENT, and this is the whole fix. See the header above.
-            content.searchToolbarBehavior(isSearchPresented ? .automatic : .minimize)
-        } else {
-            content
-        }
+        // STATE-DEPENDENT, and this is the whole fix. See the header above.
+        content.searchToolbarBehavior(isSearchPresented ? .automatic : .minimize)
     }
 }
 
-/// Search, with the SAME text/token bindings on both floors -- only how the
-/// field is summoned differs.
-///
-/// On iOS 26 the field is `isPresented`-driven, because the shelf's pill is
-/// the entry point and a second always-visible field inside the list would be
-/// the "FAB and list-header search field both disappear" the approved design
-/// explicitly removes. Below 26 there is no shelf to summon it from, so the
-/// field renders at rest exactly as it did before this change.
-///
-/// Guarded on the MODIFIER, never on the view body: every call site is
-/// identical regardless of floor.
+/// The field is `isPresented`-driven, because the shelf's pill is the entry
+/// point and a second always-visible field inside the list would be the "FAB
+/// and list-header search field both disappear" the approved design
+/// explicitly removes. Unconditional since Phase 44's deployment-floor raise
+/// to 26.2 (DR-44-A) -- the plain, non-`isPresented` `.searchable` overload
+/// this used to fall back to below iOS 26 is gone; there is no longer any
+/// supported OS version that needs it.
 private struct AvailableVaultSearchable: ViewModifier {
     @Binding var text: String
     @Binding var tokens: [VaultFilterToken]
@@ -2131,25 +2029,14 @@ private struct AvailableVaultSearchable: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.searchable(
-                text: $text,
-                tokens: $tokens,
-                isPresented: $isPresented,
-                placement: .automatic,
-                prompt: Text(verbatim: "Search")
-            ) { token in
-                Label(token.label, systemImage: "tag")
-            }
-        } else {
-            content.searchable(
-                text: $text,
-                tokens: $tokens,
-                placement: .automatic,
-                prompt: Text(verbatim: "Search")
-            ) { token in
-                Label(token.label, systemImage: "tag")
-            }
+        content.searchable(
+            text: $text,
+            tokens: $tokens,
+            isPresented: $isPresented,
+            placement: .automatic,
+            prompt: Text(verbatim: "Search")
+        ) { token in
+            Label(token.label, systemImage: "tag")
         }
     }
 }
