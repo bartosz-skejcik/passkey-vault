@@ -113,8 +113,8 @@ RNG_PATTERN='SystemRandomNumberGenerator|arc4random|SecRandomCopyBytes|CCRandomG
 # this plan's own falsification run (see 38-08-SUMMARY.md) before this
 # anchor was added -- an unanchored version of check 3 passed vacuously
 # against exactly the mutation it exists to catch.
-CALL_PATTERN='generateCharacterPassword\(|generatePassphrase\('
-SYMBOL_PATTERN='func generateCharacterPassword\(|func generatePassphrase\('
+CALL_PATTERN='generateCharacterPassword\(|generatePassphrase\(|generatePasswordFromRules\('
+SYMBOL_PATTERN='func generateCharacterPassword\(|func generatePassphrase\(|func generatePasswordFromRules\('
 LITERAL_PATTERN='abacus|abcdefghijklmnopqrstuvwxyz'
 
 # ---------------------------------------------------------------------------
@@ -145,8 +145,19 @@ hits2="$(printf '%s\n' "$allhits2" | grep -vF "$BINDINGS_DIR" || true)"
 count2="$(printf '%s' "$hits2" | grep -c . || true)"
 [ -z "$hits2" ] && count2=0
 say "count: $count2"
-if [ "$count2" -lt 1 ]; then
-  say "FAIL -- zero call sites of generateCharacterPassword/generatePassphrase outside the generated bindings; check 1's zero RNG hits would be VACUOUS without this"
+# 44-02 Task 2 / 44-PLAN-CHECK.md B2: this threshold must genuinely depend
+# on generatePasswordFromRules having its OWN real caller, not merely on
+# the two pre-existing symbols. The pre-existing call-site count, measured
+# live rather than assumed, is 3 (GeneratorSheet.swift calls
+# generateCharacterPassword TWICE -- once for the live preview, once for
+# the committed value -- plus one generatePassphrase call), not 2 as an
+# earlier draft of this gate assumed. `-lt 3` would therefore be satisfied
+# by the pre-existing calls ALONE and stay vacuously green with zero
+# generatePasswordFromRules callers -- exactly the defect this check
+# exists to prevent, pointed at itself. `-lt 4` is the threshold that
+# actually requires a real fourth call site (Plan 44-05's own Task 1).
+if [ "$count2" -lt 4 ]; then
+  say "FAIL -- fewer than 4 call sites of generateCharacterPassword/generatePassphrase/generatePasswordFromRules outside the generated bindings (found $count2, and the 3 pre-existing calls to the first two symbols alone would already satisfy a lower threshold); check 1's zero RNG hits would be VACUOUS without a real generatePasswordFromRules caller"
   FAIL=1
 else
   say "PASS"
@@ -163,8 +174,8 @@ hits3="$(grep -rnE --include='*.swift' "$SYMBOL_PATTERN" "$BINDINGS_DIR" || true
 count3="$(printf '%s' "$hits3" | grep -c . || true)"
 [ -z "$hits3" ] && count3=0
 say "count: $count3"
-if [ "$count3" -lt 2 ]; then
-  say "FAIL -- expected BOTH 'func generateCharacterPassword' and 'func generatePassphrase' in $BINDINGS_DIR, found $count3 matching declaration(s):"
+if [ "$count3" -lt 3 ]; then
+  say "FAIL -- expected ALL THREE of 'func generateCharacterPassword', 'func generatePassphrase', and 'func generatePasswordFromRules' in $BINDINGS_DIR, found $count3 matching declaration(s):"
   say "$hits3"
   FAIL=1
 else

@@ -104,6 +104,23 @@ pub fn generator_bounds() -> Result<FfiGeneratorBounds, FfiError> {
     })
 }
 
+/// Generates a password honouring an RP-supplied Apple Password Rules DSL
+/// string (`request.passwordFieldPasswordRules`,
+/// `ASGeneratePasswordsRequest`'s own carried string) -- SAVE-02, DR-44-B.
+/// See `pv_core::generator::parse_password_rules`/
+/// `generate_character_password_from_rules` for the full grammar and the
+/// two refusal shapes -- this thin wrapper does not alter either error
+/// message: both `"unsupported rule shape: "` (the DSL text could not be
+/// read) and `"unsatisfiable rule: "` (the DSL parsed but its own stated
+/// bounds cannot be satisfied) cross the FFI boundary verbatim inside
+/// `FfiError::InvalidInput`, a stable contract with Plan 44-05's own Swift
+/// caller (44-PLAN-CHECK.md W2).
+#[uniffi::export]
+pub fn generate_password_from_rules(rules_text: String) -> Result<String, FfiError> {
+    let rules = core_generator::parse_password_rules(&rules_text).map_err(FfiError::from)?;
+    core_generator::generate_character_password_from_rules(&rules).map_err(FfiError::from)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +182,41 @@ mod tests {
             core_generator::PASSPHRASE_DEFAULT_WORDS as u32
         );
         assert_eq!(bounds.default_separator, core_generator::DEFAULT_SEPARATOR);
+    }
+
+    /// 44-02 Task 2: the FFI wrapper round-trips a real Password Rules DSL
+    /// string through pv-core's parser and rule-aware generator.
+    #[test]
+    fn generate_password_from_rules_round_trip() {
+        let password = generate_password_from_rules(
+            "minlength: 12; maxlength: 12; required: lower; required: upper; required: digit; \
+             required: special;"
+                .to_string(),
+        )
+        .expect("a well-formed, satisfiable rules string must succeed");
+        assert_eq!(password.chars().count(), 12);
+    }
+
+    /// 44-02 Task 2: the two stable error-message prefixes
+    /// (44-PLAN-CHECK.md W2) cross the FFI boundary verbatim, unmodified by
+    /// this wrapper.
+    #[test]
+    fn generate_password_from_rules_preserves_the_two_stable_error_prefixes() {
+        let unsupported = generate_password_from_rules("required: [X];".to_string()).unwrap_err();
+        match unsupported {
+            FfiError::InvalidInput(msg) => {
+                assert!(msg.starts_with("unsupported rule shape: "), "got: {msg}")
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+
+        let unsatisfiable =
+            generate_password_from_rules("maxlength: 1;".to_string()).unwrap_err();
+        match unsatisfiable {
+            FfiError::InvalidInput(msg) => {
+                assert!(msg.starts_with("unsatisfiable rule: "), "got: {msg}")
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
     }
 }

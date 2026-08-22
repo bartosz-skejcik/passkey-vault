@@ -139,8 +139,8 @@ pub use wire::{
 // decision.
 pub mod generator;
 pub use generator::{
-    generate_character_password, generate_passphrase, generator_bounds,
-    FfiCharacterPasswordOptions, FfiGeneratorBounds,
+    generate_character_password, generate_passphrase, generate_password_from_rules,
+    generator_bounds, FfiCharacterPasswordOptions, FfiGeneratorBounds,
 };
 
 // UI-05 (`ios/IOS-SPIKE-LOG.md` §1f): TOTP code generation, exported as a
