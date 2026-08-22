@@ -1,0 +1,41 @@
+=== WR-08 fix falsification transcript ===
+Date: 2026-08-22T18:53:13Z
+
+--- Step 1: gate on unmodified tree (expect PASS, exit 0) ---
+== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1161 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+PASS
+
+OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
+EXIT=0
+
+--- Step 2: commented out SessionLifecycle.checkAndExpireIfNeeded( inside
+    prepareInterface(for: ASSavePasswordRequest), replaced with a hardcoded .unlocked.
+    Expect assertion (A) FAIL, non-zero exit. ---
+== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1164 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found in prepareInterface(for: ASSavePasswordRequest)'s own body
+
+OVERALL: FAIL -- see the failing assertion(s) above
+EXIT=1
+
+--- Step 3: reverted step 2's plant byte-identically, then planted a throwaway
+    presentSavePasswordConfirm( call BEFORE the real checkAndExpireIfNeeded( call.
+    Expect assertion (B) FAIL, non-zero exit, naming the out-of-order call. ---
+== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1164 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 6)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+FAIL -- a UI presentation or session-key read occurs BEFORE the lock check:
+5:        presentSavePasswordConfirm(serviceIdentifier: , username: , onConfirm: {}, onCancel: {})
+
+OVERALL: FAIL -- see the failing assertion(s) above
+EXIT=1
+
+--- Step 4: reverted the plant byte-identically. Expect PASS again. ---
+== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1161 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+PASS
+
+OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
+EXIT=0

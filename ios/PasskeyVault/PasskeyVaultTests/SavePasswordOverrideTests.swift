@@ -23,6 +23,18 @@
 //  that does not yet exist. `Shared/SavePasswordPreflight.swift` was then created and the same
 //  invocation reports GREEN. Both states are recorded in `44-04-SUMMARY.md`.
 //
+//  WR-08 (44-REVIEW.md): the two tests below exercise `SavePasswordPreflight.decide(isUnlocked:)`
+//  ONLY -- a two-case identity mapping that is the function restated. They CANNOT fail if
+//  `prepareInterface(for: ASSavePasswordRequest)` stopped calling `decide` at all, or called it
+//  AFTER presenting `SavePasswordConfirmView`/reading the session key, which is the actual T-43-12
+//  security claim (coverage entry D1, 44-04-SUMMARY.md). That claim's real evidence is
+//  `scripts/audit-ios-save-preflight-ordering.sh`, a structural gate over the real override source
+//  (same family as `audit-ios-identity-store-chokepoint.sh`) asserting
+//  `SessionLifecycle.checkAndExpireIfNeeded(` both exists in the override's body and runs before
+//  any `present*(`/`SessionKeyReader.importUserKey(` call -- falsified both directions
+//  (`ios/evidence/44/44-fix-wr08-falsification.log`). This file's own two tests remain useful for
+//  what they actually prove: the PURE decision function's own two cases.
+//
 
 import Foundation
 import Testing
