@@ -100,47 +100,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 
-    /// Phase 44 (44-03-PLAN.md Task 1b / checkpoint resolution): the SYSTEM'S ACTUAL first entry
-    /// point for a save -- `44-03-PLAN.md`'s own Task 1 instrumented ONLY `prepareInterface(for:
-    /// ASSavePasswordRequest)` below, which the SDK header
-    /// (`ASCredentialProviderViewController.h`, this machine's Xcode 26.6 / iPhoneSimulator 26.5
-    /// SDK, "Attempt to save a password credential" doc block) states plainly is reached ONLY
-    /// AFTER this method answers `userInteractionRequired` -- "When this method is called, your
-    /// extension's view controller is not present on the screen. You can request user interaction
-    /// by calling `cancelRequest(with:)`, using `ASExtensionError.userInteractionRequired`."
-    /// Task 1's own UI path was therefore unreachable by construction -- see the landmine recorded
-    /// in `ios/IOS-SPIKE-LOG.md`. This is NOT a probe hack: cancelling with
-    /// `.userInteractionRequired` to escalate into `prepareInterface(for: ASSavePasswordRequest)`
-    /// IS the real design Plan 44-04 will build its own confirm UI against, so this override's
-    /// behavior ships as-is (still `#if DEBUG`-gated here only because the escalation target below
-    /// remains diagnostic-only until Plan 44-04 lands). `NS_SWIFT_NAME` confirmed against the real
-    /// header (`performSavePasswordRequestWithoutUserInteractionIfPossible:` ->
-    /// `performWithoutUserInteractionIfPossible(savePasswordRequest:)`), never assumed by eye
-    /// (L-1/L-43's own discipline).
-    override func performWithoutUserInteractionIfPossible(savePasswordRequest request: ASSavePasswordRequest) {
-        Self.diagLogger.log(
-            "PVDIAG|method=performWithoutUserInteractionIfPossible(savePasswordRequest:) event=\(String(describing: request.event), privacy: .public) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private)"
-        )
-        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
-    }
-
-    /// Phase 44 (44-03-PLAN.md), SAVE-01/02: DEBUG-only diagnostic, mirroring the pattern above --
-    /// never implemented for real yet (Plans 44-04/44-05 own the real save/generate handling).
-    /// `NS_SWIFT_NAME(prepareInterface(for:))` on `-prepareInterfaceForSavePasswordRequest:`
-    /// confirmed against the real SDK header (`ASCredentialProviderViewController.h`, this
-    /// machine's Xcode 26.6 / iPhoneSimulator SDK), never assumed by eye (L-1/L-43's own
-    /// discipline) -- the plan's own literal signature matched verbatim, no L-43-shaped surprise
-    /// this time. `event`/`serviceIdentifier` are logged; the credential (username/password) is
-    /// NEVER logged, in any privacy tier (T-44-06). Per the checkpoint resolution above, this
-    /// method is now reached ONLY after `performWithoutUserInteractionIfPossible(savePasswordRequest:)`
-    /// escalates via `userInteractionRequired` -- never called directly by the system.
-    override func prepareInterface(for request: ASSavePasswordRequest) {
-        Self.diagLogger.log(
-            "PVDIAG|method=prepareInterface(for:ASSavePasswordRequest) event=\(String(describing: request.event), privacy: .public) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private)"
-        )
-        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
-    }
-
     /// Never implemented in production (no OTP capability declared) -- logged purely for
     /// completeness; NOT expected on a passkey registration request, but ruling it out costs one
     /// override.
@@ -964,6 +923,224 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             },
             onCancel: { [weak self] in
                 Self.fillLogger.log("PVFILL|passkey-reg|stage=confirm status=user-cancelled")
+                self?.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
+            }
+        )
+    }
+
+    // MARK: - Plan 44-04 (SAVE-01) -- save password, silent + interactive entry points
+
+    /// T-44-08 (DoS, mitigate): a sane upper bound on `request.credential.user`/`.password`
+    /// (attacker-influenced, per this plan's own `<threat_model>`) BEFORE either string is ever
+    /// handed to `encryptItemWire` -- refused via `cancelRequest(withError:)`, never truncated or
+    /// silently accepted.
+    private static let saveFieldMaxBytes = 4096
+
+    /// Phase 44 (44-04-PLAN.md, SAVE-01), real implementation. The SYSTEM'S ACTUAL first entry
+    /// point for a save (Landmine L-44, `ios/IOS-SPIKE-LOG.md`) -- per the SDK header
+    /// (`ASCredentialProviderViewController.h`, "Attempt to save a password credential" doc
+    /// block), this extension's view controller is NOT present on the screen when this method is
+    /// called, so it can only complete silently or escalate -- it NEVER presents
+    /// `SavePasswordConfirmView` itself. Escalates via `.userInteractionRequired`
+    /// UNCONDITIONALLY, for every event: `prepareInterface(for: ASSavePasswordRequest)` below (VC
+    /// now on screen) owns EVERY event branch, including `.generatedPasswordFilled`'s own
+    /// no-UI-shown case, so this silent entry point never needs to special-case any event itself.
+    override func performWithoutUserInteractionIfPossible(savePasswordRequest request: ASSavePasswordRequest) {
+        Self.fillLogger.log(
+            "PVFILL|entry=save-silent stage=entry event=\(String(describing: request.event), privacy: .public)"
+        )
+        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
+    /// Presents `SavePasswordConfirmView` embedded as a child view controller -- same
+    /// `UIHostingController` embedding `presentRegistrationConfirm`/`presentGeneratePasswordOffer`
+    /// above already establish.
+    private func presentSavePasswordConfirm(
+        serviceIdentifier: String, username: String, onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void
+    ) {
+        let hosting = UIHostingController(
+            rootView: SavePasswordConfirmView(
+                serviceIdentifier: serviceIdentifier, username: username, onConfirm: onConfirm, onCancel: onCancel
+            )
+        )
+        addChild(hosting)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        hosting.didMove(toParent: self)
+    }
+
+    /// Phase 44 (44-04-PLAN.md, SAVE-01), real implementation, replacing Plan 44-03's
+    /// diagnostic-only stub. The INTERACTIVE save entry point -- reached ONLY after the silent
+    /// override above escalates via `.userInteractionRequired` (per the header, this method is
+    /// never called directly by the system for a standard save request). Runs the SAME
+    /// unlock-gating sequence `prepareInterface(forPasskeyRegistration:)` already established
+    /// BEFORE presenting any UI (T-43-12's rule, applied identically here). Then branches on
+    /// `request.event`: `.generatedPasswordFilled` runs the save pipeline directly, no
+    /// confirmation UI (the header's own explicit "Providers should not request any additional
+    /// information" instruction); `.userInitiated`/`.formDidDisappear` present
+    /// `SavePasswordConfirmView` first.
+    ///
+    /// Placement (mirrors 43-PLAN-CHECK.md C1's own precedent): the required
+    /// `IdentityStoreSync.upsertOne(` call lives inside `runSavePipeline`, a LOCAL CLOSURE
+    /// VARIABLE (never a separate `private func`) declared directly inside this override's own
+    /// body -- `scripts/audit-ios-identity-store-chokepoint.sh`'s assertion (B) measures this
+    /// override's own extent by scanning forward to the NEXT `func` declaration at ANY
+    /// indentation, so a nested `func` (unlike a nested closure) would prematurely truncate that
+    /// gate's own bounded-forward window before ever reaching this call.
+    override func prepareInterface(for request: ASSavePasswordRequest) {
+        let entryPoint = "save"
+        let lockState = SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete)
+        let preflight = SavePasswordPreflight.decide(isUnlocked: lockState == .unlocked)
+        switch preflight {
+        case .refuseLocked:
+            // T-43-12, applied identically here: no confirmation screen for an unlocked vault's
+            // contents is ever shown to a locked-device attacker. `.failed`, not
+            // `.userInteractionRequired` -- this is ALREADY the interactive entry point, with no
+            // further-recourse UI the system can offer in response (the same reasoning
+            // `.refuseLocked`'s own fix for the passkey-registration path already established).
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=preflight status=refused-locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        case .proceed:
+            break
+        }
+        Self.fillLogger.log(
+            "PVFILL|entry=\(entryPoint, privacy: .public) stage=preflight status=ok event=\(String(describing: request.event), privacy: .public)"
+        )
+
+        let serviceIdentifier = request.serviceIdentifier.identifier
+        let username = request.credential.user
+        let password = request.credential.password
+
+        // T-44-08 (DoS, mitigate): refuse BEFORE any UI/encryption work, never truncate.
+        guard username.utf8.count <= Self.saveFieldMaxBytes, password.utf8.count <= Self.saveFieldMaxBytes else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=length-check status=refused")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+
+        let runSavePipeline: () -> Void = { [weak self] in
+            guard let self else { return }
+            Task {
+                let itemId = UUID().uuidString.lowercased()
+                // `<action>` (44-04-PLAN.md): `name` derived from `request.title` when present and
+                // non-empty, else the service identifier -- `request.title`'s own doc comment:
+                // "A user-displayable name ... independent of the service identifier".
+                let rawTitle = request.title ?? ""
+                let name = rawTitle.isEmpty ? serviceIdentifier : rawTitle
+
+                // Build the `LoginFields`-shaped JSON plaintext (`packages/pv-ui/vault/types.ts`'s
+                // own shape, L-15) -- `44-RESEARCH.md`'s own worked example, verbatim field set.
+                let plaintext: String
+                do {
+                    let payload: [String: Any] = [
+                        "type": "login",
+                        "name": name,
+                        "folderId": NSNull(),
+                        "tags": [String](),
+                        "username": username,
+                        "password": password,
+                        "urls": [serviceIdentifier],
+                        "notes": "",
+                    ]
+                    let data = try JSONSerialization.data(withJSONObject: payload)
+                    plaintext = String(decoding: data, as: UTF8.self)
+                } catch {
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=encode-plaintext status=fail")
+                    self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                    return
+                }
+
+                let userKey: FfiUserKey
+                switch SessionKeyReader.importUserKey() {
+                case let .success(uk):
+                    userKey = uk
+                case .failure:
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=sessionkey status=fail")
+                    self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                    return
+                }
+
+                let wire: FfiEncryptedItemWire
+                do {
+                    wire = try encryptItemWire(userKey: userKey, plaintext: plaintext, itemId: itemId, revision: 1)
+                } catch {
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=encrypt status=fail")
+                    self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+                    return
+                }
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=encrypt status=ok")
+
+                // <behavior>: marked BEFORE the network attempt -- mirrors
+                // `PendingProviderItemStore`'s own mark-before-risk discipline (43-06), identical
+                // to the passkey-registration path.
+                PendingProviderItemStore.markPending(itemId: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson)
+
+                if let baseURL = VaultAPI.extensionBaseURL() {
+                    let api = VaultAPI(baseURL: baseURL, tokenProvider: { SessionTokenStore.load() })
+                    do {
+                        _ = try await api.createItem(id: itemId, encKeyJson: wire.encKeyJson, encDataJson: wire.encDataJson)
+                        PendingProviderItemStore.clearPending(itemId: itemId)
+                        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=network status=ok")
+                    } catch {
+                        // Left pending on failure, never cleared here -- self-heal (43-06,
+                        // `ContentView.retryPendingProviderItemsInBackground()`) covers eventual
+                        // server visibility; the save still completes locally below.
+                        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=network status=fail")
+                    }
+                } else {
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=network status=no-server-configured")
+                }
+
+                // The header's own explicit, non-optional instruction ("You are responsible for
+                // updating the ASCredentialIdentityStore") -- UNCONDITIONAL after a successful
+                // save, never inferred (unlike the passkey path, where this is inferred
+                // convention -- here it is a documented API contract, 44-04-PLAN.md's own
+                // `key_links`). `scripts/audit-ios-identity-store-chokepoint.sh`'s assertion (B)
+                // eighth entry measures THIS call, anchored on this override's own declaration.
+                let identityResult = await IdentityStoreSync.upsertOne(
+                    source: VaultIdentitySource(itemId: itemId, username: username, urls: [serviceIdentifier])
+                )
+                switch identityResult {
+                case .success:
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=identity-store status=ok")
+                case let .failure(error):
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=identity-store status=fail error=\(error.description, privacy: .public)")
+                }
+
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=complete status=ok")
+                self.extensionContext.completeSavePasswordRequest(completionHandler: nil)
+
+                // ACC-07: the SAME post-fill activity refresh every other write path performs --
+                // AutoFill-only usage must not log the user out mid-use.
+                SessionLifecycle.refreshActivity(writer: "extension")
+            }
+        }
+
+        if request.event == .generatedPasswordFilled {
+            // Header, verbatim: "Providers should not request any additional information from the
+            // user as that will not be transmitted back to the form." -- the pipeline runs
+            // directly, no confirmation UI is ever presented for this event.
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=confirm status=skipped-generated-password-filled")
+            runSavePipeline()
+            return
+        }
+
+        presentSavePasswordConfirm(
+            serviceIdentifier: serviceIdentifier,
+            username: username,
+            onConfirm: {
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=confirm status=confirmed")
+                runSavePipeline()
+            },
+            onCancel: { [weak self] in
+                Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=confirm status=user-cancelled")
                 self?.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
             }
         )

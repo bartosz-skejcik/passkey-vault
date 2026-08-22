@@ -35,16 +35,20 @@
 #   (B) Every mutation call site 41-04-SUMMARY.md's own "the mutation call-site list" enumerates
 #       still reaches its own REQUIRED `IdentityStoreSync` entry point -- the direction that
 #       ACTUALLY fails silently (T-41-41): a call site that stops calling the writer produces no
-#       error, no crash, just a QuickType entry that is quietly never there or never updated. Seven
-#       sites (43-07 added the seventh), all in the SAME two files: `VaultStore.swift`'s
-#       `create`/`update`/`delete`/`performRefresh` (the sync-pull completion, run after the
-#       shared/family-wide merge), and `CredentialProviderViewController.swift`'s post-fill
-#       self-heal write, full-rebuild recovery path (`runIdentityRebuildIfPending()` -- Plan 43-07
-#       moved this site's own required call from `IdentityStoreSync.republish(` to
+#       error, no crash, just a QuickType entry that is quietly never there or never updated. Eight
+#       sites (43-07 added the seventh, 44-04 the eighth), all in the SAME two files:
+#       `VaultStore.swift`'s `create`/`update`/`delete`/`performRefresh` (the sync-pull completion,
+#       run after the shared/family-wide merge), and `CredentialProviderViewController.swift`'s
+#       post-fill self-heal write, full-rebuild recovery path (`runIdentityRebuildIfPending()` --
+#       Plan 43-07 moved this site's own required call from `IdentityStoreSync.republish(` to
 #       `IdentityStoreSync.republishRebuild(`, the combined password+passkey full-vault rebuild
 #       entry point that closes 43-05-SUMMARY.md's deferred cross-type full-replacement collision),
-#       and the NEW registration override (`prepareInterface(forPasskeyRegistration:)`, Plan 43-07's
-#       own single-item self-heal write, `IdentityStoreSync.upsertOnePasskey(`). Each site is
+#       the registration override (`prepareInterface(forPasskeyRegistration:)`, Plan 43-07's own
+#       single-item self-heal write, `IdentityStoreSync.upsertOnePasskey(`), and the NEW save
+#       override (`prepareInterface(for:ASSavePasswordRequest)`, Plan 44-04's own single-item
+#       self-heal write, `IdentityStoreSync.upsertOne(` -- the header's own documented, non-optional
+#       "you are responsible for updating the ASCredentialIdentityStore" instruction for this
+#       surface, 44-PLAN-CHECK.md B5). Each site is
 #       located by its OWN function DECLARATION (a stable, low-drift anchor, per this plan's own
 #       `<read_first>` guidance to "prefer scanning all declarations ... over isolating a region and
 #       trusting the isolation" -- 35-REVIEW's CR-02/CR-03), then a BOUNDED forward line-window (not
@@ -261,12 +265,14 @@ CALL_SITE_LABELS=(
   "CredentialProviderViewController.fillOrCancel (post-fill self-heal write)"
   "CredentialProviderViewController.runIdentityRebuildIfPending (full-rebuild recovery path)"
   "CredentialProviderViewController.prepareInterface(forPasskeyRegistration:) (registration self-heal write)"
+  "CredentialProviderViewController.prepareInterface(for:ASSavePasswordRequest) (save self-heal write)"
 )
 CALL_SITE_FILES=(
   "$VAULT_STORE"
   "$VAULT_STORE"
   "$VAULT_STORE"
   "$VAULT_STORE"
+  "$CPVC"
   "$CPVC"
   "$CPVC"
   "$CPVC"
@@ -279,13 +285,22 @@ CALL_SITE_ANCHORS=(
   "private func fillOrCancel(for request: any ASCredentialRequest, entryPoint: String) {"
   "private static func runIdentityRebuildIfPending() async {"
   "override func prepareInterface(forPasskeyRegistration registrationRequest: any ASCredentialRequest) {"
+  "override func prepareInterface(for request: ASSavePasswordRequest) {"
 )
 # Plan 43-07 (43-PLAN-CHECK.md C1): the seventh entry's window is a GENEROUS UPPER BOUND ONLY --
 # Task 1 deliberately placed this override's declaration ABOVE `runIdentityRebuildIfPending()` (see
 # that function's own anchor above, further down this same file), so a real, later `func`
 # declaration follows it and the primary `next_decl_offset` path (below) is what actually governs
 # this entry's measured extent in practice, never this numeric fallback.
-CALL_SITE_WINDOWS=(90 100 30 90 140 80 90)
+#
+# Plan 44-04 (44-PLAN-CHECK.md B5): the eighth entry's own required call
+# (`IdentityStoreSync.upsertOne(`) lives inside `runSavePipeline`, a LOCAL CLOSURE VARIABLE (never
+# a separate `func`) declared directly inside this override's own body, specifically so it can
+# never trip the `next_decl_offset` truncation this file's own header explains -- the primary path
+# governs here too (the next REAL `func` declaration after this override's own closing brace is
+# `makeGeneratedPassword(_:)`, Plan 44-05's own sibling section, further down the same file), so
+# this numeric fallback is again an upper bound only, never load-bearing in practice.
+CALL_SITE_WINDOWS=(90 100 30 90 140 80 90 140)
 # CR-01 (41-REVIEW.md): the REQUIRED call differs per site -- this is "contract shape, not string
 # proximity". The four `VaultStore` mutation sites each hand the writer "the CURRENT, COMPLETE
 # vault item set" (`republish(sources:)`'s own documented contract), so `IdentityStoreSync.republish(`
@@ -311,6 +326,7 @@ CALL_SITE_REQUIRED_CALLS=(
   "IdentityStoreSync.upsertOne("
   "IdentityStoreSync.republishRebuild("
   "IdentityStoreSync.upsertOnePasskey("
+  "IdentityStoreSync.upsertOne("
 )
 
 VIOLATIONS_B=""

@@ -1,0 +1,17 @@
+=== 1. WRONG CALL: swap upsertOne( for a wrong call at the save site ===
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+CredentialProviderViewController.prepareInterface(for:ASSavePasswordRequest) (save self-heal write) (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift, declared at line 996) -- no IdentityStoreSync.upsertOne( call found within 140 lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)
+
+EXIT_AFTER_WRONG_CALL=1
+
+=== 2. MISSING CALL: remove the identity-store write entirely from the save site ===
+FAIL: identity-store choke-point violation(s) found (FILL-03):
+-- Assertion (B), an enumerated mutation call site no longer reaches the writer:
+CredentialProviderViewController.prepareInterface(for:ASSavePasswordRequest) (save self-heal write) (ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift, declared at line 996) -- no IdentityStoreSync.upsertOne( call found within 140 lines (CR-01: this site's own contract shape, not any IdentityStoreSync call)
+
+EXIT_AFTER_MISSING_CALL=1
+
+=== 3. RESTORE ===
+PASS: the identity store is written ONLY from the reviewed allow-list (ios/PasskeyVault/Shared/IdentityStoreSync.swift ios/PasskeyVault/PasskeyVault/MatchingProbe.swift ios/PasskeyVault/PasskeyVault/IdentityStoreSyncProbe.swift), and all 8 enumerated mutation call sites still reach their own required IdentityStoreSync entry point (FILL-03, CR-01)
+EXIT_AFTER_RESTORE=0
