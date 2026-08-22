@@ -1,0 +1,3 @@
+2026-08-22 12:17:48.163247+0200 0xcb504c   Default     0x227bc2a            53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidLoad
+2026-08-22 12:17:48.206057+0200 0xcb504c   Default     0x0                  53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=register stage=lazy-check status=indeterminate
+2026-08-22 12:17:48.206269+0200 0xcb504c   Default     0x0                  53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=preflight status=refused-locked

@@ -33,7 +33,16 @@ struct PasskeyVaultHarnessApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NativeSignInView()
+            // `.planning/debug/passkey-reg-blank-sheet-discord.md` diagnostic, 2026-08-22: both the
+            // ORIGINAL sign-in (ASSERTION, SC2) and the NEW create (REGISTRATION) surfaces live on
+            // the SAME screen -- `NativeSignInView`'s own accessibility identifiers
+            // (`nativeSignIn.button`/`nativeSignIn.status`) are unchanged, so
+            // `NativeAppSignInUITests` keeps working unmodified.
+            VStack(spacing: 32) {
+                NativeSignInView()
+                Divider()
+                NativeCreateView()
+            }
         }
     }
 }

@@ -1,0 +1,2 @@
+2026-08-22 12:03:22.971957+0200 0xca819a   Default     0x2261a6d            46661  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=start kind=register
+2026-08-22 12:03:22.973657+0200 0xca819a   Default     0x2261a6d            46661  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=performRequests rpId=vault.blonie.cloud userName=ios-native-register-1787393002

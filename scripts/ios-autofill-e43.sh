@@ -94,7 +94,7 @@ INTEROP_STATUS_FILE_NAME="e43-interop-seed-status.json"
 INTEROP_PROBE_SCRIPT="scripts/ios-autofill-e43-interop-probe.mjs"
 
 usage() {
-  echo "Usage: $0 {tracer|sc4|native-app|interop|sc5-register} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
+  echo "Usage: $0 {tracer|sc4|native-app|native-app-register {locked|unlocked}|interop|sc5-register} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
   exit 1
 }
 
@@ -1344,6 +1344,241 @@ cmd_sc5_register() {
   exit 0
 }
 
+# --- `.planning/debug/passkey-reg-blank-sheet-discord.md` diagnostic, 2026-08-22 ----------------
+#
+# `native-app-register {locked|unlocked}`: settles, live on the simulator, whether a genuine
+# NATIVE app (never Safari) driving `ASAuthorizationController`'s passkey REGISTRATION request
+# (`createCredentialRegistrationRequest`, `ios/PasskeyVaultHarness/NativeCreateView.swift`, new
+# this session) reaches `CredentialProviderViewController.prepareInterface(forPasskeyRegistration:)`
+# at all, and what it does for each vault lock state -- NEITHER combination was ever exercised
+# live anywhere in this codebase's history before this session (43-07/SC4 proved registration via
+# SAFARI only; 43-08/SC2 proved a native app's ASSERTION only -- see this plan's own debug
+# session file for the full gap analysis).
+#
+# `locked`: deliberately does NOT seed/unlock anything -- a genuinely fresh App Group container
+# has no `LockMarker` at all, so `SessionLifecycle.checkAndExpireIfNeeded` returns `.indeterminate`
+# (never `.unlocked`), and `PasskeyRegistrationPreflight.decide(isUnlocked: false, ...)` refuses
+# via the SAME `.refuseLocked` branch a genuinely expired session hits -- no `pv-server` needed at
+# all for this leg (the extension never reaches the network).
+#
+# `unlocked`: reuses `PasskeyRegistrationSc4Seeder` VERBATIM (the SAME real seeder `cmd_sc4`
+# already established: a throwaway `pv-server`, a real `AccountService.register`, Secret C +
+# host-unlock marker written for real) so the extension finds a genuinely unlocked, genuinely
+# decryptable session -- never a hand-staged shortcut.
+#
+# Captures the EXTENSION's own os_log output directly (subsystem `cloud.blonie.PasskeyVault`,
+# every category -- `PVFILL|`/`PVLOCK|`/`PVDIAG|`/`PVPROBE|`), which is the actual question this
+# diagnostic exists to answer -- unlike every OTHER subcommand in this file, this one does not
+# assert a fixed PASS/FAIL predicate (no `crates/rp-fixture` round trip backs this specific
+# ceremony, see `NativeCreateView.swift`'s own header) -- it reports the captured evidence for a
+# human/agent to read.
+cmd_native_app_register() {
+  local mode="${1:-locked}"
+  if [ "$mode" != "locked" ] && [ "$mode" != "unlocked" ]; then
+    echo "ERROR: native-app-register requires 'locked' or 'unlocked', got: $mode" >&2
+    exit 1
+  fi
+  mkdir -p "$EVIDENCE_DIR"
+  local evidence_log="$EVIDENCE_DIR/e43-10-native-app-register-${mode}.log"
+  : > "$evidence_log"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> native-app-register ($mode): pinned simulator UDID: $udid" | tee -a "$evidence_log"
+
+  local extra_conditions=""
+  local server_pid="" db_dir="" server_base=""
+  cleanup_register() {
+    # `${var:-}`, never a bare `$var` -- this function is registered as an EXIT trap, which fires
+    # after `cmd_native_app_register` itself has already returned; bash's own `local` scoping means
+    # `server_pid`/`db_dir` (this function's own captured closure variables) can read as genuinely
+    # unset by the time the trap runs, which `set -u` treats as an error rather than empty-string
+    # (the SAME bash-3.2-safe idiom this file already establishes for `${arr[@]+"${arr[@]}"}`).
+    if [ -n "${server_pid:-}" ]; then
+      kill "$server_pid" >/dev/null 2>&1 || true
+      wait "$server_pid" 2>/dev/null || true
+    fi
+    if [ -n "${db_dir:-}" ]; then
+      rm -rf "$db_dir"
+    fi
+  }
+  trap cleanup_register EXIT
+
+  if [ "$mode" = "unlocked" ]; then
+    extra_conditions="PV_PROBE_E43_SC4"
+    local stray_port=8620
+    if lsof -nP -i ":${stray_port}" >/dev/null 2>&1; then
+      echo "ERROR: something is already listening on the default port :${stray_port} -- refusing to proceed (D-23)" >&2
+      exit 1
+    fi
+    local server_bin="$REPO_ROOT/target/release/pv-server"
+    if [ ! -x "$server_bin" ]; then
+      server_bin="$REPO_ROOT/target/debug/pv-server"
+    fi
+    if [ ! -x "$server_bin" ]; then
+      echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+      exit 1
+    fi
+    db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e43-10.XXXXXX")
+    local db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+    server_base="http://127.0.0.1:${SC4_SERVER_PORT}"
+    PV_ADDR="127.0.0.1:${SC4_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "${db_dir}/pv-server.log" 2>&1 &
+    server_pid=$!
+    local healthy=0
+    for _ in $(seq 1 50); do
+      if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+      sleep 0.3
+    done
+    if [ "$healthy" -ne 1 ]; then
+      echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+      cat "${db_dir}/pv-server.log" >&2
+      exit 1
+    fi
+    echo "==> native-app-register (unlocked): pv-server healthy on ${server_base} (isolated, throwaway db)" | tee -a "$evidence_log"
+  else
+    echo "==> native-app-register (locked): deliberately NOT seeding/unlocking -- a fresh install has no LockMarker, so SessionLifecycle.checkAndExpireIfNeeded returns .indeterminate -> PasskeyRegistrationPreflight.decide treats isUnlocked:false -> .refuseLocked, the SAME real branch a genuinely expired session hits" | tee -a "$evidence_log"
+  fi
+
+  echo "==> native-app-register ($mode): building pv-ffi (plain variant)" | tee -a "$evidence_log"
+  "$REPO_ROOT/scripts/build-ios.sh" >> "$evidence_log" 2>&1
+
+  echo "==> native-app-register ($mode): building app+extension (conditions: '${extra_conditions}')" | tee -a "$evidence_log"
+  build_with_l10_retry "$udid" "$extra_conditions" /tmp/pv-e43-10-build.log build
+
+  echo "==> native-app-register ($mode): building the UI test bundle" | tee -a "$evidence_log"
+  build_with_l10_retry "$udid" "$extra_conditions" /tmp/pv-e43-10-build-for-testing.log build-for-testing
+
+  # LIVE FINDING this session: `xcrun simctl install` over an ALREADY-installed app does NOT wipe
+  # its App Group container -- a THIRD run of this subcommand (locked, after an intervening
+  # unlocked run had already written a real LockMarker/Secret C) silently observed
+  # `stage=lazy-check status=unlocked` instead of the intended `.indeterminate`, because the prior
+  # run's real unlock state was still sitting in the SAME reused container. `locked` mode's own
+  # precondition ("a fresh install has no LockMarker") only holds on a GENUINELY fresh container --
+  # uninstalling first (removes the App Group container too, since `PasskeyVaultHarness` shares no
+  # group with this bundle by design, so nothing else references it) makes every run of this
+  # subcommand start from the same clean state regardless of what a PRIOR run left behind.
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  # First launch: creates the App Group container on disk (a fresh install has no group directory
+  # until the app runs at least once) -- same double-launch pattern cmd_tracer/cmd_sc4 establish.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container still not found after first launch" >&2
+    exit 1
+  fi
+
+  if [ "$mode" = "unlocked" ]; then
+    local reg_email reg_password
+    reg_email="pv-e43-10-register-$(date +%s)@example.invalid"
+    reg_password="pv-e43-10 register fixture password $(date +%s) $$"
+    rm -f "${group_dir}/${SC4_STATUS_FILE_NAME}"
+    echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${reg_email}\",\"password\":\"${reg_password}\"}" \
+      > "${group_dir}/${SC4_SEED_INPUT_FILE_NAME}"
+    echo "==> native-app-register (unlocked): launching host app to seed a REAL unlocked session (PasskeyRegistrationSc4Seeder, verbatim)" | tee -a "$evidence_log"
+    xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    local waited=0
+    while [ ! -f "${group_dir}/${SC4_STATUS_FILE_NAME}" ]; do
+      sleep 1
+      waited=$((waited + 1))
+      if [ "$waited" -gt 30 ]; then
+        echo "ERROR: PasskeyRegistrationSc4Seeder never wrote its status marker within 30s" >&2
+        exit 1
+      fi
+    done
+    if ! grep -q '"status":"ok"' "${group_dir}/${SC4_STATUS_FILE_NAME}"; then
+      echo "ERROR: PasskeyRegistrationSc4Seeder reported a non-ok status:" >&2
+      cat "${group_dir}/${SC4_STATUS_FILE_NAME}" >&2
+      exit 1
+    fi
+    echo "==> native-app-register (unlocked): seed confirmed ok (real host-unlock + Secret C written)" | tee -a "$evidence_log"
+    xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  fi
+
+  # --- build + install the DISTINCT PasskeyVaultHarness app target (unchanged target, gains
+  # NativeCreateView.swift's own new "Create Passkey" button this session) -----------------------
+  echo "==> native-app-register ($mode): building PasskeyVaultHarness" | tee -a "$evidence_log"
+  local harness_build_log="/tmp/pv-e43-10-harness-build.log"
+  if ! xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+      -scheme PasskeyVaultHarness -configuration Debug \
+      -destination "platform=iOS Simulator,id=$udid" \
+      -derivedDataPath "$DD_PATH" \
+      build > "$harness_build_log" 2>&1; then
+    echo "ERROR: PasskeyVaultHarness build failed -- see $harness_build_log" >&2
+    tail -100 "$harness_build_log" >&2
+    exit 1
+  fi
+  xcrun simctl install "$udid" "$HARNESS_APP_PRODUCT"
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+  xcrun simctl launch --terminate-running-process "$udid" "$HARNESS_BUNDLE_ID" >/dev/null
+  sleep 1
+
+  echo "==> native-app-register ($mode): driving the harness app's 'Create Passkey' button + system picker (NativeAppRegisterUITests)" | tee -a "$evidence_log"
+  local ui_test_log
+  ui_test_log=$(mktemp)
+  local ui_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/NativeAppRegisterUITests/testNativeRegister \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) $extra_conditions" \
+    test > "$ui_test_log" 2>&1 &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || ui_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+
+  echo "## XCUITest drive (exit $ui_result) -- see $ui_test_log for the full transcript" >> "$evidence_log"
+  tail -80 "$ui_test_log" >> "$evidence_log" || true
+
+  # --- the actual evidence this diagnostic exists to gather: the EXTENSION process's own os_log
+  # output, EVERY category (never scoped to one), so PVFILL|/PVLOCK|/PVDIAG|/PVPROBE| all appear.
+  local ext_log="${evidence_log}.extension-log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault"' --start "$run_start" \
+    2>&1 | grep -E 'PVFILL\||PVLOCK\||PVDIAG\||PVPROBE\|' > "$ext_log" || true
+
+  local harness_log="${evidence_log}.harness-log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVaultHarness"' --start "$run_start" \
+    2>&1 | grep 'PVHARNESS|' > "$harness_log" || true
+
+  {
+    echo ""
+    echo "## Extension process os_log (cloud.blonie.PasskeyVault, ALL categories), this run"
+    cat "$ext_log" 2>/dev/null || true
+    echo ""
+    echo "## Harness app os_log (cloud.blonie.PasskeyVaultHarness), this run"
+    cat "$harness_log" 2>/dev/null || true
+  } >> "$evidence_log"
+
+  local ext_line_count harness_line_count reg_line_count
+  ext_line_count=$(wc -l < "$ext_log" | tr -d ' ')
+  harness_line_count=$(wc -l < "$harness_log" | tr -d ' ')
+  reg_line_count=$(grep -c 'PVFILL|passkey-reg|' "$ext_log" 2>/dev/null || true)
+  reg_line_count="${reg_line_count:-0}"
+
+  echo "RESULT ($mode): extension log lines=$ext_line_count harness log lines=$harness_line_count PVFILL|passkey-reg| lines=$reg_line_count"
+  echo "  full transcript: $evidence_log"
+  echo "  extension-only capture: $ext_log"
+  echo "  harness-only capture: $harness_log"
+}
+
 main() {
   case "${1:-}" in
     sc4)
@@ -1390,6 +1625,10 @@ main() {
         shift
       fi
       cmd_native_app "$corrupt"
+      ;;
+    native-app-register)
+      shift
+      cmd_native_app_register "${1:-locked}"
       ;;
     interop)
       shift

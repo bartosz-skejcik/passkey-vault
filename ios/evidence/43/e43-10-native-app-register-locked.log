@@ -1,0 +1,116 @@
+==> native-app-register (locked): pinned simulator UDID: 34992BB7-4982-4915-92C7-C7FC987802AF
+==> native-app-register (locked): deliberately NOT seeding/unlocking -- a fresh install has no LockMarker, so SessionLifecycle.checkAndExpireIfNeeded returns .indeterminate -> PasskeyRegistrationPreflight.decide treats isUnlocked:false -> .refuseLocked, the SAME real branch a genuinely expired session hits
+==> native-app-register (locked): building pv-ffi (plain variant)
+==> variant: plain (no extra features -- the artifact every non-test consumer, including the appex, links)
+==> uniffi version (single-sourced): 0.32.0
+==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
+==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.38s
+==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
+    Finished `release` profile [optimized] target(s) in 0.16s
+==> Generating Swift bindings (uniffi-bindgen-swift)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
+==> Assembling PvFfi.xcframework
+xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
+==> Running the vtool slice gate
+==> OK: ios-arm64 (pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOS$/)
+==> OK: ios-arm64-simulator (pv_ffi-5ff1166bfdc679bb.pv_ffi.c9f552404ace256e-cgu.01.rcgu.o) matches the expected load command (/^[[:space:]]*platform[[:space:]]+IOSSIMULATOR$/)
+==> Done. XCFramework: ios/PasskeyVault/build/PvFfi.xcframework
+==> Done. Swift bindings: ios/PasskeyVault/build/swift-bindings
+==> native-app-register (locked): building app+extension (conditions: '')
+==> native-app-register (locked): building the UI test bundle
+==> native-app-register (locked): building PasskeyVaultHarness
+==> native-app-register (locked): driving the harness app's 'Create Passkey' button + system picker (NativeAppRegisterUITests)
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.MgMSclCxPD for the full transcript
+    t =    43.38s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    43.41s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    43.43s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    43.46s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    43.46s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    43.49s Checking existence of `"nativeCreate.status" StaticText`
+    t =    43.49s Find the "nativeCreate.status" StaticText
+    t =    44.01s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    44.02s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    44.06s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    44.07s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    44.07s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    44.08s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    44.10s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    44.13s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    44.15s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    44.16s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    44.19s Checking existence of `"nativeCreate.status" StaticText`
+    t =    44.19s Find the "nativeCreate.status" StaticText
+    t =    44.71s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    44.73s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    44.77s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    44.77s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    44.78s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    44.78s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    44.81s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    44.83s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    44.86s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    44.86s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    44.89s Checking existence of `"nativeCreate.status" StaticText`
+    t =    44.89s Find the "nativeCreate.status" StaticText
+    t =    45.41s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    45.42s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    45.45s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    45.46s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    45.47s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    45.47s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    45.49s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    45.52s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    45.54s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    45.55s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    45.57s Checking existence of `"nativeCreate.status" StaticText`
+    t =    45.58s Find the "nativeCreate.status" StaticText
+    t =    46.09s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    46.10s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =    46.13s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    46.14s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    46.14s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    46.15s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =    46.17s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =    46.19s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    46.22s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    46.22s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =    46.24s Checking existence of `"nativeCreate.status" StaticText`
+    t =    46.25s Find the "nativeCreate.status" StaticText
+    t =    49.77s Checking existence of `"nativeCreate.status" StaticText`
+    t =    49.78s Find the "nativeCreate.status" StaticText
+    t =    49.79s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =    49.88s Added attachment named 'final-state-selectedProvider=false-tappedContinue=true-status=Requesting passkey creation...-screenshot'
+    t =    49.88s Requesting snapshot of accessibility hierarchy for app with pid 52890
+    t =    49.91s Requesting snapshot of accessibility hierarchy for app with pid 52890
+    t =    49.92s Added attachment named 'final-state-selectedProvider=false-tappedContinue=true-status=Requesting passkey creation...-hierarchy'
+    t =    49.92s Tear Down
+Test Case '-[PasskeyVaultUITests.NativeAppRegisterUITests testNativeRegister]' passed (49.939 seconds).
+Test Suite 'NativeAppRegisterUITests' passed at 2026-08-22 12:18:34.737 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 49.939 (49.940) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 12:18:34.737 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 49.939 (49.940) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 12:18:34.738 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 49.939 (49.941) seconds
+2026-08-22 12:18:35.084 xcodebuild[52895:13322622] [MT] IDETestOperationsObserverDebug: 52.411 elapsed -- Testing started completed.
+2026-08-22 12:18:35.084 xcodebuild[52895:13322622] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 12:18:35.084 xcodebuild[52895:13322622] [MT] IDETestOperationsObserverDebug: 52.411 sec, +52.411 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_12-17-26-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+
+## Extension process os_log (cloud.blonie.PasskeyVault, ALL categories), this run
+2026-08-22 12:17:48.163247+0200 0xcb504c   Default     0x227bc2a            53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidLoad
+2026-08-22 12:17:48.206057+0200 0xcb504c   Default     0x0                  53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=register stage=lazy-check status=indeterminate
+2026-08-22 12:17:48.206269+0200 0xcb504c   Default     0x0                  53186  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=preflight status=refused-locked
+
+## Harness app os_log (cloud.blonie.PasskeyVaultHarness), this run
+2026-08-22 12:17:46.154875+0200 0xcb4959   Default     0x227a7fd            52890  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=start kind=register
+2026-08-22 12:17:46.156122+0200 0xcb4959   Default     0x227a7fd            52890  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=performRequests rpId=vault.blonie.cloud userName=ios-native-register-1787393866
