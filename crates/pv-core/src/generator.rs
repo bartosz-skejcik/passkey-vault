@@ -366,6 +366,17 @@ fn draw_char_respecting_max_run(
     charset: &[char],
     max_run: Option<usize>,
 ) -> Result<char, CryptoError> {
+    if charset.is_empty() {
+        // Defensive: no caller should ever reach this with an empty
+        // charset (CR-01, 44-REVIEW.md -- the un-expanded `AsciiPrintable`
+        // class used to reach here directly via `charset_for_class`,
+        // producing `uniform_random_index(0)` -> `RANGE % 0`, a panic on
+        // fully RP-controlled input). Refuse rather than divide by zero,
+        // even if some future caller reintroduces an un-expanded class.
+        return Err(CryptoError::InvalidInput(
+            "unsatisfiable rule: required class has an empty character set",
+        ));
+    }
     let n = charset.len() as u32;
     let Some(max_run) = max_run else {
         let idx = uniform_random_index(n);
@@ -438,7 +449,15 @@ pub fn generate_character_password_from_rules(
         ));
     }
 
-    let required_len = rules.required.len();
+    // `rules.required` may itself contain `AsciiPrintable` (an umbrella
+    // class whose OWN `charset_for_class` is deliberately empty -- it is
+    // meant to be expanded, never drawn from directly). Expand it here,
+    // the same way `effective_classes` was expanded into `alphabet` above,
+    // BEFORE it is used for any bound check or for building `slots` below,
+    // so no un-expanded umbrella class ever reaches `charset_for_class`
+    // (CR-01, 44-REVIEW.md).
+    let required_expanded = expand_classes(&rules.required);
+    let required_len = required_expanded.len();
     let min_bound = CHAR_MIN_LENGTH.max(required_len);
     let effective_max = rules.max_length.unwrap_or(CHAR_MAX_LENGTH).min(CHAR_MAX_LENGTH);
 
@@ -469,7 +488,7 @@ pub fn generate_character_password_from_rules(
     // left-to-right order, so max_consecutive can be enforced against
     // characters that are already genuinely placed.
     let mut slots: Vec<Slot> = Vec::with_capacity(length);
-    for &class in &rules.required {
+    for &class in &required_expanded {
         slots.push(Slot::Required(class));
     }
     while slots.len() < length {
@@ -974,5 +993,75 @@ mod tests {
             unsupported_msg, unsatisfiable_msg,
             "the two refusal shapes must produce genuinely different prefixes"
         );
+    }
+
+    /// CR-01 (44-REVIEW.md): `required: ascii-printable` is a syntactically
+    /// valid, RP-supplied rules string. Before the fix, the un-expanded
+    /// `AsciiPrintable` entry in `rules.required` reached
+    /// `charset_for_class` directly in the slot-drawing loop, which returns
+    /// `""` for that class, which fed an empty charset into
+    /// `uniform_random_index(0)` -- `RANGE % 0`, a panic (divide by zero)
+    /// on fully attacker-controlled input. This must return `Ok`, never
+    /// panic.
+    #[test]
+    fn generate_with_required_ascii_printable_does_not_panic() {
+        let rules =
+            PasswordRules { required: vec![PasswordRuleClass::AsciiPrintable], ..Default::default() };
+        let password = generate_character_password_from_rules(&rules)
+            .expect("required: ascii-printable must expand into its four classes, not panic");
+        assert!(password.chars().count() >= CHAR_MIN_LENGTH);
+    }
+
+    #[test]
+    fn generate_with_required_ascii_printable_and_lower_does_not_panic() {
+        let rules = PasswordRules {
+            required: vec![PasswordRuleClass::AsciiPrintable, PasswordRuleClass::Lower],
+            ..Default::default()
+        };
+        generate_character_password_from_rules(&rules)
+            .expect("required: ascii-printable,lower must not panic");
+    }
+
+    #[test]
+    fn generate_with_allowed_and_required_ascii_printable_does_not_panic() {
+        let rules = PasswordRules {
+            allowed: vec![PasswordRuleClass::AsciiPrintable],
+            required: vec![PasswordRuleClass::AsciiPrintable],
+            ..Default::default()
+        };
+        generate_character_password_from_rules(&rules)
+            .expect("allowed: ascii-printable; required: ascii-printable; must not panic");
+    }
+
+    /// Bounded corpus over the DSL grammar's own named classes (both
+    /// `required` and `allowed`, alone and pairwise), the shape the
+    /// reviewer's ~13,000-string sweep used to find 424 panicking inputs,
+    /// all of the `required: ascii-printable` shape. Not exhaustive, but
+    /// asserts the property the sweep was built to check: no input in this
+    /// corpus may panic `parse_password_rules` or
+    /// `generate_character_password_from_rules`.
+    #[test]
+    fn generate_from_rules_never_panics_across_a_dsl_corpus() {
+        let classes = ["lower", "upper", "digit", "special", "ascii-printable", "unicode"];
+        let mut corpus: Vec<String> = Vec::new();
+        for key in ["required", "allowed"] {
+            for class in classes {
+                corpus.push(format!("{key}: {class};"));
+                for class2 in classes {
+                    corpus.push(format!("{key}: {class},{class2};"));
+                }
+            }
+        }
+        corpus.push("minlength: 10; maxlength: 20; required: ascii-printable;".to_string());
+        corpus.push("allowed: ascii-printable; required: ascii-printable;".to_string());
+
+        for rules_text in &corpus {
+            let result = std::panic::catch_unwind(|| {
+                if let Ok(rules) = parse_password_rules(rules_text) {
+                    let _ = generate_character_password_from_rules(&rules);
+                }
+            });
+            assert!(result.is_ok(), "rules text panicked: {rules_text:?}");
+        }
     }
 }
