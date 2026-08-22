@@ -32,12 +32,25 @@
 // script in this repo.
 
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 const [, , action, base, glueUrl, wasmBytesPath, ...rest] = process.argv;
 
 function fail(reason) {
   console.error(`FAIL: ${reason}`);
   process.exit(1);
+}
+
+/** CR-04 (44-REVIEW.md), related lower-blast-radius item: the throwaway account's own
+ * master password used to be passed as a bare argv element, visible in `ps` to any local
+ * process for the duration of this call. The caller (`ios-autofill-e44.sh`) now passes the
+ * literal sentinel `"-"` in the password position and exports the real value via
+ * `PV_PROBE_ACCOUNT_PASSWORD` instead -- resolved here, never logged, never echoed. */
+function resolveAccountPassword(argvValue) {
+  if (argvValue !== "-") return argvValue;
+  const fromEnv = process.env.PV_PROBE_ACCOUNT_PASSWORD;
+  if (!fromEnv) fail("password argv sentinel '-' given but PV_PROBE_ACCOUNT_PASSWORD is not set");
+  return fromEnv;
 }
 
 async function req(method, pathname, { body, token } = {}) {
@@ -165,12 +178,15 @@ async function doSnapshot(email, password, outFile) {
  * `GET /api/vault/items` directly against the live server (bypassing any client cache -- the SAME
  * discipline `doSnapshot` above already establishes), decrypts every row, and looks for a
  * `type === "login"` row whose `username` matches `wantUsername` exactly. Writes
- * `{ found: bool, username, password, urls, rowCount }` to `outFile` -- `password` is the
- * DECRYPTED plaintext read directly off the live server by this INDEPENDENT client (never the
- * extension process that wrote it, L-17) -- the harness's own driving script compares this against
- * its OWN separately-captured ground truth (the harness app's `UserDefaults`-persisted observed
- * fill value) for the byte-match proof. `found: false` with no `password` key is the correct,
- * expected shape for a BEFORE snapshot (the absence check).*/
+ * `{ found: bool, username, passwordSha256, passwordLength, urls, rowCount }` to `outFile` --
+ * CR-04 (44-REVIEW.md): this file used to write the DECRYPTED PLAINTEXT password, and
+ * `ios-autofill-e44.sh` commits its output verbatim to `ios/evidence/44/`. A decrypted vault
+ * credential must never reach a file this repository writes to disk, committed or not -- so this
+ * emits a SHA-256 digest and a length instead. The byte-match proof is preserved exactly: the
+ * harness's own driving script hashes ITS OWN separately-captured ground truth (the
+ * `UserDefaults`-persisted observed fill value) the same way and compares digests, never
+ * plaintext. `found: false` with no `passwordSha256` key is the correct, expected shape for a
+ * BEFORE snapshot (the absence check).*/
 async function doFindLogin(email, password, wantUsername, outFile) {
   const { mod, uk, token } = await signIn(email, password);
 
@@ -208,11 +224,18 @@ async function doFindLogin(email, password, wantUsername, outFile) {
       usernameLength: raw && typeof raw === "object" && typeof raw.username === "string" ? raw.username.length : null,
     });
     if (raw && typeof raw === "object" && raw.type === "login" && raw.username === wantUsername) {
+      // CR-04 (44-REVIEW.md): never write the decrypted plaintext password to `outFile` -- a
+      // digest plus a length is sufficient for the byte-match proof and never leaves the process.
+      const passwordSha256 =
+        typeof raw.password === "string"
+          ? createHash("sha256").update(raw.password).digest("hex")
+          : null;
       result = {
         found: true,
         id: row.id,
         username: raw.username,
-        password: raw.password,
+        passwordSha256,
+        passwordLength: typeof raw.password === "string" ? raw.password.length : null,
         urls: raw.urls,
         name: raw.name,
         rowCount: rows.length,
@@ -280,21 +303,21 @@ async function main() {
   if (action === "register") {
     const [email, password] = rest;
     if (!email || !password) fail("register requires <email> <password>");
-    await doRegister(email, password);
+    await doRegister(email, resolveAccountPassword(password));
   } else if (action === "snapshot") {
     const [email, password, outFile] = rest;
     if (!email || !password || !outFile) fail("snapshot requires <email> <password> <outFile>");
-    await doSnapshot(email, password, outFile);
+    await doSnapshot(email, resolveAccountPassword(password), outFile);
   } else if (action === "find-login") {
     const [email, password, wantUsername, outFile] = rest;
     if (!email || !password || !wantUsername || !outFile) fail("find-login requires <email> <password> <wantUsername> <outFile>");
-    await doFindLogin(email, password, wantUsername, outFile);
+    await doFindLogin(email, resolveAccountPassword(password), wantUsername, outFile);
   } else if (action === "create-totp") {
     const [email, password, name, secretB32, algorithm, digits, period, outFile] = rest;
     if (!email || !password || !name || !secretB32 || !algorithm || !digits || !period || !outFile) {
       fail("create-totp requires <email> <password> <name> <secretB32> <algorithm> <digits> <period> <outFile>");
     }
-    await doCreateTotp(email, password, name, secretB32, algorithm, digits, period, outFile);
+    await doCreateTotp(email, resolveAccountPassword(password), name, secretB32, algorithm, digits, period, outFile);
   } else {
     fail(`unknown action: ${action} (expected register|snapshot|find-login|create-totp)`);
   }

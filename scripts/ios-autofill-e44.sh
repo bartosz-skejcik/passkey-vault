@@ -649,6 +649,11 @@ cmd_sc_save() {
     if [ -n "${db_dir:-}" ]; then
       rm -rf "$db_dir"
     fi
+    # CR-04 (44-REVIEW.md), related item: SavePasswordFormView.swift persists the filled
+    # plaintext password into the harness's UserDefaults for the byte-match proof and nothing
+    # ever removed it, leaving it in the simulator container indefinitely. Best-effort delete on
+    # every exit path (normal completion, RED control, or failure).
+    xcrun simctl spawn "$udid" defaults delete "$HARNESS_BUNDLE_ID" pv-e44-04-sc-save-observed-password >/dev/null 2>&1 || true
   }
   trap cleanup_sc_save EXIT
 
@@ -700,13 +705,16 @@ cmd_sc_save() {
   sc_save_username="pv-e44-04-sc-save-user-$(date +%s)"
 
   echo "==> sc-save: registering throwaway account ${sc_save_email} via real pv-wasm client" | tee "${db_dir}/sc-save.log"
-  node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" \
+  # CR-04 (44-REVIEW.md), related item: never pass a real credential as a bare argv element
+  # (visible in `ps` to any local process for the call's duration) -- the sentinel "-" plus
+  # PV_PROBE_ACCOUNT_PASSWORD is resolved inside the node script itself.
+  PV_PROBE_ACCOUNT_PASSWORD="$sc_save_password" node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "-" \
     >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: account registration failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
 
   local before_file="$EVIDENCE_DIR/44-04-sc-save-before.json"
   local after_file="$EVIDENCE_DIR/44-04-sc-save-after.json"
   echo "==> sc-save: capturing the BEFORE snapshot (must show no login item for ${sc_save_username})"
-  node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" "$sc_save_username" "$before_file" \
+  PV_PROBE_ACCOUNT_PASSWORD="$sc_save_password" node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "-" "$sc_save_username" "$before_file" \
     >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: BEFORE find-login failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
   if ! python3 -c "import json,sys; d=json.load(open('$before_file')); sys.exit(0 if d.get('found') is False else 1)"; then
     echo "ERROR: the BEFORE snapshot already shows a login item for ${sc_save_username} -- the account is not genuinely fresh" >&2
@@ -849,18 +857,24 @@ cmd_sc_save() {
   # --- receiver-side proof: an INDEPENDENT pv-wasm client reads the LIVE server directly (L-17) --
   echo "==> sc-save: capturing the AFTER snapshot (direct GET /api/vault/items, bypassing any client cache)"
   sleep 2
-  node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" "$sc_save_username" "$after_file" \
+  PV_PROBE_ACCOUNT_PASSWORD="$sc_save_password" node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "-" "$sc_save_username" "$after_file" \
     >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: AFTER find-login failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
   cp "${db_dir}/sc-save.log" "$EVIDENCE_DIR/44-04-sc-save-probe.log"
 
   local receiver_side_pass=0
   if python3 -c "import json,sys; d=json.load(open('$after_file')); sys.exit(0 if d.get('found') is True else 1)"; then
-    local server_password
-    server_password=$(python3 -c "import json; print(json.load(open('$after_file'))['password'])")
-    if [ -n "$observed_password" ] && [ "$server_password" = "$observed_password" ]; then
+    # CR-04 (44-REVIEW.md): the probe script now writes passwordSha256/passwordLength, never the
+    # decrypted plaintext -- hash the harness's OWN separately-captured ground truth the same way
+    # and compare digests, never plaintext. The byte-match proof is preserved exactly.
+    local server_password_sha256 observed_password_sha256=""
+    server_password_sha256=$(python3 -c "import json; print(json.load(open('$after_file'))['passwordSha256'])")
+    if [ -n "$observed_password" ]; then
+      observed_password_sha256=$(printf '%s' "$observed_password" | shasum -a 256 | awk '{print $1}')
+    fi
+    if [ -n "$observed_password_sha256" ] && [ "$server_password_sha256" = "$observed_password_sha256" ]; then
       receiver_side_pass=1
-      echo "PASS: sc-save -- an INDEPENDENT pv-wasm client decrypted a server-visible login item for ${sc_save_username}, byte-matching the harness's own separately-captured fill value ($after_file)"
-    elif [ -z "$observed_password" ]; then
+      echo "PASS: sc-save -- an INDEPENDENT pv-wasm client decrypted a server-visible login item for ${sc_save_username}, byte-matching the harness's own separately-captured fill value (SHA-256 digest compared, never plaintext; $after_file)"
+    elif [ -z "$observed_password_sha256" ]; then
       echo "PARTIAL: sc-save -- a server-visible, independently-decrypted login item for ${sc_save_username} exists ($after_file), but the harness never captured its own ground-truth fill value this run -- presence proven, byte-match NOT proven this run"
     else
       echo "FAIL: sc-save -- the server-visible item's decrypted password does NOT byte-match the harness's own observed fill value" >&2
@@ -1085,10 +1099,10 @@ cmd_sc_insert() {
   local totp_name="PV Live TOTP" totp_secret="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" totp_algo="SHA1" totp_digits=8 totp_period=30
 
   echo "==> sc-insert: registering throwaway account ${sc_insert_email} + one real TOTP item via independent pv-wasm client"
-  node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "$sc_insert_password" \
+  PV_PROBE_ACCOUNT_PASSWORD="$sc_insert_password" node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "-" \
     >> "${db_dir}/sc-insert.log" 2>&1 || { echo "ERROR: account registration failed -- see ${db_dir}/sc-insert.log" >&2; exit 1; }
   local totp_out_file="$EVIDENCE_DIR/44-06-sc-insert-totp-fixture.json"
-  node "$SC4_PROBE_SCRIPT" create-totp "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "$sc_insert_password" \
+  PV_PROBE_ACCOUNT_PASSWORD="$sc_insert_password" node "$SC4_PROBE_SCRIPT" create-totp "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_insert_email" "-" \
     "$totp_name" "$totp_secret" "$totp_algo" "$totp_digits" "$totp_period" "$totp_out_file" \
     >> "${db_dir}/sc-insert.log" 2>&1 || { echo "ERROR: create-totp failed -- see ${db_dir}/sc-insert.log" >&2; cat "${db_dir}/sc-insert.log" >&2; exit 1; }
   echo "==> sc-insert: one real, server-visible TOTP item created ($totp_out_file)"
