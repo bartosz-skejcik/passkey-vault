@@ -6179,3 +6179,198 @@ only a pixel-level or target-membership-level check can. Any future extension ta
 project (or a new asset added to `PasskeyRegistrationConfirmView.swift` or a sibling screen) is
 covered going forward by `gate_asset_resolution`, which fails the build the moment a referenced name
 stops resolving in that target's own catalogs.
+
+## 20. Phase 43 — whole-phase gate, OPT-04 closure, and SC1-6 roll-up (Plan 43-10, 2026-08-22)
+
+Mirrors §7's own Phase-38 whole-phase-gate pattern and §6's own SC-by-SC evidence pattern: every
+named structural-gate command run INDIVIDUALLY, its own exit status and one-line result recorded
+below, never inferred from one composed exit code (43-PLAN-CHECK.md C6); then all six ROADMAP
+Phase 43 success criteria answered one by one with a specific evidence citation each
+(43-PLAN-CHECK.md C7), carrying the SC2/SC3 controlled-stand-in disclosure forward verbatim.
+
+### Gate commands, each run via its own `--only <name>` (or standalone script) invocation
+
+**`scripts/check-ios-gate.sh`'s seven sub-gates (the plan's own `<read_first>` named six; a
+seventh, `asset_resolution`, was added by this same phase's own §19 landmine fix, commits
+`6fdd8da`/`1c32d2f`, AFTER this plan's text was written — run here too, since the composer's own
+`GATES` array now names seven, and citing only six would be exactly the "not re-run against
+current reality" gap this task exists to prevent):**
+
+1. **`bash scripts/check-ios-gate.sh --only qa05`** — exit 0. `PASS[qa05]: zero .planning/ commits
+   authored on this branch itself since 6bbee654a1a591970e7c6db4d7c933d580061b07 (excluding
+   $QA05_EXCLUDE_REF=origin/main; positive control: 364 commit(s) found under -- ios/; commit_docs
+   precondition holds)`.
+2. **`bash scripts/check-ios-gate.sh --only ffi_build`** — exit 0. Both triples built
+   (`aarch64-apple-ios-sim`, `aarch64-apple-ios`), Swift bindings generated, `PvFfi.xcframework`
+   assembled, its own vtool slice gate passed both platform tags.
+3. **`bash scripts/check-ios-gate.sh --only ffi_falsifiable`** — exit 0. All three falsification
+   proofs passed: the device-slice platform-tag corruption genuinely fails the gate, the
+   simulator-slice corruption genuinely fails the gate, and the WR-03 "slice must contain pv-ffi's
+   own code" guard genuinely refuses a scratch copy with zero `pv_ffi*.o` objects rather than
+   validating an unrelated one.
+4. **`bash scripts/check-ios-gate.sh --only ffi_opaque`** — exit 0. Bindings freshness precondition
+   held (no `crates/pv-ffi/src/` source newer than the generated `pv_ffi.swift`); zero raw-byte
+   accessors beyond the two sanctioned exceptions across six audited handle classes and one
+   handle-carrying struct.
+5. **`bash scripts/check-ios-gate.sh --only swift_tests`** — exit 0 (after 1 known-transitional
+   L-41 bindings-transition retry, per this sub-gate's own documented, non-regression retry
+   discipline). Scheme `PasskeyVault` present (E9 autocreated); executed-test count=5 (> 0, E8's
+   zero-count trap did not fire); all required FFI identifiers matched
+   (`FfiRoundTripTests`×3, `FfiPanicSafetyTests`×2).
+6. **`bash scripts/check-ios-gate.sh --only qa_register`** — exit 0. 150 rows parsed across 7
+   in-coverage phase sections (Phase 35 confirmed among them, the positive control); every row
+   resolves to a real file:line with a non-empty excerpt; phases 29/30 (different milestone), 42
+   (still executing when it ran its own audit), and 43 (conditional, absence is valid) correctly
+   excluded and named, never silently dropped.
+7. **`bash scripts/check-ios-gate.sh --only asset_resolution`** — exit 0. For target
+   `PasskeyVaultAutoFill`: 6 distinct asset names referenced, all 6 resolve in the target's own
+   synced catalogs (23 distinct resolvable names total) — this is the static, mechanical form of
+   §19's own pixel-measurement proof, now a standing gate.
+
+**Named structural gates outside the seven-gate composer, each run standalone:**
+
+8. **`bash scripts/audit-ios-identity-store-chokepoint.sh`** — exit 0. `PASS: the identity store
+   is written ONLY from the reviewed allow-list
+   (IdentityStoreSync.swift, MatchingProbe.swift, IdentityStoreSyncProbe.swift), and all 7
+   enumerated mutation call sites still reach their own required IdentityStoreSync entry point
+   (FILL-03, CR-01)`.
+9. **`bash scripts/audit-extension-network-scope.sh`** (43-06) — exit 0. `PASS: the AutoFill
+   extension constructs VaultAPI ONLY from the reviewed allow-list
+   (CredentialProviderViewController.swift), and every such construction site calls ONLY
+   .createItem( (T-43-10, DR-43-A)`.
+10. **`python3 scripts/gen-ios-colorsets.py --check`** — exit 0. `PASS: all 23 colorsets match
+    tokens.json (incl. generated AccentColor)`.
+11. **`bash scripts/audit-generator-uses-ffi.sh`** — exit 0. All five checks (three negative, two
+    positive) hold; negative results confirmed non-vacuous by the script's own positive controls.
+12. **`bash scripts/audit-clipboard-single-writer.sh`** — exit 0. `PASS -- UIPasteboard is written
+    from the choke point, plus only the one documented, exactly-counted, DEBUG-scoped exception`.
+13. **`bash scripts/audit-sync-decision-records.sh`** — exit 0. `PASS: SYNC-05's decision record
+    (reasoning, not just the token) found in SyncCoordinator.swift; FILL-03 hook marker present`.
+14. **`bash scripts/audit-ios-autofill-deprecated-apis.sh`** — **exit 1, RED. Recorded plainly,
+    never softened, mirroring L-14's own precedent.** `FAIL: deprecated AuthenticationServices
+    spelling(s) found` — two hits, both in
+    `ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift`
+    (`provideCredentialWithoutUserInteraction(for: ASPasswordCredentialIdentity)` line 84,
+    `prepareInterfaceToProvideCredential(for: ASPasswordCredentialIdentity)` line 91). Investigated,
+    not merely reported: both call sites sit inside a `#if DEBUG ... #endif` block (lines 48–110)
+    added by this same phase's own commit `cf1dfad` (§18 above, the locked-vault registration hang
+    fix) — a deliberate, documented diagnostic ("Gated `#if DEBUG` -- never ships in Release",
+    the block's own header comment) added specifically to empirically settle whether iOS 27
+    reintroduces or prefers these deprecated overloads, never intended as production behavior. This
+    audit script's own header (top of file) names no `#if DEBUG` carve-out — unlike
+    `audit-clipboard-single-writer.sh`'s own "one documented DEBUG-only exception" — so it flags
+    DEBUG-gated diagnostic code identically to production code. This is this gate's FIRST run since
+    `cf1dfad` landed (zero prior mention of `audit-ios-autofill-deprecated-apis.sh` anywhere in this
+    file); it is a genuine, newly-discovered red state, not a regression this plan's own Task 2
+    introduced (Task 2's `files_modified` is `ios/IOS-SPIKE-LOG.md` only — no Swift source touched).
+    **Not fixed here** — Task 2 is an evidence roll-up, and whether to strip the DEBUG-only override
+    pair, add a DEBUG carve-out to the audit script, or leave both as-is pending further real-device
+    investigation (`.planning/debug/passkey-reg-blank-sheet-discord.md`'s own open questions) is a
+    call for whichever plan next touches this file, recorded here for visibility rather than
+    silently patched over.
+
+**PHASE-GATE:** not a bare `PASS` — one of the fourteen named commands above (#14) is genuinely
+RED. Every command that CAN legitimately gate this phase's own work does: #1–13 all PASS
+individually-cited, live evidence; #14's red state is investigated to its root cause, shown to be a
+pre-existing, DEBUG-only diagnostic addition from this same phase (not this plan's own change), and
+recorded unsoftened rather than the phase being marked complete over it.
+
+### ROADMAP Phase 43's six success criteria, answered one by one
+
+**SC1 — OPT-01 decision record committed alone, before any passkey code.** Re-verified by commit
+order, not merely position: `git log --oneline --reverse -- ios/IOS-SPIKE-LOG.md crates/pv-provider/
+crates/pv-ffi/ ios/PasskeyVault/PasskeyVault/PasskeyVaultAutoFill/` still shows commit `b355d35`
+(`docs(43-01): OPT-01 decision record...`) as the sole, newest match in that filtered log at the
+time it was authored — no commit touching `crates/pv-provider/`, `crates/pv-ffi/`, or the AutoFill
+extension target predates it. Evidence: Plan 43-01's own SUMMARY, `ios/IOS-SPIKE-LOG.md` §1m.
+
+**SC2 — assertion in a native app, via the system's own `ASCredentialProviderViewController`.**
+Proven live: `ios/PasskeyVaultHarness` (Plan 43-08), using `ASAuthorizationController`, offers
+Passkey Vault's passkey and completes a real sign-in ceremony, verified independently by
+`crates/rp-fixture`'s own `webauthn-rs` check, falsifiable via signature corruption —
+`RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok=true reason=verified` (plain) /
+`ok=false reason="An OpenSSL Error has occurred"` (corrupted), both legs, `ios/IOS-SPIKE-LOG.md`
+§16. **Controlled-stand-in disclosure, carried forward as Plan 43-08's own SUMMARY states it:**
+Plan 43-08's SUMMARY describes this proof as "a real native, **third-party-shaped** app
+(`ios/PasskeyVaultHarness`)" — `ios/PasskeyVaultHarness` is this project's OWN harness app, built
+to be *shaped like* a third-party consumer of the system passkey picker; it is never a genuinely
+external, independently-published third-party app. `vault.blonie.cloud` is this project's own
+hosted instance, serving AASA for the harness's own bundle id — not a genuinely external RP either.
+
+**SC3 — assertion in Safari, on a real page, asserted receiver-side.** Proven live via the phase's
+own tracer (Plan 43-03): a browser-extension-shaped passkey asserts successfully in Safari on the
+pinned simulator, verified receiver-side by `crates/rp-fixture`, falsifiable via signature
+corruption (`ok=false reason="An OpenSSL Error has occurred"` corrupted →
+`ok=true reason=verified` plain), `ios/IOS-SPIKE-LOG.md` §11. **Controlled-stand-in disclosure,
+quoted verbatim from Plan 43-03's own SUMMARY (C7):** "the RP throughout is `crates/rp-fixture`, a
+project-controlled stand-in SHAPED LIKE a third party — never a genuinely external RP."
+
+**SC4 — registration: a passkey created by PV for a third-party RP is saved in the vault as a
+`passkey`-typed item and visible server-side.** Proven live (Plan 43-07): registration wired
+end-to-end (confirmation screen → CTAP2 ceremony → item encryption → network creation with
+self-heal → identity-store registration → ceremony completion), 6/6 unit tests green
+(`PasskeyRegistrationOverrideTests`), plus a live e2e proof —
+`scripts/ios-autofill-e43.sh sc4`: live registration ceremony against `crates/rp-fixture`, with
+RECEIVER-SIDE assertion via `GET /api/vault/items` against a real, isolated `pv-server` (not iOS,
+not a mock — the same `pv-wasm` receiver discipline `scripts/sync-contract-probe.sh` already
+established). `ios/IOS-SPIKE-LOG.md` §14.
+
+**SC5 — interop, both directions, asserted receiver-side.** Proven live (Plan 43-09), each
+direction with its own corruption falsification: (1) extension creates → iOS asserts —
+`scripts/ios-autofill-e43.sh interop`: `RPFIXTURE|route=/register/finish rp_id=localhost ok=true
+reason=registered; RPFIXTURE|route=/assert/finish rp_id=localhost ok=true reason=verified`, corrupt
+leg shows no `/assert/finish` line at all (iOS's own signing fails before it can POST — a valid
+"fails visibly" shape per `assert_interop`'s own documented acceptance); (2) iOS creates →
+extension asserts — `extension/e2e/ios-created-passkey-assertion.spec.ts`: 1 passed (2.3m),
+`rp-fixture #rp-fixture-result data-ok="true"` for the plain path, `data-ok="false"` after a direct
+ciphertext-corrupting `PUT /api/vault/items/{id}` mutation and a real re-sync. `ios/IOS-SPIKE-LOG.md`
+§17.
+
+**SC6 — OPT-04: deferred scope recorded with a reason, product compiles/behaves identically
+without it.** Proven this plan, Task 1: `cargo build --workspace` green; `.hmac_secret(` confirmed
+at exactly the two pre-existing call sites in `ceremony.rs`, zero in either of the two new CTAP2
+entry points; `largeBlob`/PRF grep across the shipped Swift surface returns zero functional hits
+(one source-comment cross-reference to this very decision record); `crates/rp-fixture` and
+`ios/PasskeyVaultHarness` confirmed absent from `Dockerfile` and every production build/deploy
+path. `ios/IOS-SPIKE-LOG.md` §1n. **L-14 re-probed live THIS session, recorded unsoftened: STILL
+CRASHING** (`xcodebuild -configuration Release` exit 65, identical `UniffiHandleMap...deinit`
+crash signature to the 2026-08-16 original and the 2026-08-20 Phase 42 re-probe) — a separate,
+pre-existing landmine (Phase 38) this phase neither caused nor fixed, remaining the milestone's own
+ship blocker among its three recorded options, Bartek's own call. Evidence:
+`ios/evidence/43/43-10-l14-reprobe.log`.
+
+### Operator attestation — real-device confirmation, outside this session's own reach (2026-08-22)
+
+**Given by Bartek directly, today, after the two post-plan fixes (`cf1dfad`, §18; `6fdd8da`/
+`1c32d2f`, §19) landed:** rebuilt onto his own iPhone 16 / iOS 27.0 and confirmed passkey
+registration **works in the Discord app and on X (twitter)** — real third-party services, not this
+project's own fixtures. This is the FIRST real-world confirmation of SC2/SC3-shaped behavior
+outside the harness/tracer, on genuinely external, independently-published third-party apps. It is
+recorded here precisely as what it is: an **operator attestation on a real device with real RPs**
+— the same evidence class Phase 37's own device run used — **NOT a captured artifact** (no log,
+transcript, or screenshot from that run exists in this session's own evidence tree), and this
+machine cannot reproduce it: Xcode 26.6 tops out at the iOS 26.5 SDK, his device runs 27.0, a
+newer SDK than this toolchain can target. Distinct from, and does not substitute for, SC2/SC3's own
+controlled-stand-in evidence above — it corroborates that the controlled stand-ins generalize to
+genuinely external RPs, without itself being the falsifiable, receiver-side-verified proof this
+project's own QA-01 standard requires for a SC2/SC3 claim.
+
+### Evidence-quality lesson, carried forward from §19, not buried
+
+**A green SC4 proof and a green native-app (SC2) proof both survived the `.appex` colour-token bug
+§19 found and fixed.** Two independent reasons, both worth restating here rather than only in §19:
+XCUITest assertions built on accessibility identifiers match whether or not anything is actually
+DRAWN (a control can exist, respond to taps, and paint nothing, and an identifier-based assertion
+cannot tell the difference); and the colour gate that existed before §19 verified token USE
+(`Color("PV...")` appears in source) never token RESOLUTION in the actual rendering target (whether
+that name resolves against the `.appex`'s own bundle). Both gaps are now closed —
+`gate_asset_resolution` (#7 above) checks resolution, not use — but the lesson generalizes: a green
+functional proof and a green static-use proof together are still not sufficient evidence that a UI
+surface renders anything a human can see. Standing caution for any future extension-target UI work
+in this project, not a closed incident.
+
+**PHASE 43: OPT-04 closed; SC1-SC6 each answered with a specific, individually-cited evidence
+source; the SC2/SC3 controlled-stand-in disclosure carried forward rather than dropped; the
+whole-phase gate is thirteen-of-fourteen individually-verified green with the fourteenth's red
+state investigated to its root cause and recorded plainly. L-14 remains open, unchanged by this
+phase, and remains Bartek's own call.**
