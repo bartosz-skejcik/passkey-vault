@@ -21,7 +21,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EVIDENCE_DIR="${ROOT}/ios/evidence"
+# Test-only override (scripts/check-ios-gate.sh's own falsify_evidence_no_plaintext), same idiom as
+# audit-ios-identity-store-chokepoint.sh's PV_AUDIT_CHOKEPOINT_SCAN_OVERRIDE -- a real invocation
+# never sets this, so it always scans the real ios/evidence/ tree.
+EVIDENCE_DIR="${PV_AUDIT_EVIDENCE_DIR_OVERRIDE:-${ROOT}/ios/evidence}"
 
 if [ ! -d "$EVIDENCE_DIR" ]; then
   echo "ERROR: expected evidence directory missing: $EVIDENCE_DIR" >&2

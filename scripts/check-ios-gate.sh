@@ -1057,6 +1057,176 @@ PBX
   echo "==> asset_resolution falsification: BOTH proofs passed (F1 absence -> FAIL naming the token, F2 presence -> PASS) -- wholly synthetic scratch fixture, zero mutation of the real project"
 }
 
+# --- gate_preflight_ordering / gate_generator_ffi / gate_evidence_no_plaintext -----------------
+# 44-VERIFICATION.md gap 3: three audit scripts existed but were wired into NEITHER this composer
+# NOR ci.yml -- "a gate nobody runs cannot catch the regression it exists for" (ci.yml's own WR-06
+# comment, quoted verbatim by the verifier). All three are composed here by INVOKING the real
+# script, never by reimplementing its logic (the same discipline every other gate_* above already
+# follows).
+PREFLIGHT_ORDERING_SCRIPT_DEFAULT="scripts/audit-ios-save-preflight-ordering.sh"
+GENERATOR_FFI_SCRIPT_DEFAULT="scripts/audit-generator-uses-ffi.sh"
+EVIDENCE_NO_PLAINTEXT_SCRIPT_DEFAULT="scripts/audit-evidence-no-plaintext-secrets.sh"
+
+# gate_preflight_ordering -- WR-08's T-43-12 structural gate (44-VERIFICATION.md gap 1's own fix:
+# re-anchored on the sole SavePasswordPreflight.decide( call, never on textual-first-match; see
+# that script's own header for the full defect history).
+gate_preflight_ordering() {
+  local script="${PREFLIGHT_ORDERING_SCRIPT:-$PREFLIGHT_ORDERING_SCRIPT_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[preflight_ordering]: $script not found or not readable -- cannot run the T-43-12 save-preflight-ordering gate" >&2
+    return 1
+  fi
+
+  if ! bash "$script"; then
+    echo "FAIL[preflight_ordering]: $script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[preflight_ordering]: $script reports prepareInterface(for: ASSavePasswordRequest) checks the lock state, fed correctly into SavePasswordPreflight.decide(, before any UI/session-key read"
+}
+
+# falsify_preflight_ordering -- the underlying script has no --verify-falsifiable mode of its own
+# (unlike scripts/build-ios.sh) and, deliberately, no scratch-fixture override for its anchor: it
+# is hard-anchored to ONE real function in ONE real file (the same design as
+# audit-ios-identity-store-chokepoint.sh, which likewise has no fast composer-level falsification
+# mode and is invoked directly by ci.yml's own ios-structural-gates job instead). Mutating that
+# real source file INSIDE this composer's fast --verify-falsifiable path would leave a live-project
+# Swift file patched-and-reverted on every CI run -- a real corruption risk if any step errors
+# mid-mutation under `set -e`, which the other gate_*/falsify_* pairs in this file avoid entirely
+# by using scratch copies. This mirrors falsify_ffi_opaque's own honestly-stated limitation
+# (its final paragraph): NOT proven falsifiable in this fast mode. The real, exhaustive proof (all
+# three mutations: 44-VERIFICATION.md gap 1's own headline mutation, the original WR-08 mutation
+# re-run against the current tree, and the out-of-order-UI mutation -- each FAIL, reverted
+# byte-identically, clean tree PASS before/after) is recorded at
+# ios/evidence/44/44-fix-wr08-falsification.log, re-run against the current tree by the fix that
+# closed 44-VERIFICATION.md gap 1.
+falsify_preflight_ordering() {
+  echo "==> --verify-falsifiable: preflight_ordering"
+  echo "NOTE: $PREFLIGHT_ORDERING_SCRIPT_DEFAULT has no --verify-falsifiable mode of its own and this composer does not mutate the real CredentialProviderViewController.swift inside a fast falsification path (same reasoning as falsify_ffi_opaque's own stated limitation, and the same reason audit-ios-identity-store-chokepoint.sh has no fast mode either). The real falsification -- all three mutations FAILING, each reverted byte-identically, clean tree PASSing before and after -- is recorded at ios/evidence/44/44-fix-wr08-falsification.log."
+  if [ ! -f ios/evidence/44/44-fix-wr08-falsification.log ]; then
+    echo "ERROR: ios/evidence/44/44-fix-wr08-falsification.log is missing -- the claimed real falsification transcript does not exist on disk" >&2
+    exit 1
+  fi
+  if ! grep -q "OVERALL: FAIL" ios/evidence/44/44-fix-wr08-falsification.log || ! grep -q "OVERALL: PASS" ios/evidence/44/44-fix-wr08-falsification.log; then
+    echo "ERROR: ios/evidence/44/44-fix-wr08-falsification.log does not contain both an OVERALL: FAIL and an OVERALL: PASS line -- it does not actually demonstrate the gate can fail AND pass" >&2
+    exit 1
+  fi
+  echo "==> PASS: the cited transcript file exists and contains both OVERALL: FAIL and OVERALL: PASS lines (a real gate that genuinely exercised both branches, not merely asserted)"
+}
+
+# gate_generator_ffi -- SC3's own CSPRNG-provenance gate (44-VERIFICATION.md truth #3): Swift never
+# uses its own RNG for password generation; the real candidate genuinely comes from pv-ffi.
+gate_generator_ffi() {
+  local script="${GENERATOR_FFI_SCRIPT:-$GENERATOR_FFI_SCRIPT_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[generator_ffi]: $script not found or not readable -- cannot run the SC3 CSPRNG-provenance gate" >&2
+    return 1
+  fi
+
+  if ! bash "$script"; then
+    echo "FAIL[generator_ffi]: $script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[generator_ffi]: $script reports zero Swift-native RNG in the shipped generator path, a real call into pv-ffi, the export present in generated bindings, and no charset/wordlist duplication in the excluded test targets"
+}
+
+# falsify_generator_ffi -- same honest-limitation shape as falsify_preflight_ordering: this
+# 263-line, four-check, security-load-bearing gate has no --verify-falsifiable mode of its own and
+# scans a FIXED set of real shipped-source directories with no scratch-fixture override plumbing.
+# Adding that plumbing under this gap-closure task's own time budget, to a gate this
+# security-critical, is a real place NOT to improvise -- the honest limitation is stated instead of
+# a rushed, unreviewed change to a hardened script. Real falsification already exists, independent
+# of this composer: 44-VERIFICATION.md truth #3 records this SESSION's own live re-falsification
+# (a Swift-native randomElement() generator planted into ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift
+# -> exit 1, failing checks 1 and 4; byte-identical revert -> exit 0, `git status` clean), and
+# ios/IOS-SPIKE-LOG.md's own E-G1 section records the original four-arm falsification, one arm at a
+# time, from when this gate was first built.
+falsify_generator_ffi() {
+  echo "==> --verify-falsifiable: generator_ffi"
+  echo "NOTE: $GENERATOR_FFI_SCRIPT_DEFAULT has no --verify-falsifiable mode of its own and no scratch-fixture override for its fixed shipped-source scan; this composer does not add new override plumbing to a security-load-bearing gate as part of a fast falsification path. Real falsification (independent of this composer): 44-VERIFICATION.md truth #3, this session, planting a Swift-native randomElement() generator into ios/PasskeyVault/Shared/GeneratePasswordDispatch.swift -> exit 1 (checks 1 and 4 failed); byte-identical revert -> exit 0. Original four-arm falsification history: ios/IOS-SPIKE-LOG.md, section E-G1."
+  echo "==> Confirming the gate itself is at least currently runnable and green (not a substitute for re-falsification, only for 'is this composed correctly'):"
+  gate_generator_ffi
+}
+
+# gate_evidence_no_plaintext -- CR-04's scanner: no decrypted plaintext password/secret string
+# value is ever written into any JSON evidence artifact under ios/evidence/**.
+gate_evidence_no_plaintext() {
+  local script="${EVIDENCE_NO_PLAINTEXT_SCRIPT:-$EVIDENCE_NO_PLAINTEXT_SCRIPT_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[evidence_no_plaintext]: $script not found or not readable -- cannot run the CR-04 plaintext-evidence scanner" >&2
+    return 1
+  fi
+
+  if ! bash "$script"; then
+    echo "FAIL[evidence_no_plaintext]: $script exited non-zero -- see its own output above" >&2
+    return 1
+  fi
+  echo "PASS[evidence_no_plaintext]: $script reports zero plaintext password/secret string values under ios/evidence/**"
+}
+
+# falsify_evidence_no_plaintext -- genuinely falsifiable in this fast mode: the script now honours
+# PV_AUDIT_EVIDENCE_DIR_OVERRIDE (added alongside this composition, mirroring
+# audit-ios-identity-store-chokepoint.sh's own PV_AUDIT_CHOKEPOINT_SCAN_OVERRIDE idiom), so both
+# branches are proven against a wholly SYNTHETIC scratch fixture -- zero mutation of any real
+# evidence file.
+falsify_evidence_no_plaintext() {
+  echo "==> --verify-falsifiable: evidence_no_plaintext"
+
+  local script="${EVIDENCE_NO_PLAINTEXT_CHECKER_SCRIPT:-$EVIDENCE_NO_PLAINTEXT_SCRIPT_DEFAULT}"
+  local scratch_dir="$GATE_SCRATCH_ROOT/evidence-no-plaintext-falsify"
+  mkdir -p "$scratch_dir/44"
+
+  echo "--- F1: a JSON file with a non-empty 'password' string value makes the checker FAIL, naming the file and key ---"
+  cat > "$scratch_dir/44/bad.json" <<'JSON'
+{"password": "wr08-mutation-test-plaintext", "username": "pv-falsify-user"}
+JSON
+  local out status
+  set +e
+  out=$(PV_AUDIT_EVIDENCE_DIR_OVERRIDE="$scratch_dir" bash "$script" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: evidence_no_plaintext F1 falsification FAILED -- the checker against a scratch fixture with a genuine plaintext password value exited 0; the absence assertion cannot fail and is therefore worthless" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "password"; then
+    echo "ERROR: evidence_no_plaintext F1 falsification FAILED -- exited non-zero (exit=$status) but did not name the offending key" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against a scratch fixture with a genuine plaintext 'password' value exited $status, naming it:"
+  echo "$out" | grep "FAIL:" | sed 's/^/      /'
+  rm -f "$scratch_dir/44/bad.json"
+
+  echo
+  echo "--- F2 (positive control): the SAME fixture directory, containing only the SHA/length-shaped substitute fields CR-04's own fix uses, PASSES ---"
+  cat > "$scratch_dir/44/good.json" <<'JSON'
+{"passwordSha256": "deadbeef", "passwordLength": 20, "username": "pv-falsify-user"}
+JSON
+  set +e
+  out=$(PV_AUDIT_EVIDENCE_DIR_OVERRIDE="$scratch_dir" bash "$script" 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    echo "ERROR: evidence_no_plaintext F2 falsification FAILED -- the checker against a scratch fixture containing only passwordSha256/passwordLength (CR-04's own fix shape) exited non-zero; F1's FAIL result cannot be trusted as meaningful if the checker also fails on the intended-safe shape" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "OVERALL: PASS"; then
+    echo "ERROR: evidence_no_plaintext F2 falsification FAILED -- exited 0 but did not print OVERALL: PASS" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against a scratch fixture with only passwordSha256/passwordLength exited 0:"
+  echo "$out" | sed 's/^/      /'
+
+  echo
+  echo "==> evidence_no_plaintext falsification: BOTH proofs passed (F1 plaintext -> FAIL naming the key, F2 CR-04's own safe shape -> PASS) -- wholly synthetic scratch fixture, zero mutation of any real evidence file"
+}
+
 # --- composer: sub-gate dispatch table ----------------------------------
 # 42-01 supplied qa05. 42-03 appends the three FFI sub-gates above, in the
 # order build -> falsifiable-slice-gate -> opaque-handle audit (each depends
@@ -1074,7 +1244,13 @@ PBX
 # phase append further to GATES and add a matching
 # gate_<name>/falsify_<name> pair; nothing about the frame below should
 # need rewriting.
-GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register asset_resolution)
+#
+# 44-VERIFICATION.md gap 3: preflight_ordering, generator_ffi, and evidence_no_plaintext append
+# LAST -- each wraps a standing audit script that already existed but was invoked by hand only
+# (WR-08, SC3's own cited gate, and CR-04 respectively). Order among the three is arbitrary (none
+# depends on the others' artifacts); they are listed in the order 44-VERIFICATION.md's own gap-3
+# item names them.
+GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register asset_resolution preflight_ordering generator_ffi evidence_no_plaintext)
 
 ONLY=""
 VERIFY_FALSIFIABLE=0

@@ -40,6 +40,16 @@ jobs:
         run: |
           bash scripts/audit-ios-autofill-deprecated-apis.sh
           bash scripts/audit-ios-identity-store-chokepoint.sh
+          bash scripts/audit-ios-save-preflight-ordering.sh
+          bash scripts/audit-evidence-no-plaintext-secrets.sh
+      # 44-VERIFICATION.md gap 3: audit-generator-uses-ffi.sh (SC3's own CSPRNG-provenance gate)
+      # is NOT added here -- check 3 requires the GENERATED Swift bindings
+      # (ios/PasskeyVault/build/swift-bindings/*.swift), a real pv-ffi cross-compile + Xcode
+      # artifact this ubuntu-latest job has no toolchain to produce, and this file's own header
+      # already states a real macOS CI runner is out of scope for this milestone. It IS composed
+      # (scripts/check-ios-gate.sh's `generator_ffi` sub-gate, run on every local/simulator pass of
+      # that composer -- this project's own documented CI surrogate for the iOS surface), so it is
+      # not "a gate nobody runs"; it is a gate that cannot run on THIS runner.
 
   web:
     runs-on: ubuntu-latest
