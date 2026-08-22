@@ -166,4 +166,41 @@ struct TextToInsertDispatchTests {
         #expect(candidates.count == 1)
         #expect(candidates.first?.itemId == "totp-good")
     }
+
+    /// WR-09 (44-REVIEW.md): `buildCandidates` used to decrypt EVERY row before applying
+    /// `maxCandidates`, the heaviest allocation on any of this phase's three new surfaces inside
+    /// the memory-budgeted AutoFill extension. It now stops scanning once it has collected
+    /// `maxCandidates * 2` genuinely-matching candidates.
+    ///
+    /// This is observable from the OUTSIDE, without instrumenting the scan itself: 10 rows named
+    /// "K"..."T" (all alphabetically AFTER the two rows that follow) are placed FIRST in cache
+    /// order, then two rows named "AAA"/"AAB" (the globally alphabetically-smallest names) are
+    /// placed LAST. `maxCandidates * 2` is exactly 10 -- the scan reaches that bound processing
+    /// "K"..."T" and breaks BEFORE ever reaching "AAA"/"AAB", so they never appear in the result,
+    /// even though they would sort first. Before this fix, `buildCandidates` decrypted every row
+    /// unconditionally, so "AAA"/"AAB" WOULD have appeared in the final 5 (confirmed RED against
+    /// the pre-fix source: the result included "AAA" and "AAB", not "K"/"L"/"M"/"N"/"O").
+    @Test("buildCandidates stops scanning once it has enough candidates, never reaching later rows")
+    func buildCandidatesStopsScanningEarly() throws {
+        let userKey = try FfiUserKey.generate()
+        let earlyNames = ["K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"]
+        let lateNames = ["AAA", "AAB"]
+        let rows = try (earlyNames + lateNames).enumerated().map { index, name in
+            try Self.encryptedRow(id: "totp-\(index)", plaintext: Self.totpPlaintext(name: name), userKey: userKey)
+        }
+        #expect(rows.count == TextToInsertDispatch.maxCandidates * 2 + 2, "fixture must exceed the bound by exactly 2 rows")
+        let snapshot = CachedSnapshot(
+            revision: 1, 0, accountId: "acct", serverBaseURL: "https://example.invalid",
+            items: rows, folders: []
+        )
+
+        let candidates = TextToInsertDispatch.buildCandidates(snapshot: snapshot, userKey: userKey)
+        #expect(candidates.count == TextToInsertDispatch.maxCandidates)
+        #expect(
+            candidates.map(\.name) == ["K", "L", "M", "N", "O"],
+            "the alphabetically-smallest rows placed AFTER the *2 bound must never be reached: \(candidates.map(\.name))"
+        )
+        #expect(!candidates.map(\.name).contains("AAA"), "a row placed after the scan's own early-stop bound must never appear")
+        #expect(!candidates.map(\.name).contains("AAB"), "a row placed after the scan's own early-stop bound must never appear")
+    }
 }

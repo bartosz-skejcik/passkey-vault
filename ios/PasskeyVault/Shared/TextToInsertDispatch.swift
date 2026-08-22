@@ -92,6 +92,18 @@ enum TextToInsertDispatch {
     static func buildCandidates(snapshot: CachedSnapshot, userKey: FfiUserKey) -> [Candidate] {
         var candidates: [Candidate] = []
         for row in snapshot.items {
+            // WR-09 (44-REVIEW.md): this loop used to decrypt EVERY row in the snapshot -- every
+            // login password, every note, every TOTP secret -- into a plaintext Swift `String`
+            // before the `maxCandidates` bound was applied, AFTER the whole vault had been
+            // walked. In the AutoFill extension, which is killed on exceeding its memory budget,
+            // that made this the heaviest allocation on any of this phase's three new surfaces.
+            // Stop the scan once genuinely-matching candidates comfortably exceed `maxCandidates`
+            // -- `* 2`, not the bare bound, so the "sorted by name" property below stays
+            // meaningful over a real (if bounded) sample rather than degenerating into "first five
+            // by cache order" the instant a vault has more than five TOTP items.
+            if candidates.count >= Self.maxCandidates * 2 {
+                break
+            }
             guard
                 let encKey = decodeWireKey(row.encKey),
                 let encData = decodeWireKey(row.encData),
@@ -121,6 +133,10 @@ enum TextToInsertDispatch {
                 digits: digits,
                 period: period
             ))
+            // `plaintext` (every OTHER decrypted item's full JSON, not just the TOTP secret we
+            // kept above) goes out of scope here, at the END of each iteration, rather than
+            // living for the rest of this function's execution -- letting ARC reclaim each row's
+            // plaintext as early as possible instead of only once the whole scan finishes.
         }
         candidates.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         if candidates.count > maxCandidates {
