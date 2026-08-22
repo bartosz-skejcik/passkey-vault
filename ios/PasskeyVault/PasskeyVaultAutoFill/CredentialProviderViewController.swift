@@ -141,45 +141,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 
-    /// Phase 44 (44-03-PLAN.md Task 1b / checkpoint resolution): the SILENT entry point the system
-    /// calls FIRST for password generation -- distinct from, and per the SDK header UNRELATED to,
-    /// the interactive `prepareInterface(for: ASGeneratePasswordsRequest)` below. Header doc,
-    /// verbatim: "When this method is called, your extension's view controller is not present on
-    /// the screen. `ASExtensionError.userInteractionRequired` will not be honored and treated as a
-    /// failure." -- so, unlike the save path above, this method must NOT escalate via
-    /// `userInteractionRequired`; it cancels with `.userCanceled` instead. Diagnostic-only for now
-    /// (Plan 44-05 owns the real behaviour); the header also states this silent path can never
-    /// itself trigger the interactive `prepareInterface(for: ASGeneratePasswordsRequest)` variant
-    /// ("This flow can only be initiated by the user. It will not be triggered from
-    /// `-performGeneratePasswordsRequestWithoutUserInteraction:`") -- the interactive path is
-    /// reached only via the system's own user-initiated "Suggest Strong Password" affordance, a
-    /// SEPARATE trigger this override cannot manufacture. `NS_SWIFT_NAME` confirmed against the
-    /// real header (`performGeneratePasswordsRequestWithoutUserInteraction:` ->
-    /// `performWithoutUserInteraction(generatePasswordsRequest:)`), never assumed by eye.
-    override func performWithoutUserInteraction(generatePasswordsRequest request: ASGeneratePasswordsRequest) {
-        let rulesLength = request.passwordFieldPasswordRules?.count ?? -1
-        Self.diagLogger.log(
-            "PVDIAG|method=performWithoutUserInteraction(generatePasswordsRequest:) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private) passwordFieldPasswordRulesLength=\(rulesLength, privacy: .public)"
-        )
-        extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
-    }
-
-    /// Phase 44 (44-03-PLAN.md), SAVE-02: DEBUG-only diagnostic, same discipline as the save
-    /// override above. `passwordFieldPasswordRules` LENGTH is logged (`.public` -- a bounded
-    /// integer, no content), never the raw rules string itself, even though rules text is not
-    /// secret in the same sense a password is -- mirrors T-41-12/T-41-15's inherited discipline of
-    /// keeping every per-invocation string payload `.private` on this diagnostic path by default.
-    /// Per the checkpoint resolution above, the header states this is reached ONLY via the
-    /// system's own user-initiated "Suggest Strong Password" affordance -- never as an escalation
-    /// from `performWithoutUserInteraction(generatePasswordsRequest:)` above.
-    override func prepareInterface(for request: ASGeneratePasswordsRequest) {
-        let rulesLength = request.passwordFieldPasswordRules?.count ?? -1
-        Self.diagLogger.log(
-            "PVDIAG|method=prepareInterface(for:ASGeneratePasswordsRequest) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private) passwordFieldPasswordRulesLength=\(rulesLength, privacy: .public)"
-        )
-        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
-    }
-
     /// Never implemented in production (no OTP capability declared) -- logged purely for
     /// completeness; NOT expected on a passkey registration request, but ruling it out costs one
     /// override.
@@ -1006,6 +967,117 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 self?.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
             }
         )
+    }
+
+    // MARK: - Plan 44-05 (SAVE-02) -- password generation, silent + interactive entry points
+
+    // The dispatch policy itself (`GeneratePasswordOutcome`/`GeneratePasswordDispatch.resolve`)
+    // lives in `Shared/GeneratePasswordDispatch.swift`, NOT here -- `PasskeyVaultTests` has no
+    // access to a type declared only in this extension-only file (same reasoning
+    // `PasskeyRegistrationPreflight.swift`'s own header documents), and this plan's own Task 1
+    // acceptance criteria require a genuinely live-run proof of the rules-honouring/fallback/
+    // refusal three-way split -- `GeneratePasswordDispatchTests` (PasskeyVaultTests) exercises it
+    // directly against real `pv-ffi`, no live extension context required.
+
+    private static func makeGeneratedPassword(_ value: String) -> ASGeneratedPassword {
+        ASGeneratedPassword(kind: .strong, value: value)
+    }
+
+    /// Phase 44 (44-03-PLAN.md Task 1b), real implementation (Plan 44-05). The SILENT entry point
+    /// the system calls FIRST for password generation (44-03-SUMMARY.md, configuration X: tap the
+    /// new-password field with no typing, then tap the system's own "Strong Password" QuickType
+    /// affordance) -- header doc, verbatim: "When this method is called, your extension's view
+    /// controller is not present on the screen. `ASExtensionError.userInteractionRequired` will
+    /// not be honored and treated as a failure." So, unlike the save path above, this method never
+    /// escalates via `userInteractionRequired`; every refusal (locked vault, or pv-core's own
+    /// refusal) completes via `.failed`. This surface still needs an unlocked vault to reach
+    /// `pv-ffi`, even though it writes nothing (mirrors every other entry point's own
+    /// unconditional lock-gating discipline). A generate-only interaction does not extend the
+    /// session -- `SessionLifecycle.refreshActivity` is deliberately NOT called here (Claude's
+    /// discretion, recorded in 44-05-SUMMARY.md: no fill/write occurred, so nothing justifies
+    /// extending the unlock window).
+    override func performWithoutUserInteraction(generatePasswordsRequest request: ASGeneratePasswordsRequest) {
+        let entryPoint = "generate-silent"
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) == .unlocked else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        switch GeneratePasswordDispatch.resolve(rulesText: request.passwordFieldPasswordRules) {
+        case let .candidate(value):
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=generate status=ok")
+            extensionContext.completeGeneratePasswordRequest(
+                results: [Self.makeGeneratedPassword(value)], completionHandler: nil
+            )
+        case .refuse:
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=generate status=refused")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+        }
+    }
+
+    /// Phase 44 (44-03-PLAN.md), real implementation (Plan 44-05), SAVE-02/SAVE-04. The
+    /// INTERACTIVE generate entry point -- per the SDK header, reachable only via the system's own
+    /// user-initiated affordance, never as an escalation from the silent override above (the
+    /// header explicitly rules that escalation out: "It will not be triggered from
+    /// `-performGeneratePasswordsRequestWithoutUserInteraction:`"). Whether this override is
+    /// actually reached on this toolchain, now that the silent override above answers with a real
+    /// candidate instead of `.userCanceled`, is the live question 44-03-SUMMARY.md left for THIS
+    /// plan to settle (see 44-05-SUMMARY.md for the recorded verdict). Presents
+    /// `GeneratePasswordOfferView` (PV* tokens, SAVE-04) on a genuine candidate; confirming it
+    /// NEVER touches `VaultAPI`/`PendingProviderItemStore`/`IdentityStoreSync` (T-44-11) --
+    /// generating a password writes nothing to the vault.
+    override func prepareInterface(for request: ASGeneratePasswordsRequest) {
+        let entryPoint = "generate-ui"
+        guard SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete) == .unlocked else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        switch GeneratePasswordDispatch.resolve(rulesText: request.passwordFieldPasswordRules) {
+        case let .candidate(value):
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=generate status=ok")
+            presentGeneratePasswordOffer(
+                candidate: value,
+                onUse: { [weak self] in
+                    guard let self else { return }
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=offer status=used")
+                    self.extensionContext.completeGeneratePasswordRequest(
+                        results: [Self.makeGeneratedPassword(value)], completionHandler: nil
+                    )
+                },
+                onCancel: { [weak self] in
+                    Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=offer status=user-cancelled")
+                    self?.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
+                }
+            )
+        case .refuse:
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=generate status=refused")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+        }
+    }
+
+    /// Presents `GeneratePasswordOfferView` (SAVE-04) embedded as a child view controller -- same
+    /// `UIHostingController` embedding `presentRegistrationConfirm` above already established.
+    private func presentGeneratePasswordOffer(
+        candidate: String, onUse: @escaping () -> Void, onCancel: @escaping () -> Void
+    ) {
+        let hosting = UIHostingController(
+            rootView: GeneratePasswordOfferView(candidate: candidate, onUse: onUse, onCancel: onCancel)
+        )
+        addChild(hosting)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        hosting.didMove(toParent: self)
     }
 
     // MARK: - Plan 41-04 (FILL-03) -- the full-rebuild recovery path

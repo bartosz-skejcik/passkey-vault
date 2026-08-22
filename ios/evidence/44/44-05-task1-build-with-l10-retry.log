@@ -1,0 +1,60 @@
+
+ConstructStubExecutorLinkFileList /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault-ExecutorLinkFileList-normal-arm64.txt (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    construct-stub-executor-link-file-list /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault.debug.dylib /Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libPreviewsJITStubExecutor_no_swift_entry_point.a /Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/usr/lib/libPreviewsJITStubExecutor.a --output /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault-ExecutorLinkFileList-normal-arm64.txt
+note: Using stub executor library with Swift entry point. (in target 'PasskeyVault' from project 'PasskeyVault')
+
+Ld /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault normal (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    /Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -Xlinker -reproducible -target arm64-apple-ios26.2-simulator -isysroot /Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -O0 -L/tmp/pv-dd/Build/Products/Debug-iphonesimulator -F/tmp/pv-dd/Build/Products/Debug-iphonesimulator -F/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build -Xlinker -rpath -Xlinker @executable_path -Xlinker -rpath -Xlinker @executable_path/Frameworks -rdynamic -Xlinker -no_deduplicate -Xlinker -objc_abi_version -Xlinker 2 -Xlinker -debug_variant -e ___debug_blank_executor_main -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __debug_dylib -Xlinker /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault-DebugDylibPath-normal-arm64.txt -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __debug_instlnm -Xlinker /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault-DebugDylibInstallName-normal-arm64.txt -Xlinker -filelist -Xlinker /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault-ExecutorLinkFileList-normal-arm64.txt -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __entitlements -Xlinker /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault.app-Simulated.xcent -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __ents_der -Xlinker /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault.app-Simulated.xcent.der /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault.debug.dylib -Xlinker -no_adhoc_codesign -o /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault
+
+Copy /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVaultAutoFill.appex (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -resolve-src-symlinks -remove-static-executable /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVaultAutoFill.appex /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns
+
+CopySwiftLibs /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    builtin-swiftStdLibTool --copy --verbose --sign - --scan-executable /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault.debug.dylib --scan-folder /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Frameworks --scan-folder /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns --scan-folder /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/SystemExtensions --scan-folder /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Extensions --platform iphonesimulator --toolchain /Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --destination /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Frameworks --strip-bitcode --strip-bitcode-tool /Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip --emit-dependency-info /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/SwiftStdLibToolInputDependencies.dep --filter-for-swift-os
+
+ProcessInfoPlistFile /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Info.plist /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/empty-PasskeyVault.plist (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    builtin-infoPlistUtility /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/empty-PasskeyVault.plist -producttype com.apple.product-type.application -genpkginfo /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PkgInfo -expandbuildsettings -format binary -platform iphonesimulator -additionalcontentfile /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/assetcatalog_generated_info.plist -scanforprivacyfile /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex -o /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Info.plist
+
+ExtractAppIntentsMetadata (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    /Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode-26.6.0.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name PasskeyVault --sdk-root /Applications/Xcode-26.6.0.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk --xcode-version 17F113 --platform-family iOS --deployment-target 26.2 --bundle-identifier cloud.blonie.PasskeyVault --output /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app --target-triple arm64-apple-ios26.2-simulator --binary-file /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault --dependency-file /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/Objects-normal/arm64/PasskeyVault_dependency_info.dat --stringsdata-file /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/Objects-normal/arm64/PasskeyVault.SwiftFileList --metadata-file-list /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault.DependencyMetadataFileList --static-metadata-file-list /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault.DependencyStaticMetadataFileList --swift-const-vals-list /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/Objects-normal/arm64/PasskeyVault.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
+2026-08-22 18:09:49.820 appintentsmetadataprocessor[37952:14121835] Starting appintentsmetadataprocessor export
+2026-08-22 18:09:49.821 appintentsmetadataprocessor[37952:14121835] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+
+CodeSign /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault.debug.dylib (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PasskeyVault.debug.dylib
+
+CodeSign /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/__preview.dylib (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --timestamp\=none --generate-entitlement-der /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/__preview.dylib
+/tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/__preview.dylib: replacing existing signature
+
+CodeSign /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    
+    Signing Identity:     "Sign to Run Locally"
+    
+    /usr/bin/codesign --force --sign - --entitlements /tmp/pv-dd/Build/Intermediates.noindex/PasskeyVault.build/Debug-iphonesimulator/PasskeyVault.build/PasskeyVault.app.xcent --timestamp\=none --generate-entitlement-der /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app
+
+ValidateEmbeddedBinary /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    /Applications/Xcode-26.6.0.app/Contents/Developer/usr/bin/embeddedBinaryValidationUtility /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex -signing-cert - -info-plist-path /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app/Info.plist
+
+Validate /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app (in target 'PasskeyVault' from project 'PasskeyVault')
+    cd /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault
+    builtin-validationUtility /tmp/pv-dd/Build/Products/Debug-iphonesimulator/PasskeyVault.app -shallow-bundle -infoplist-subpath Info.plist
+
+** BUILD SUCCEEDED **
+

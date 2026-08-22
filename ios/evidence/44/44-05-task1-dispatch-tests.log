@@ -1,0 +1,13 @@
+Testing started
+Test suite 'GeneratePasswordDispatchTests' started on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)'
+Test case 'GeneratePasswordDispatchTests/nilRulesFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.002 seconds)
+Test case 'GeneratePasswordDispatchTests/unsatisfiableBoundRefuses()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.003 seconds)
+Test case 'GeneratePasswordDispatchTests/unsupportedShapeFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.002 seconds)
+Test case 'GeneratePasswordDispatchTests/emptyRulesFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.003 seconds)
+Test case 'GeneratePasswordDispatchTests/parseableRulesHonoured()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.003 seconds)
+Test suite 'GeneratePasswordDispatchTests' started on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)'
+Test case 'GeneratePasswordDispatchTests/parseableRulesHonoured()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.000 seconds)
+Test case 'GeneratePasswordDispatchTests/unsupportedShapeFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.000 seconds)
+Test case 'GeneratePasswordDispatchTests/emptyRulesFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.005 seconds)
+Test case 'GeneratePasswordDispatchTests/unsatisfiableBoundRefuses()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.005 seconds)
+Test case 'GeneratePasswordDispatchTests/nilRulesFallsBack()' passed on 'Clone 1 of PV-iPhone16 - PasskeyVault (41179)' (0.005 seconds)

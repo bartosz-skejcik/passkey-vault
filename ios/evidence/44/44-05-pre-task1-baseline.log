@@ -1,0 +1,20 @@
+== check 1 (negative): no Swift RNG API in SHIPPED Swift source (app + appex) ==
+count: 0
+PASS
+== check 2 (positive): a real Swift call site of the FFI generator, outside the generated bindings ==
+count: 3
+FAIL -- fewer than 4 call sites of generateCharacterPassword/generatePassphrase/generatePasswordFromRules outside the generated bindings (found 3, and the 3 pre-existing calls to the first two symbols alone would already satisfy a lower threshold); check 1's zero RNG hits would be VACUOUS without a real generatePasswordFromRules caller
+== check 3 (positive): the generator symbols exist in the GENERATED Swift bindings ==
+count: 3
+PASS
+/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2567:public func generateCharacterPassword(length: UInt32, options: FfiCharacterPasswordOptions)throws  -> String  {
+/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2581:public func generatePassphrase(wordCount: UInt32, separator: String)throws  -> String  {
+/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:2603:public func generatePasswordFromRules(rulesText: String)throws  -> String  {
+== check 4 (negative): no Swift-side wordlist/charset literal in SHIPPED source ==
+count: 0
+PASS
+== check 5 (negative): the EXCLUDED test dirs are not a hiding place ==
+count: 0
+PASS
+
+OVERALL: FAIL -- see the failing check(s) above
