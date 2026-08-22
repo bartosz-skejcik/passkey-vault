@@ -20,7 +20,20 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOKENS = os.path.join(ROOT, "ios", "brand", "tokens.json")
-ASSETS = os.path.join(ROOT, "ios", "PasskeyVault", "PasskeyVault", "Assets.xcassets")
+# `Shared/PVColors.xcassets`, NOT `PasskeyVault/PasskeyVault/Assets.xcassets` (where every
+# token used to live). `.planning/debug/passkey-reg-blank-sheet-discord.md` (2026-08-22):
+# `Shared/` is a `fileSystemSynchronizedGroups` member of BOTH the `PasskeyVault` app target
+# AND the `PasskeyVaultAutoFill` extension target (Xcode 16 synchronized-folder-group project
+# format) -- `PasskeyVault/PasskeyVault/Assets.xcassets` was a member of the APP target only,
+# so every `Color("PV...")` lookup inside the extension (`PasskeyRegistrationConfirmView.swift`)
+# silently failed to resolve (an app extension's asset-catalog lookup runs against its OWN
+# main bundle, the `.appex` -- it never falls back to the host app's bundle). Moving the
+# GENERATED catalog into `Shared/` makes every token resolve in both targets with ZERO
+# project.pbxproj edits and keeps exactly ONE generated catalog -- never a second,
+# hand-maintained one. AppIcon/onboarding images stay in the app-only catalog: the extension
+# never references them (see `scripts/audit-ios-extension-asset-resolution.py`, the mechanical
+# gate that would now catch it if it ever did without also granting catalog access).
+ASSETS = os.path.join(ROOT, "ios", "PasskeyVault", "Shared", "PVColors.xcassets")
 
 
 def components(hex6):

@@ -24,14 +24,21 @@ struct ContrastTests {
 
     /// `#filePath` resolves to THIS file's absolute path at compile time on
     /// the machine that built the test bundle -- walking up from
-    /// `PasskeyVaultTests/` to `PasskeyVault/Assets.xcassets/` reads the
+    /// `PasskeyVaultTests/` to `Shared/PVColors.xcassets/` reads the
     /// values that actually ship, not a copy pasted into this test.
+    ///
+    /// `.planning/debug/passkey-reg-blank-sheet-discord.md` (2026-08-22): every `PV*`/
+    /// `AccentColor` colorset moved from `PasskeyVault/Assets.xcassets` (app-target-only) to
+    /// `Shared/PVColors.xcassets` (a `fileSystemSynchronizedGroups` member of BOTH the app
+    /// and the `PasskeyVaultAutoFill` extension target) -- this is the ONE generated source of
+    /// truth (`scripts/gen-ios-colorsets.py`) for every token, so this test now reads from the
+    /// SAME location the generator writes to.
     private static var assetsDirectory: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // PasskeyVaultTests/
             .deletingLastPathComponent() // PasskeyVault/ (the ios/PasskeyVault/PasskeyVault.xcodeproj sibling dir)
-            .appendingPathComponent("PasskeyVault")
-            .appendingPathComponent("Assets.xcassets")
+            .appendingPathComponent("Shared")
+            .appendingPathComponent("PVColors.xcassets")
     }
 
     private struct ColorComponents: Decodable {

@@ -35,6 +35,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="${ROOT}/ios/PasskeyVault/PasskeyVault"
+# Check 2 additionally scans the EXTENSION + shared sources
+# (`.planning/debug/passkey-reg-blank-sheet-discord.md`, 2026-08-22): the app-only `$SRC` above
+# never covered `PasskeyRegistrationConfirmView.swift` (compiled into `PasskeyVaultAutoFill`,
+# not `PasskeyVault`), so a `Color("PV...")` reference living only in the extension was
+# invisible to this whole script. Check 2 is a real-colorset-exists check, not a
+# target-membership check (that is `scripts/audit-ios-extension-asset-resolution.py`'s job,
+# wired into `scripts/check-ios-gate.sh` as `gate_asset_resolution`) -- but scanning ALL the
+# code that can reference a token is a prerequisite for either check meaning anything.
+CHECK2_SRC_DIRS=(
+  "${ROOT}/ios/PasskeyVault/PasskeyVault"
+  "${ROOT}/ios/PasskeyVault/PasskeyVaultAutoFill"
+  "${ROOT}/ios/PasskeyVault/Shared"
+  "${ROOT}/ios/PasskeyVault/PvShared"
+)
+# The ONE generated catalog every `PV*`/`AccentColor` colorset lives in as of this session --
+# `Shared/PVColors.xcassets`, not the app-only `$SRC/Assets.xcassets` (which now holds only
+# AppIcon/onboarding image assets). See `scripts/gen-ios-colorsets.py`'s own `ASSETS` comment.
+COLOR_ASSETS_DIR="${ROOT}/ios/PasskeyVault/Shared/PVColors.xcassets"
 WINDOW=20
 FAIL=0
 
@@ -72,9 +90,9 @@ check_literal_colours() {
 }
 
 check_asset_colours_exist() {
-  say "== check 2: every Color(\"PV…\") names a real colorset =="
+  say "== check 2: every Color(\"PV…\") names a real colorset (app + extension + shared sources) =="
   local names missing=""
-  names="$(grep -rhoE --include='*.swift' 'Color\("PV[A-Za-z]+"\)' "$SRC" \
+  names="$(grep -rhoE --include='*.swift' 'Color\("PV[A-Za-z]+"\)' "${CHECK2_SRC_DIRS[@]}" \
            | sed -E 's/Color\("([A-Za-z]+)"\)/\1/' | sort -u || true)"
   if [ -z "$names" ]; then
     say "FAIL -- no token colours found at all; the pattern is broken, not the code"
@@ -83,12 +101,12 @@ check_asset_colours_exist() {
   fi
   while IFS= read -r n; do
     [ -z "$n" ] && continue
-    if [ ! -d "${SRC}/Assets.xcassets/${n}.colorset" ]; then
+    if [ ! -d "${COLOR_ASSETS_DIR}/${n}.colorset" ]; then
       missing="${missing}${n}"$'\n'
     fi
   done <<< "$names"
   if [ -n "$missing" ]; then
-    say "FAIL -- token(s) referenced in code with no colorset in Assets.xcassets:"
+    say "FAIL -- token(s) referenced in code with no colorset in ${COLOR_ASSETS_DIR}:"
     say "$missing"
     FAIL=1
   else
