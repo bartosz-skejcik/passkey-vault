@@ -6031,3 +6031,100 @@ one thing this session could not produce. `bash scripts/check-ios-gate.sh` exits
 sub-gates). Evidence: `ios/evidence/43/e43-10-native-app-register-{locked,unlocked}.log{,.extension-log,.harness-log}`,
 full debug trail in `.planning/debug/resolved/passkey-reg-blank-sheet-discord.md` (not committed --
 `.planning/` is never committed from this worktree, D-obligation per `docs/IOS-HANDOFF.md` §8).
+
+## 19. Landmine -- an app extension's main bundle is its own `.appex`, asset lookups degrade silently, and identifier-based UI assertions cannot see it (2026-08-22)
+
+Same debug session as §18, continued: Bartek retested on his REAL iPhone 16 (iOS 27.0) after the
+`.failed` fix above landed, and captured the EXTENSION's OWN os_log this time (not the host-app-only
+capture §18 had to work from). The ceremony ran CORRECTLY -- unlocked, `PVFILL|passkey-reg|
+stage=preflight status=ok`, the RP's real data (`userName=bartek@paczesny.pl`), and the full view
+lifecycle (`viewDidLoad` -> `viewWillAppear` -> `viewDidAppear`) -- interleaved with dozens of:
+
+```
+No color named 'PVBackground' found in asset catalog for main bundle (.../PasskeyVault.app/PlugIns/PasskeyVaultAutoFill.appex)
+No color named 'PVTextPrimary' / 'PVTextMuted' / 'PVAccent' / 'PVOnAccent' / 'PVPasskey' found ...
+CoreUI: -[CUICatalog initWithName:fromBundle:error:] unable to find a bundle ... with identifier 'cloud.blonie.PasskeyVault.AutoFill'
+```
+
+**The landmine.** `Color("PVAccent")` and friends resolve against the CURRENT process's own main
+bundle -- for an app extension that is its `.appex`, never the host app's `.app`, even though the
+extension is embedded inside the host app's bundle and the user experiences them as "one app". This
+project's own project structure made the mismatch trivial to introduce: `Assets.xcassets` lived
+under `PasskeyVault/PasskeyVault/` (Xcode 16's `PBXFileSystemSynchronizedRootGroup` "folder groups"
+-- a whole on-disk folder is a target's compiled sources/resources by simple membership in that
+target's own `fileSystemSynchronizedGroups`, no per-file checkbox). `PasskeyVaultAutoFill`'s own
+`fileSystemSynchronizedGroups` was `(PasskeyVaultAutoFill, Shared, PvShared)` -- it never included
+the `PasskeyVault` folder the catalog lived in, so the extension shipped with ZERO asset catalogs of
+its own. **Asset lookup failure is silent by design** -- no crash, no build warning, no thrown
+error, just a `Fault`-level os_log line an engineer has to already know to go looking for -- so
+`PasskeyRegistrationConfirmView.swift` (the ONE screen this extension draws, `43-07-PLAN.md`'s own
+scope fence) painted a fully legible SwiftUI view tree with every colour silently substituted by the
+platform's own fallback: a literal, completely blank white sheet -- Bartek's own words, verbatim.
+
+**Why THREE separate proof surfaces missed it, live, at the same time.** (1)
+`scripts/audit-ios-colour-tokens.sh`'s own check 2 asserts a referenced `PV*` token has a REAL
+colorset SOMEWHERE in the repo -- it has no concept of TARGET membership, so a colorset that exists
+but ships in the wrong target's bundle passes it cleanly. (2) `NativeAppRegisterUITests.swift`
+(§18's own harness) found `passkeyRegistration.confirm` by ACCESSIBILITY IDENTIFIER and tapped it --
+XCUITest's identifier lookup walks the accessibility tree regardless of whether anything was ever
+actually painted to the screen; the confirm ceremony completed end-to-end (`stage=complete
+status=ok`) against a screen with zero legible pixels, and the test suite reported PASS the whole
+time. (3) Manual/agent code review, twice, read `PasskeyRegistrationConfirmView.swift` and confirmed
+every `Color("PV...")` named a real colorset that existed in the repo -- true, and irrelevant, since
+none of the three checks ever asked "does THIS target's own compiled bundle contain it". This is
+this project's own recurring defect shape (`ios/IOS-SPIKE-LOG.md` L-9 and 5 other recorded
+instances): **evidence that measures the wrong thing** -- every proof surface was green, and none of
+them could have caught this class of bug, because none of them measured target-scoped resolution or
+actual painted pixels.
+
+**Fix.** Relocated every `PV*`/`AccentColor` colorset (`scripts/gen-ios-colorsets.py`'s own
+generated output, from `ios/brand/tokens.json` -- the ONE source of truth) from
+`PasskeyVault/PasskeyVault/Assets.xcassets` into a NEW `PasskeyVault/Shared/PVColors.xcassets` --
+`Shared/` was ALREADY a `fileSystemSynchronizedGroups` member of BOTH the `PasskeyVault` app target
+and the `PasskeyVaultAutoFill` extension target, so this needed ZERO `project.pbxproj` edits.
+AppIcon/onboarding images stay app-only (the extension never references them). `ContrastTests.swift`
+(reads colorset `Contents.json` files directly from disk at test time) and
+`scripts/audit-ios-colour-tokens.sh` (colorset-existence check) both repointed at the new location;
+the latter also now scans `PasskeyVaultAutoFill`/`Shared`/`PvShared` sources, not just the app's own
+-- it had never scanned the extension's own code at all.
+
+**Closing the evidence gap, not just the bug.** Two new, falsifiable artifacts, both driven RED
+against the pre-fix code before being driven GREEN against the fix (never claimed without the
+red-then-green transcript):
+  - `scripts/measure-ios-color-token.py` -- reads a screenshot's ACTUAL PIXELS (stdlib-only,
+    `sips`-via-BMP, same technique as `scripts/measure-ios-dock-panel.py`) and asserts a named
+    token's real hex value is present (or, for the RED proof, absent) as a genuine, non-trivial-area
+    fill -- never `exists`/`isHittable`, never eyeballing. RED (pre-fix, tolerance=2 to cleanly
+    separate `PVBackground`'s `#FCFBFA` from the platform's own `#FFFFFF` fallback, which is
+    otherwise a false-positive trap): `PVAccent`/`PVBackground`/`PVTextPrimary`/`PVPasskey` all
+    0 matching samples on the confirm screen -- a literal blank white sheet, visually confirmed
+    (`ios/evidence/43/asset-resolution/RED-confirm-screenshot.png`). GREEN (post-fix, same harness,
+    same test, only the colorset location changed): `PVAccent` 16444 samples, `PVBackground` 259419,
+    `PVTextPrimary` 742 -- all well over the 200-sample floor
+    (`ios/evidence/43/asset-resolution/GREEN-confirm-screenshot.png`). The SAME live run's raw
+    os_log corroborates independently: 131 `No color named ...`/`CUICatalog` fault lines pre-fix
+    (`ios/evidence/43/asset-resolution/RED-coreui-warnings.log`), 0 post-fix
+    (`GREEN-coreui-warnings.log`) -- reproduced on THIS machine's iOS 26.5 simulator, not only
+    inferred from Bartek's real-device log.
+  - `scripts/audit-ios-extension-asset-resolution.py` -- a MECHANICAL, static gate (no build, no
+    simulator): parses `project.pbxproj`'s own `fileSystemSynchronizedGroups`/
+    `PBXFileSystemSynchronizedRootGroup` structure for a named target, resolves which on-disk
+    folders (and therefore which `.xcassets` catalogs) that target actually ships, and asserts every
+    `Color("...")`/`UIColor(named:)`/`Image("...")` reference in that target's own Swift code
+    resolves against THAT set -- never "resolves somewhere in the repo". RED against the unfixed
+    project: `FAIL -- 6 asset name(s) referenced by 'PasskeyVaultAutoFill' code do NOT resolve...`
+    (naming all six, file:line). GREEN after the relocation: `PASS -- every referenced asset name
+    resolves...`. Wired into `scripts/check-ios-gate.sh` as `gate_asset_resolution`, with its own
+    `falsify_asset_resolution` proof (a wholly synthetic scratch fixture -- an unresolvable
+    reference must FAIL naming it, AND, the positive control this project's own discipline requires
+    before trusting an absence assertion, a resolvable reference in the SAME fixture must PASS) --
+    this project's `GATES` composer now runs seven sub-gates, not six.
+
+**The landmine, stated for reuse:** an app extension's asset-catalog lookups run against its OWN
+main bundle (the `.appex`), never the host app's; the failure mode is silent (no crash, no build
+error) rather than loud; and an XCUITest assertion built on accessibility identifiers cannot
+distinguish "this control exists and is legible" from "this control exists and painted nothing" --
+only a pixel-level or target-membership-level check can. Any future extension target in this
+project (or a new asset added to `PasskeyRegistrationConfirmView.swift` or a sibling screen) is
+covered going forward by `gate_asset_resolution`, which fails the build the moment a referenced name
+stops resolving in that target's own catalogs.

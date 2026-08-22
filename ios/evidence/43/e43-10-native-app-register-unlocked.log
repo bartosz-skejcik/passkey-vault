@@ -5,13 +5,13 @@
 ==> uniffi version (single-sourced): 0.32.0
 ==> IPHONEOS_DEPLOYMENT_TARGET=18.0 (must match project.pbxproj)
 ==> Building pv-ffi for aarch64-apple-ios-sim (staticlib, release)
-    Finished `release` profile [optimized] target(s) in 0.42s
+    Finished `release` profile [optimized] target(s) in 0.47s
 ==> Building pv-ffi for aarch64-apple-ios (staticlib, release)
-    Finished `release` profile [optimized] target(s) in 0.17s
+    Finished `release` profile [optimized] target(s) in 0.18s
 ==> Generating Swift bindings (uniffi-bindgen-swift)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
      Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings/Headers --headers --modulemap --modulemap-filename module.modulemap --module-name pv_ffiFFI`
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
      Running `target/debug/uniffi-bindgen-swift target/aarch64-apple-ios/release/libpv_ffi.a ios/PasskeyVault/build/swift-bindings --swift-sources`
 ==> Assembling PvFfi.xcframework
 xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/PvFfi.xcframework
@@ -26,98 +26,107 @@ xcframework successfully written out to: /Users/j5on/.work/projects/passkey-vaul
 ==> native-app-register (unlocked): seed confirmed ok (real host-unlock + Secret C written)
 ==> native-app-register (unlocked): building PasskeyVaultHarness
 ==> native-app-register (unlocked): driving the harness app's 'Create Passkey' button + system picker (NativeAppRegisterUITests)
-## XCUITest drive (exit 65) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.8buTxOuSPz for the full transcript
-    t =     3.18s Added attachment named 'poll-1-hierarchy'
-    t =     3.18s Checking existence of `"nativeCreate.status" StaticText`
-    t =     3.19s Find the "nativeCreate.status" StaticText
-    t =     3.19s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
-    t =     3.20s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
-    t =     3.24s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
-    t =     3.24s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
-    t =     3.25s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
-    t =     3.25s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
-    t =     3.29s Checking existence of `Any (Element at index 0)`
-    t =     3.33s Find the Any (Element at index 0)
-    t =     3.37s Find the Application 'com.apple.springboard'
-    t =     3.53s Added attachment named 'continue-found-poll2-screenshot'
-    t =     3.53s Requesting snapshot of accessibility hierarchy for app with pid 43815
-    t =     3.85s Requesting snapshot of accessibility hierarchy for app with pid 43815
-    t =     3.95s Added attachment named 'continue-found-poll2-hierarchy'
-    t =     3.95s Tap "ASAuthorizationControllerContinueButton" Other
-    t =     3.95s     Wait for com.apple.springboard to idle
-    t =     4.03s     Find the "ASAuthorizationControllerContinueButton" Other
-    t =     5.06s         Find the "ASAuthorizationControllerContinueButton" Other (retry 1)
-    t =     6.11s         Find the "ASAuthorizationControllerContinueButton" Other (retry 2)
-    t =     6.15s Requesting snapshot of accessibility hierarchy for app with pid 43815
-/Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/PasskeyVaultUITests/NativeAppRegisterUITests.swift:101: error: -[PasskeyVaultUITests.NativeAppRegisterUITests testNativeRegister] : Failed to tap "ASAuthorizationControllerContinueButton" Other: No matches found for Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"' from input {(
-    Window (Main), identifier: 'SBTransientOverlayWindow',
-    Other,
-    Other,
-    Other,
-    Other,
-    Other,
-    Other,
-    Other,
-    AX element pid: 43815, elementOrHash.elementID: 15338848166100570413.9999,
-    AX element pid: 45292, elementOrHash.elementID: 4608119808.143,
-    AX element pid: 45292, elementOrHash.elementID: 4608330880.144,
-    AX element pid: 45292, elementOrHash.elementID: 4608331520.145,
-    AX element pid: 45292, elementOrHash.elementID: 4608332160.146,
-    AX element pid: 45292, elementOrHash.elementID: 4412430912.147,
-    AX element pid: 45292, elementOrHash.elementID: 4412431360.148,
-    AX element pid: 45292, elementOrHash.elementID: 4412428672.149,
-    AX element pid: 45292, elementOrHash.elementID: 4412427776.150,
-    AX element pid: 45292, elementOrHash.elementID: 4608328960.151,
-    AX element pid: 45292, elementOrHash.elementID: 4608119296.152,
-    AX element pid: 45292, elementOrHash.elementID: 4623954685922451538.9999,
-    AX element pid: 46972, elementOrHash.elementID: 4425425408.3,
-    AX element pid: 46972, elementOrHash.elementID: 4425153536.4,
-    AX element pid: 46972, elementOrHash.elementID: 4425401664.5,
-    AX element pid: 46972, elementOrHash.elementID: 4425402112.6,
-    AX element pid: 46972, elementOrHash.elementID: 4425400768.7,
-    AX element pid: 46972, elementOrHash.elementID: 4425403456.8,
-    AX element pid: 46972, elementOrHash.elementID: 4363424768.9,
-    AX element pid: 46972, elementOrHash.elementID: 4425412416.10,
-    identifier: 'key.fill',
-    AX element pid: 46972, elementOrHash.elementID: 4425408832.12,
-    AX element pid: 46972, elementOrHash.elementID: 4425409280.13,
-    AX element pid: 46972, elementOrHash.elementID: 4425410176.14,
-    AX element pid: 46972, elementOrHash.elementID: 4425410624.15,
-    identifier: 'passkeyRegistration.confirm',
-    identifier: 'passkeyRegistration.cancel'
-)}
-    t =     6.50s Tear Down
-Test Case '-[PasskeyVaultUITests.NativeAppRegisterUITests testNativeRegister]' failed (6.516 seconds).
-Test Suite 'NativeAppRegisterUITests' failed at 2026-08-22 12:03:28.024 PM.
-	 Executed 1 test, with 1 failure (0 unexpected) in 6.516 (6.517) seconds
-Test Suite 'PasskeyVaultUITests.xctest' failed at 2026-08-22 12:03:28.024 PM.
-	 Executed 1 test, with 1 failure (0 unexpected) in 6.516 (6.517) seconds
-Test Suite 'Selected tests' failed at 2026-08-22 12:03:28.025 PM.
-	 Executed 1 test, with 1 failure (0 unexpected) in 6.516 (6.518) seconds
-2026-08-22 12:03:46.475 xcodebuild[46666:13271543] [MT] IDETestOperationsObserverDebug: 27.959 elapsed -- Testing started completed.
-2026-08-22 12:03:46.475 xcodebuild[46666:13271543] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
-2026-08-22 12:03:46.475 xcodebuild[46666:13271543] [MT] IDETestOperationsObserverDebug: 27.959 sec, +27.959 sec -- end
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.4FRDa0gxyC for the full transcript
+    t =     2.65s     Wait for com.apple.springboard to idle
+    t =     2.65s     Find the "ASAuthorizationControllerContinueButton" Other
+    t =     2.69s     Check for interrupting elements affecting "ASAuthorizationControllerContinueButton" Other
+    t =     2.73s     Synthesize event
+    t =     3.03s     Wait for com.apple.springboard to idle
+    t =     3.04s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =     3.04s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =     3.08s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =     3.18s Added attachment named 'poll-1-screenshot'
+    t =     3.18s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     3.21s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     3.22s Added attachment named 'poll-1-hierarchy'
+    t =     3.22s Checking existence of `"nativeCreate.status" StaticText`
+    t =     3.23s Find the "nativeCreate.status" StaticText
+    t =     3.23s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =     3.24s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "More from"'
+    t =     3.27s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     3.28s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Add Passkey"'
+    t =     3.29s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =     3.29s Get number of matches for: Elements matching predicate 'identifier == "ASAuthorizationControllerContinueButton"'
+    t =     3.32s Checking existence of `Any (Element at index 0)`
+    t =     3.36s Find the Any (Element at index 0)
+    t =     3.40s Find the Application 'com.apple.springboard'
+    t =     3.56s Added attachment named 'continue-found-poll2-screenshot'
+    t =     3.56s Requesting snapshot of accessibility hierarchy for app with pid 43815
+    t =     3.91s Requesting snapshot of accessibility hierarchy for app with pid 43815
+    t =     3.99s Added attachment named 'continue-found-poll2-hierarchy'
+    t =     3.99s Checking existence of `"ASAuthorizationControllerContinueButton" Other`
+    t =     4.02s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =     4.03s Get number of matches for: Elements matching predicate 'identifier == "passkeyRegistration.confirm"'
+    t =     4.05s Checking existence of `Any (Element at index 0)`
+    t =     4.08s Find the Any (Element at index 0)
+    t =     4.12s Find the Application 'com.apple.springboard'
+    t =     4.24s Added attachment named 'pv-confirm-found-poll2-screenshot'
+    t =     4.24s Requesting snapshot of accessibility hierarchy for app with pid 43815
+    t =     4.50s Requesting snapshot of accessibility hierarchy for app with pid 43815
+    t =     4.55s Added attachment named 'pv-confirm-found-poll2-hierarchy'
+    t =     4.56s Tap "passkeyRegistration.confirm" Button
+    t =     4.56s     Wait for com.apple.springboard to idle
+    t =     4.56s     Find the "passkeyRegistration.confirm" Button
+    t =     4.62s     Check for interrupting elements affecting "passkeyRegistration.confirm" Button
+    t =     4.66s     Synthesize event
+    t =     4.96s     Wait for com.apple.springboard to idle
+    t =     4.96s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =     5.07s Added attachment named 'poll-2-screenshot'
+    t =     5.07s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     5.11s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     5.12s Added attachment named 'poll-2-hierarchy'
+    t =     5.12s Checking existence of `"nativeCreate.status" StaticText`
+    t =     5.13s Find the "nativeCreate.status" StaticText
+    t =     5.15s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =     5.26s Added attachment named 'terminal-status-poll2-status=Created-screenshot'
+    t =     5.26s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     5.29s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     5.30s Added attachment named 'terminal-status-poll2-status=Created-hierarchy'
+    t =     8.30s Checking existence of `"nativeCreate.status" StaticText`
+    t =     8.31s Find the "nativeCreate.status" StaticText
+    t =     8.32s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =     8.41s Added attachment named 'final-state-selectedProvider=false-tappedContinue=true-status=Created-screenshot'
+    t =     8.41s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     8.43s Requesting snapshot of accessibility hierarchy for app with pid 68832
+    t =     8.44s Added attachment named 'final-state-selectedProvider=false-tappedContinue=true-status=Created-hierarchy'
+    t =     8.44s Tear Down
+Test Case '-[PasskeyVaultUITests.NativeAppRegisterUITests testNativeRegister]' passed (8.468 seconds).
+Test Suite 'NativeAppRegisterUITests' passed at 2026-08-22 12:47:35.900 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.468 (8.469) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 12:47:35.901 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.468 (8.470) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 12:47:35.901 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 8.468 (8.471) seconds
+2026-08-22 12:47:36.238 xcodebuild[68837:13394875] [MT] IDETestOperationsObserverDebug: 11.183 elapsed -- Testing started completed.
+2026-08-22 12:47:36.238 xcodebuild[68837:13394875] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 12:47:36.238 xcodebuild[68837:13394875] [MT] IDETestOperationsObserverDebug: 11.183 sec, +11.183 sec -- end
 
 Test session results, code coverage, and logs:
-	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_12-02-59-+0200.xcresult
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_12-47-04-+0200.xcresult
 
-Failing tests:
-	NativeAppRegisterUITests.testNativeRegister()
-
-** TEST FAILED **
+** TEST SUCCEEDED **
 
 Testing started
 
 ## Extension process os_log (cloud.blonie.PasskeyVault, ALL categories), this run
-2026-08-22 12:03:25.044373+0200 0xca8a38   Default     0x22637af            46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidLoad
-2026-08-22 12:03:25.077464+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=register stage=lazy-check status=unlocked
-2026-08-22 12:03:25.077828+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=preflight status=ok
-2026-08-22 12:03:25.084972+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-read status=ok len=32
-2026-08-22 12:03:25.094027+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandleLen=16 userNameLen=30
-2026-08-22 12:03:25.094057+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandle={length = 16, bytes = 0x8e3d9bd3d8dd07216c1c45784e05ea44} userName=ios-native-register-1787393002
-2026-08-22 12:03:25.173857+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewWillAppear
-2026-08-22 12:03:25.700929+0200 0xca8a38   Default     0x0                  46972  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidAppear
+2026-08-22 12:47:31.011650+0200 0xcc6b96   Default     0x22a4394            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidLoad
+2026-08-22 12:47:31.047339+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|entry=register stage=lazy-check status=unlocked
+2026-08-22 12:47:31.048274+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=preflight status=ok
+2026-08-22 12:47:31.054413+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|stage=sessionkey-read status=ok len=32
+2026-08-22 12:47:31.060720+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandleLen=16 userNameLen=30
+2026-08-22 12:47:31.060751+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|stage=opt-01-oq1 userHandle={length = 16, bytes = 0x0cbc7ab2d780b585ba59d7bad659ca7f} userName=ios-native-register-1787395648
+2026-08-22 12:47:31.137839+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewWillAppear
+2026-08-22 12:47:31.657591+0200 0xcc6b96   Default     0x0                  69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidAppear
+2026-08-22 12:47:32.208745+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=ceremony status=ok
+2026-08-22 12:47:32.209507+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=encrypt status=ok
+2026-08-22 12:47:32.286983+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=network status=ok
+2026-08-22 12:47:32.542197+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|E43-5|stage=upsert-one-passkey kind=passkey status=ok
+2026-08-22 12:47:32.542219+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=identity-store status=ok
+2026-08-22 12:47:32.542229+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|passkey-reg|kind=passkey-registration stage=complete status=ok
+2026-08-22 12:47:32.544090+0200 0xcc6b96   Default     0x22a442d            69161  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVLOCK|stage=activity-refresh writer=extension
 
 ## Harness app os_log (cloud.blonie.PasskeyVaultHarness), this run
-2026-08-22 12:03:22.971957+0200 0xca819a   Default     0x2261a6d            46661  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=start kind=register
-2026-08-22 12:03:22.973657+0200 0xca819a   Default     0x2261a6d            46661  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=performRequests rpId=vault.blonie.cloud userName=ios-native-register-1787393002
+2026-08-22 12:47:28.886641+0200 0xcc638c   Default     0x22a28ad            68832  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=start kind=register
+2026-08-22 12:47:28.889001+0200 0xcc638c   Default     0x22a28ad            68832  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=performRequests rpId=vault.blonie.cloud userName=ios-native-register-1787395648
+2026-08-22 12:47:32.546097+0200 0xcc638c   Default     0x22a28ae            68832  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=ceremony status=ok kind=register credentialIdLen=16 hasAttestation=true
+2026-08-22 12:47:32.546143+0200 0xcc638c   Default     0x22a28ae            68832  0    PasskeyVaultHarness: (PasskeyVaultHarness.debug.dylib) [cloud.blonie.PasskeyVaultHarness:register] PVHARNESS|stage=complete status=ok kind=register

@@ -907,6 +907,156 @@ falsify_qa_register() {
   echo "==> qa_register falsification: BOTH proofs passed (R2 resolvability, R3 parser control) -- ios/QA-AUDIT-v1.0.md never mutated, only mktemp -d scratch copies"
 }
 
+# --- gate_asset_resolution / gate_asset_resolution falsification ---------
+# `.planning/debug/passkey-reg-blank-sheet-discord.md` (2026-08-22): a live,
+# user-reported defect shipped through `scripts/audit-ios-colour-tokens.sh`'s own
+# check 2 (which asserts a referenced token has a REAL colorset SOMEWHERE, never
+# that it resolves in the TARGET that renders it), a live XCUITest suite
+# (identifier-based, blind to whether anything was actually painted), and manual
+# review -- `PasskeyRegistrationConfirmView.swift` (compiled into the
+# `PasskeyVaultAutoFill` app-extension target) referenced six real `PV*`
+# colorsets that were never a member of that target's own
+# `fileSystemSynchronizedGroups` (Xcode 16 synchronized-folder-group format),
+# so the extension's own asset-catalog lookups silently degraded and painted a
+# blank white sheet. `scripts/audit-ios-extension-asset-resolution.py` closes
+# that gap MECHANICALLY, by invoking it, never by reimplementing its
+# pbxproj-parsing logic here (same discipline as gate_ffi_build/gate_qa_register
+# above: the parsing logic stays in exactly one place).
+ASSET_RESOLUTION_SCRIPT_DEFAULT="scripts/audit-ios-extension-asset-resolution.py"
+ASSET_RESOLUTION_TARGET_DEFAULT="PasskeyVaultAutoFill"
+
+gate_asset_resolution() {
+  local script="${ASSET_RESOLUTION_SCRIPT:-$ASSET_RESOLUTION_SCRIPT_DEFAULT}"
+  local target="${ASSET_RESOLUTION_TARGET:-$ASSET_RESOLUTION_TARGET_DEFAULT}"
+
+  if [ ! -f "$script" ] || [ ! -r "$script" ]; then
+    echo "FAIL[asset_resolution]: $script not found or not readable -- cannot run the extension asset-resolution gate" >&2
+    return 1
+  fi
+
+  if ! python3 "$script" --target "$target"; then
+    echo "FAIL[asset_resolution]: $script --target $target exited non-zero -- see its own output above (an asset name referenced by extension-compiled code does not resolve in a catalog that target ships)" >&2
+    return 1
+  fi
+  echo "PASS[asset_resolution]: every asset name referenced by '$target' code resolves in a catalog that target actually ships (see $script's own output above)"
+}
+
+# falsify_asset_resolution -- proves BOTH branches reachable against a wholly
+# SYNTHETIC scratch fixture (never the real project.pbxproj/ios tree): one
+# target whose own code references an asset absent from every catalog it
+# ships (must FAIL, naming it) and, the positive control this project's own
+# discipline requires BEFORE trusting an absence assertion (this file's own
+# header, "Two landmines" -- an empty result read as a pass), a second target
+# in the SAME fixture whose reference genuinely resolves (must PASS). Mirrors
+# gate_qa_register's own scratch-copy idiom -- $GATE_SCRATCH_ROOT only, zero
+# mutation of the real project.
+falsify_asset_resolution() {
+  echo "==> --verify-falsifiable: asset_resolution"
+
+  local script="${ASSET_RESOLUTION_CHECKER_SCRIPT:-$ASSET_RESOLUTION_SCRIPT_DEFAULT}"
+  local scratch_dir="$GATE_SCRATCH_ROOT/asset-resolution-falsify"
+  local proj_dir="$scratch_dir/FakeProject"
+  mkdir -p "$proj_dir/FalsifyMissing" "$proj_dir/FalsifyPresent/FakeToken.colorset"
+
+  cat > "$proj_dir/FalsifyMissing/Fake.swift" <<'SWIFT'
+import SwiftUI
+struct Fake: View {
+    var body: some View { Color("FakeMissingToken") }
+}
+SWIFT
+  cat > "$proj_dir/FalsifyPresent/Fake2.swift" <<'SWIFT'
+import SwiftUI
+struct Fake2: View {
+    var body: some View { Color("FakeToken") }
+}
+SWIFT
+
+  local pbxproj="$scratch_dir/project.pbxproj"
+  cat > "$pbxproj" <<'PBX'
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		AAAA1111AAAA1111AAAA1111 /* FalsifyMissing */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FalsifyMissing;
+			sourceTree = "<group>";
+		};
+		BBBB2222BBBB2222BBBB2222 /* FalsifyPresent */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FalsifyPresent;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXNativeTarget section */
+		CCCC3333CCCC3333CCCC3333 /* FalsifyMissingTarget */ = {
+			isa = PBXNativeTarget;
+			fileSystemSynchronizedGroups = (
+				AAAA1111AAAA1111AAAA1111 /* FalsifyMissing */,
+			);
+			name = FalsifyMissingTarget;
+		};
+		DDDD4444DDDD4444DDDD4444 /* FalsifyPresentTarget */ = {
+			isa = PBXNativeTarget;
+			fileSystemSynchronizedGroups = (
+				BBBB2222BBBB2222BBBB2222 /* FalsifyPresent */,
+			);
+			name = FalsifyPresentTarget;
+		};
+/* End PBXNativeTarget section */
+
+	};
+}
+PBX
+
+  echo "--- F1: a reference with NO matching colorset anywhere the target ships makes the checker FAIL, naming it ---"
+  local out status
+  set +e
+  out=$(python3 "$script" --pbxproj "$pbxproj" --project-dir "$proj_dir" --target FalsifyMissingTarget 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -eq 0 ]; then
+    echo "ERROR: asset_resolution F1 falsification FAILED -- the checker against a target with a genuinely unresolvable reference exited 0; the absence assertion cannot fail and is therefore worthless" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "FakeMissingToken"; then
+    echo "ERROR: asset_resolution F1 falsification FAILED -- exited non-zero (exit=$status) but did not name the unresolved token" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against FalsifyMissingTarget exited $status, naming the unresolved token:"
+  echo "$out" | grep -A1 "FAIL --" | sed 's/^/      /'
+
+  echo
+  echo "--- F2 (positive control, required before trusting F1's absence result): the SAME fixture's OTHER target, whose reference genuinely resolves, PASSES ---"
+  set +e
+  out=$(python3 "$script" --pbxproj "$pbxproj" --project-dir "$proj_dir" --target FalsifyPresentTarget 2>&1)
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    echo "ERROR: asset_resolution F2 falsification FAILED -- the checker against a target whose reference genuinely resolves (FakeToken.colorset is physically present) exited non-zero; F1's FAIL result cannot be trusted as meaningful if the checker fails even on a resolvable reference" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  if ! echo "$out" | grep -q "PASS --"; then
+    echo "ERROR: asset_resolution F2 falsification FAILED -- exited 0 but did not print a PASS line for FakeToken" >&2
+    echo "$out" >&2
+    exit 1
+  fi
+  echo "    checker against FalsifyPresentTarget (FakeToken.colorset physically present under it) exited 0:"
+  echo "$out" | grep "PASS --" | sed 's/^/      /'
+
+  echo
+  echo "==> asset_resolution falsification: BOTH proofs passed (F1 absence -> FAIL naming the token, F2 presence -> PASS) -- wholly synthetic scratch fixture, zero mutation of the real project"
+}
+
 # --- composer: sub-gate dispatch table ----------------------------------
 # 42-01 supplied qa05. 42-03 appends the three FFI sub-gates above, in the
 # order build -> falsifiable-slice-gate -> opaque-handle audit (each depends
@@ -924,7 +1074,7 @@ falsify_qa_register() {
 # phase append further to GATES and add a matching
 # gate_<name>/falsify_<name> pair; nothing about the frame below should
 # need rewriting.
-GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register)
+GATES=(qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests qa_register asset_resolution)
 
 ONLY=""
 VERIFY_FALSIFIABLE=0
