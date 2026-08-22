@@ -30,9 +30,14 @@ HARNESS_APP_PRODUCT="$DD_PATH/Build/Products/Debug-iphonesimulator/PasskeyVaultH
 PINNED_UDID_FILE="/private/tmp/pv16.udid"
 BUNDLE_ID="cloud.blonie.PasskeyVault"
 HARNESS_BUNDLE_ID="cloud.blonie.PasskeyVaultHarness"
+APP_GROUP_ID="group.cloud.blonie.PasskeyVault"
+# Plan 44-05, Task 2: a distinct port from `ios-autofill-e43.sh`'s own `SC4_SERVER_PORT` (8901) --
+# both scripts can run in the same session without colliding.
+SC_GENERATE_SERVER_PORT=8902
 
 usage() {
   echo "Usage: $0 probe [--run2] [--assert-only <path> [--run2]]" >&2
+  echo "       $0 sc-generate [--skip-red-control]" >&2
   exit 1
 }
 
@@ -72,12 +77,19 @@ resolve_pinned_udid() {
 # bindings fails the FIRST attempt with "cannot find ... in scope", recovers on immediate retry).
 build_with_l10_retry() {
   local udid="$1" scheme="$2" out_log="$3" action="$4"
+  # Optional 5th arg (Plan 44-05 Task 2): extra `SWIFT_ACTIVE_COMPILATION_CONDITIONS`, mirroring
+  # `ios-autofill-e43.sh`'s own `extra_conditions` pattern -- needed to enable
+  # `PasskeyRegistrationSc4Seeder`'s own call site in `PasskeyVaultApp.swift` (gated behind
+  # `PV_PROBE_E43_SC4`, not `DEBUG`) so `sc-generate` can seed a genuinely unlocked session before
+  # driving the harness's own generate affordance.
+  local extra_conditions="${5:-}"
   local run_once
   run_once() {
     xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
       -scheme "$scheme" -configuration Debug \
       -destination "platform=iOS Simulator,id=$udid" \
       -derivedDataPath "$DD_PATH" \
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) $extra_conditions" \
       "$action"
   }
   if ! run_once > "$out_log" 2>&1; then
@@ -104,6 +116,14 @@ ensure_provider_enabled() {
   fi
   echo "==> AutoFill provider not enabled -- re-electing via pluginkit -e use (CLI-only re-election)" >&2
   xcrun simctl spawn "$udid" pluginkit -e use -i "${BUNDLE_ID}.AutoFill" >/dev/null 2>&1 || true
+}
+
+# `ios-autofill-e43.sh`'s own `app_group_dir` -- the plural `groups` form is the one that actually
+# resolves the path on this toolchain (live finding, that script's own header).
+app_group_dir() {
+  local udid="$1"
+  xcrun simctl get_app_container "$udid" "$BUNDLE_ID" groups 2>/dev/null \
+    | awk -F'\t' -v g="$APP_GROUP_ID" '$1 == g { print $2 }' || true
 }
 
 # `probe`: this plan's own live experiment. `--run2` (Task 1b / checkpoint resolution): drives
@@ -240,6 +260,348 @@ assert_probe() {
   return 0
 }
 
+# `sc-generate`: Plan 44-05, Task 2. Drives `SavePasswordFormHarnessUITests.testDriveGeneratePasswordOffer`
+# (configuration X, 44-03-SUMMARY.md: tap the new-password field with no typing, then tap the
+# system's own "Strong Password" QuickType affordance) -- the SILENT entry point
+# (`performWithoutUserInteraction(generatePasswordsRequest:)`) is proven to fire by this same
+# configuration already (44-03); this run ALSO settles, live, whether the interactive variant
+# (`prepareInterface(for: ASGeneratePasswordsRequest)`) now fires, now that the silent handler
+# answers with a real candidate instead of `.userCanceled` (44-03-SUMMARY.md's own open question).
+# Reports BOTH outcomes honestly via `os_log` marker greps (never inferred from the UI test's own
+# PASS/FAIL, which is not the load-bearing evidence -- same discipline `probe`'s own header states).
+#
+# If the interactive screen appears: exports its screenshot (`xcresulttool export attachments`,
+# `ios-dock-evidence.sh`'s own established technique) for SAVE-04's pixel proof, and greps the
+# harness's own `PVHARNESS|stage=candidate-observed` rule-compliance booleans (never the raw
+# password) to confirm the offered candidate satisfies the harness's own rules descriptor.
+#
+# `--skip-red-control`: skip the mandatory RED-control mutation/rebuild/revert cycle (44-PLAN-CHECK.md
+# W4) -- only for a quick iteration re-run; the plan's own acceptance criteria require the RED
+# control to have been run and recorded at least once.
+cmd_sc_generate() {
+  mkdir -p "$EVIDENCE_DIR"
+  local skip_red_control=0
+  if [ "${1:-}" = "--skip-red-control" ]; then
+    skip_red_control=1
+  fi
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> sc-generate: pinned simulator UDID: $udid"
+
+  # A locked vault refuses BEFORE ever reaching pv-ffi (this plan's own Task 1 lock-gating
+  # discipline, mirroring every other entry point) -- this surface needs a genuinely unlocked
+  # session to reach the dispatch logic at all, so this subcommand seeds one via
+  # `PasskeyRegistrationSc4Seeder` (`ios-autofill-e43.sh`'s own real-unlock mechanism, VERBATIM,
+  # never a throwaway/mock unlock), against an isolated throwaway `pv-server`.
+  local server_pid="" db_dir=""
+  cleanup_sc_generate() {
+    if [ -n "${server_pid:-}" ]; then
+      kill "$server_pid" >/dev/null 2>&1 || true
+      wait "$server_pid" 2>/dev/null || true
+    fi
+    if [ -n "${db_dir:-}" ]; then
+      rm -rf "$db_dir"
+    fi
+  }
+  trap cleanup_sc_generate EXIT
+
+  local stray_port="$SC_GENERATE_SERVER_PORT"
+  if lsof -nP -i ":${stray_port}" >/dev/null 2>&1; then
+    echo "ERROR: something is already listening on :${stray_port} -- refusing to proceed" >&2
+    exit 1
+  fi
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+    exit 1
+  fi
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e44-05-sc-generate.XXXXXX")
+  local db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+  local server_base="http://127.0.0.1:${SC_GENERATE_SERVER_PORT}"
+  PV_ADDR="127.0.0.1:${SC_GENERATE_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "${db_dir}/pv-server.log" 2>&1 &
+  server_pid=$!
+  local healthy=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+    cat "${db_dir}/pv-server.log" >&2
+    exit 1
+  fi
+  echo "==> sc-generate: pv-server healthy on ${server_base} (isolated, throwaway db)"
+
+  echo "==> sc-generate: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> sc-generate: building PasskeyVault app+extension (PV_PROBE_E43_SC4, for the real-unlock seeder)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-build.log build "PV_PROBE_E43_SC4"
+
+  echo "==> sc-generate: building PasskeyVaultHarness app"
+  build_with_l10_retry "$udid" "PasskeyVaultHarness" /tmp/pv-e44-05-harness-build.log build
+
+  echo "==> sc-generate: building the UI test bundle (PasskeyVaultUITests)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-build-for-testing.log build-for-testing "PV_PROBE_E43_SC4"
+
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl install "$udid" "$HARNESS_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+
+  # First launch: creates the App Group container on disk.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+
+  local reg_email reg_password
+  reg_email="pv-e44-05-sc-generate-$(date +%s)@example.invalid"
+  reg_password="pv-e44-05 sc-generate fixture password $(date +%s) $$"
+  local seed_input_file="${group_dir}/pv-43-sc4-seed.json"
+  local status_file="${group_dir}/e43-sc4-seed-status.json"
+  rm -f "$status_file"
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${reg_email}\",\"password\":\"${reg_password}\"}" \
+    > "$seed_input_file"
+  echo "==> sc-generate: launching host app to seed a REAL unlocked session (PasskeyRegistrationSc4Seeder, verbatim from ios-autofill-e43.sh)"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "$status_file" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: PasskeyRegistrationSc4Seeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "$status_file"; then
+    echo "ERROR: PasskeyRegistrationSc4Seeder reported a non-ok status:" >&2
+    cat "$status_file" >&2
+    exit 1
+  fi
+  echo "==> sc-generate: seed confirmed ok (real host-unlock + Secret C written)"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  xcrun simctl launch --terminate-running-process "$udid" "$HARNESS_BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 1
+
+  local out_root="ios/PasskeyVault/build/sc-generate"
+  rm -rf "$out_root"
+  mkdir -p "$out_root"
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+
+  local result="$out_root/result.xcresult"
+  local ui_test_log="$out_root/xcodebuild.log"
+  local ui_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests/testDriveGeneratePasswordOffer \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    -resultBundlePath "$result" \
+    test > "$ui_test_log" 2>&1 || ui_result=$?
+
+  echo "==> sc-generate: XCUITest drive exit $ui_result (see $ui_test_log)"
+
+  # --- routing verdict: silent + interactive, from the EXTENSION process's own os_log ------------
+  local ext_log="$out_root/extension-pvfill.log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep 'PVFILL|entry=generate-' > "$ext_log" || true
+  cp "$ext_log" "$EVIDENCE_DIR/44-05-sc-generate-pvfill.log"
+
+  local silent_fired=0
+  local ui_fired=0
+  if grep -q 'PVFILL|entry=generate-silent stage=generate status=ok' "$ext_log"; then
+    silent_fired=1
+    echo "VERDICT: performWithoutUserInteraction(generatePasswordsRequest:) FIRED and answered with a real candidate -- $(grep 'PVFILL|entry=generate-silent stage=generate' "$ext_log" | head -1)"
+  else
+    echo "VERDICT: performWithoutUserInteraction(generatePasswordsRequest:) did NOT report a successful generate in this run"
+    grep 'PVFILL|entry=generate-silent' "$ext_log" || echo "  (no generate-silent PVFILL| lines at all)"
+  fi
+  if grep -q 'PVFILL|entry=generate-ui stage=generate status=ok' "$ext_log"; then
+    ui_fired=1
+    echo "VERDICT: prepareInterface(for: ASGeneratePasswordsRequest) FIRED (the interactive variant) -- $(grep 'PVFILL|entry=generate-ui' "$ext_log" | head -1)"
+  else
+    echo "VERDICT: prepareInterface(for: ASGeneratePasswordsRequest) did NOT fire in this run (44-03-SUMMARY.md's open question -- reported honestly, not assumed)"
+  fi
+
+  # --- harness-side candidate compliance (rule-honouring booleans, never the raw password) --------
+  local harness_log="$out_root/harness-pvharness.log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVaultHarness"' --start "$run_start" \
+    2>&1 | grep 'PVHARNESS|stage=candidate-observed' > "$harness_log" || true
+  cp "$harness_log" "$EVIDENCE_DIR/44-05-sc-generate-candidate-compliance.log"
+  local offer_found=0
+  if [ -s "$harness_log" ]; then
+    offer_found=1
+    echo "== candidate compliance (rules descriptor: minlength 10-20, lower/upper/digit) =="
+    cat "$harness_log"
+    if grep -q 'lengthOk=false\|hasLower=false\|hasUpper=false\|hasDigit=false' "$harness_log"; then
+      echo "FAIL: the offered candidate violates the harness's own rules descriptor" >&2
+      exit 1
+    fi
+    echo "PASS: the offered candidate satisfies the harness's own rules descriptor"
+  else
+    echo "== no candidate-observed line -- the interactive offer screen's own candidate text was never read this run =="
+  fi
+
+  # --- SAVE-04 pixel proof ---------------------------------------------------------------------
+  #
+  # Live finding, this run (recorded in full in 44-05-SUMMARY.md): the interactive
+  # `prepareInterface(for: ASGeneratePasswordsRequest)` variant does NOT fire under the one
+  # driveable trigger this toolchain offers (the QuickType "Strong Password" affordance always
+  # routes to the SILENT entry point instead). This settles 44-03-SUMMARY.md's own open question
+  # as a genuine negative -- not "not yet proven" -- and the plan's own pre-authorized fallback
+  # applies: a DIRECT invocation of the real, production `GeneratePasswordOfferView`
+  # (`Shared/GeneratePasswordOfferView.swift`, moved there for exactly this reason) from a
+  # host-side route (`GeneratePasswordOfferPreviewHost.swift`, `PasskeyVault` app target, gated
+  # behind `PV_PROBE_E44_05_OFFER`) -- with the explicit "system routing unproven for this screen"
+  # disclosure, never presented as if the live system path had been exercised.
+  if [ "$offer_found" = "1" ]; then
+    echo "==> sc-generate: interactive offer screen appeared via LIVE system routing this run -- unexpected, given the finding above. Capturing pixel proof from the live route."
+    local exported="$out_root/attachments"
+    xcrun xcresulttool export attachments --path "$result" --output-path "$exported" >/dev/null
+    local screenshot_file
+    screenshot_file="$(python3 - "$exported/manifest.json" "generate-offer-found-screenshot" <<'PY'
+import json, sys
+manifest_path, wanted = sys.argv[1], sys.argv[2]
+with open(manifest_path) as f:
+    manifest = json.load(f)
+for test in manifest:
+    for att in test.get("attachments", []):
+        name = att.get("suggestedHumanReadableName") or ""
+        if name == wanted or name.startswith(wanted + "_"):
+            print(att["exportedFileName"])
+            sys.exit(0)
+sys.exit(1)
+PY
+)" || { echo "ERROR: 'generate-offer-found-screenshot' attachment not in the result bundle" >&2; exit 1; }
+    local live_dest="$EVIDENCE_DIR/44-05-sc-generate-offer-GREEN.png"
+    cp "$exported/$screenshot_file" "$live_dest"
+    local pv_info_hex_live pv_bg_hex_live
+    pv_info_hex_live="$(python3 -c 'import json; d=json.load(open("ios/PasskeyVault/Shared/PVColors.xcassets/PVInfo.colorset/Contents.json")); c=d["colors"][0]["color"]["components"]; print(f"{int(c[\"red\"],16):02X}{int(c[\"green\"],16):02X}{int(c[\"blue\"],16):02X}")')"
+    pv_bg_hex_live="$(python3 -c 'import json; d=json.load(open("ios/PasskeyVault/Shared/PVColors.xcassets/PVBackground.colorset/Contents.json")); c=d["colors"][0]["color"]["components"]; print(f"{int(c[\"red\"],16):02X}{int(c[\"green\"],16):02X}{int(c[\"blue\"],16):02X}")')"
+    python3 scripts/measure-ios-color-token.py "$live_dest" \
+      --expect "PVInfo=$pv_info_hex_live" --expect "PVBackground=$pv_bg_hex_live" --mode present --tolerance 2
+  else
+    echo "==> sc-generate: interactive offer screen did NOT appear via live system routing (settled negative) -- capturing SAVE-04's pixel proof via the direct-invocation fallback"
+    sc_generate_direct_invocation_pixel_proof "$udid" "$skip_red_control"
+  fi
+
+  exit 0
+}
+
+# The plan's own pre-authorized fallback: since `prepareInterface(for: ASGeneratePasswordsRequest)`
+# does not fire live on this toolchain, render the REAL production `GeneratePasswordOfferView`
+# directly via `GeneratePasswordOfferPreviewHost` (compiled in only under `PV_PROBE_E44_05_OFFER`,
+# `PasskeyVault` app target -- `Shared/` already ships this exact view into the extension target
+# too, confirmed via `scripts/audit-ios-extension-asset-resolution.py` PASS in this plan's Task 1).
+# W4 (44-PLAN-CHECK.md): the RED control MUST be a genuinely unresolved-asset render, never a
+# deliberately-wrong-hex substitution -- temporarily renames
+# `Color("PVInfo")`/`Color("PVBackground")` to an unresolvable name, rebuilds, screenshots the
+# resulting (genuinely blank) render, asserts `measure-ios-color-token.py` FAILS against it
+# (`--tolerance 2`, the same anti-false-positive precedent `ios/IOS-SPIKE-LOG.md` §19 already
+# established -- the default tolerance lets `PVBackground`'s near-white `#FCFBFA` false-positive
+# match the platform's own `#FFFFFF` fallback), then reverts and rebuilds to restore the real
+# GREEN artifact.
+sc_generate_direct_invocation_pixel_proof() {
+  local udid="$1" skip_red_control="$2"
+  local pv_info_hex pv_bg_hex
+  pv_info_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVInfo.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+  pv_bg_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVBackground.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+
+  echo "==> sc-generate: direct-invocation GREEN -- building PasskeyVault with PV_PROBE_E44_05_OFFER"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-offer-build.log build "PV_PROBE_E44_05_OFFER"
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  local green_dest="$EVIDENCE_DIR/44-05-sc-generate-offer-GREEN.png"
+  xcrun simctl io "$udid" screenshot "$green_dest"
+  echo "==> sc-generate: wrote $green_dest"
+  echo "==> sc-generate: measuring real GREEN render (PVInfo=$pv_info_hex, PVBackground=$pv_bg_hex)"
+  python3 scripts/measure-ios-color-token.py "$green_dest" \
+    --expect "PVInfo=$pv_info_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+
+  if [ "$skip_red_control" = "1" ]; then
+    echo "==> sc-generate: --skip-red-control set -- restoring the ordinary (non-probe) build and skipping the RED control"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-restore-build.log build
+    return 0
+  fi
+
+  local view_file="ios/PasskeyVault/Shared/GeneratePasswordOfferView.swift"
+  echo "==> sc-generate: RED control -- unresolving PVInfo/PVBackground in $view_file"
+  cp "$view_file" "/tmp/pv-e44-05-offerview-backup.swift"
+  sed -i '' \
+    -e 's/Color("PVInfo")/Color("PVInfoZZZUNRESOLVED")/g' \
+    -e 's/Color("PVBackground")/Color("PVBackgroundZZZUNRESOLVED")/g' \
+    "$view_file"
+
+  local restored=0
+  restore() {
+    if [ "$restored" = "0" ]; then
+      cp "/tmp/pv-e44-05-offerview-backup.swift" "$view_file"
+      restored=1
+    fi
+  }
+  trap restore EXIT
+
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-red-build.log build "PV_PROBE_E44_05_OFFER"
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  local red_dest="$EVIDENCE_DIR/44-05-sc-generate-offer-RED.png"
+  xcrun simctl io "$udid" screenshot "$red_dest"
+  echo "==> sc-generate: RED control screenshot -- $red_dest"
+
+  restore
+  trap - EXIT
+  echo "==> sc-generate: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-restore-build.log build
+
+  set +e
+  python3 scripts/measure-ios-color-token.py "$red_dest" \
+    --expect "PVInfo=$pv_info_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+  local red_status=$?
+  set -e
+  if [ "$red_status" -eq 0 ]; then
+    echo "ERROR: RED control unexpectedly PASSED -- the unresolved-asset render was not genuinely blank" >&2
+    exit 1
+  fi
+  echo "CONFIRMED RED: measure-ios-color-token.py correctly FAILED against the genuinely unresolved-asset render (exit $red_status)"
+}
+
 main() {
   if [ $# -lt 1 ]; then
     usage
@@ -268,6 +630,9 @@ main() {
         fi
       fi
       cmd_probe "${1:-}"
+      ;;
+    sc-generate)
+      cmd_sc_generate "${1:-}"
       ;;
     *)
       usage

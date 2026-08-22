@@ -242,8 +242,16 @@ struct PasskeyVaultApp: App {
 
     var body: some Scene {
         WindowGroup {
+            // Plan 44-05, Task 2 (SAVE-04 direct-invocation fallback, `GeneratePasswordOfferPreviewHost
+            // .swift`'s own header): swaps the ENTIRE root view for a direct render of the real
+            // `GeneratePasswordOfferView` -- compiled in only under `PV_PROBE_E44_05_OFFER`, inert
+            // for every other build (never reachable in a real user session).
+            #if PV_PROBE_E44_05_OFFER
+            GeneratePasswordOfferPreviewHost()
+            #else
             ContentView()
                 .snapshotCoverOverlay()
+            #endif
         }
     }
 }

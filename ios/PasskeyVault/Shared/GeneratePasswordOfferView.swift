@@ -1,8 +1,8 @@
 //
 //  GeneratePasswordOfferView.swift
-//  PasskeyVaultAutoFill
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
 //
-//  Plan 44-05 (SAVE-02, SAVE-04). Presented ONLY from `prepareInterface(for:
+//  Plan 44-05 (SAVE-02, SAVE-04). Presented from `prepareInterface(for:
 //  ASGeneratePasswordsRequest)` -- the interactive generate-password path -- after `pv-ffi`'s
 //  `generatePasswordFromRules` (or its safe fallback) has already produced a candidate. This
 //  screen never calls into `pv-ffi`/`pv-core` itself, and confirming it (`onUse`) NEVER touches
@@ -10,9 +10,26 @@
 //  nothing to the vault by itself (the header's own explicit read-only instruction, T-44-11); only
 //  a later, separate SAVE-01 event, if the user actually submits the RP's form, persists anything.
 //
+//  DEVIATION (Task 2, live finding): this file originally lived in `PasskeyVaultAutoFill/`
+//  (extension-only). Moved to `Shared/` -- same reasoning `GeneratePasswordDispatch.swift`'s own
+//  header documents (this view has zero extension-specific dependencies, no `AuthenticationServices`
+//  import, no `extensionContext` access) -- so a host-side direct-invocation route
+//  (`GeneratePasswordOfferPreviewHost.swift`, PasskeyVault app target, gated behind
+//  `PV_PROBE_E44_05_OFFER`) can render this EXACT production view for SAVE-04's pixel proof. Live
+//  evidence (44-05-SUMMARY.md): `prepareInterface(for: ASGeneratePasswordsRequest)` does NOT fire
+//  under the one driveable trigger this toolchain offers (the QuickType "Strong Password"
+//  affordance always routes to the SILENT `performWithoutUserInteraction(generatePasswordsRequest:)`
+//  entry point instead, which completes directly with no UI) -- this is the plan's own
+//  pre-authorized "direct invocation from a host-side test target" fallback (mirrors 44-04 Task 3's
+//  equivalent `did-not-fire` branch), with the same explicit "system routing unproven for this
+//  screen" disclosure. `Shared/` already compiles into `PasskeyVaultAutoFill`
+//  (`fileSystemSynchronizedGroups`, confirmed via `scripts/audit-ios-extension-asset-resolution.py`
+//  PASS in this plan's own Task 1) -- moving this file changes NOTHING about which target's bundle
+//  ships it; it only ALSO makes it visible to `PasskeyVault`, the second target that already syncs
+//  `Shared/` too.
+//
 //  Mirrors `PasskeyRegistrationConfirmView`'s own established shape (PV* tokens, tinted-slot
-//  security statement, plain non-playful copy) rather than importing it directly (this extension
-//  target's own cross-target boundary, same discipline that file's header documents). `PVInfo`,
+//  security statement, plain non-playful copy) rather than importing it directly. `PVInfo`,
 //  NOT `PVPasskey`/`PVSuccess`, is this surface's own accent -- distinct from SAVE-01's `PVSuccess`
 //  (Plan 44-04's save-confirmation screen), so SAVE-04's pixel proof can tell the two screens apart
 //  in a screenshot alone.

@@ -6749,3 +6749,78 @@ Evidence: `ios/evidence/44/44-03-probe-run2.log` (the `scripts/ios-autofill-e44.
 run, exit 0, all four verdicts printed decisively); full XCUITest transcript retained at
 `/tmp/pv-e44-run2-full.log` (session-local, not committed) confirms the `GenerateStrongPasswordButton`
 tap sequence quoted above.
+
+## 21. Phase 44, Plan 44-05 -- L-44's open question settled: the interactive generate variant does
+NOT fire, even with a real candidate answered from the silent handler (2026-08-22)
+
+Section 19a/L-44's own open question (44-03-SUMMARY.md): does `prepareInterface(for:
+ASGeneratePasswordsRequest)` (the interactive, UI-presenting generate variant) fire once the silent
+handler (`performWithoutUserInteraction(generatePasswordsRequest:)`) answers with a REAL candidate
+via `completeGeneratePasswordRequest(results:)`, instead of the diagnostic `.userCanceled` Plan
+44-03 left in place? **Settled: NO**, under the one driveable trigger this toolchain offers.
+
+**What changed since Plan 44-03.** `CredentialProviderViewController.swift`'s silent handler now
+runs the real dispatch (`Shared/GeneratePasswordDispatch.swift`: lock-check, then
+`generatePasswordFromRules`/fallback/refuse) and completes with
+`extensionContext.completeGeneratePasswordRequest(results:completionHandler:)` on a genuine
+candidate -- never `.userCanceled` for a success case. `scripts/ios-autofill-e44.sh sc-generate`
+seeds a REAL unlocked session first (`PasskeyRegistrationSc4Seeder`, reused verbatim from
+`ios-autofill-e43.sh`, against an isolated throwaway `pv-server`) -- a locked vault refuses BEFORE
+ever reaching `pv-ffi`, exactly like every other entry point's own lock-gating discipline; the
+first two `sc-generate` runs against a LOCKED harness install correctly observed
+`stage=lock-check status=locked` and refused, proving the lock gate itself works before the seeded
+run proved the generate path itself.
+
+**Live result, seeded/unlocked run** (`ios/evidence/44/44-05-sc-generate-pvfill.log`):
+```
+PVFILL|entry=generate-silent stage=lock-check status=unlocked
+PVFILL|entry=generate-silent stage=generate status=ok
+```
+No `PVFILL|entry=generate-ui` line appears anywhere in the same run's extension log. The QuickType
+"Strong Password" affordance (configuration X, 44-03) was tapped by
+`testDriveGeneratePasswordOffer`; the SAME test then polled up to 15s for
+`GeneratePasswordOfferView`'s own `generatePassword.use` identifier across `[harness, springboard]`
+and never found it. A second driving path was also tried live (the "Passwords" keyboard-accessory
+button, `AutoFillFillUITests.swift`'s own established FILL-side precedent, followed by a
+"PasskeyVault" provider-row tap if the accessory's own action sheet appears) -- the direct
+QuickType chip pre-empted this path every run (it appears before the accessory does), so the
+accessory branch itself was never actually exercised independently; this is recorded as an honest
+gap, not a second confirmed negative.
+
+**Conclusion, stated for reuse**: on this toolchain, the SILENT generate entry point is not merely
+"called first" (44-03's finding) -- it appears to be the ONLY entry point the QuickType "Suggest
+Strong Password" affordance ever reaches, regardless of whether the silent handler answers with a
+real candidate or cancels. The interactive variant's own header doc ("This flow can only be
+initiated by the user") most plausibly refers to a DIFFERENT, still-unidentified user gesture this
+project's own harness has not yet reproduced (a candidate for a future spike, not this plan's own
+scope) -- not to "the same QuickType tap, given a different silent-handler response," which is the
+hypothesis this plan existed to test and which is now falsified.
+
+**SAVE-04 consequence.** Since the interactive screen cannot be reached live, its own pixel proof
+uses the plan's own pre-authorized "direct invocation from a host-side test target" fallback
+(mirrors 44-04 Task 3's `did-not-fire` branch): `GeneratePasswordOfferView.swift` moved from
+`PasskeyVaultAutoFill/` to `Shared/` (zero extension-specific dependencies -- pure SwiftUI + PV
+tokens, same reasoning `GeneratePasswordDispatch.swift`'s own move already established), rendered
+directly by `GeneratePasswordOfferPreviewHost.swift` (`PasskeyVault` app target, gated behind
+`PV_PROBE_E44_05_OFFER`) -- the REAL production view, not a copy. RED control (W4, the genuinely
+unresolved-asset shape, `--tolerance 2` per this file's own §19 anti-false-positive precedent for
+`PVBackground`'s near-white `#FCFBFA` vs the platform's `#FFFFFF` fallback):
+```
+FAIL -- PVInfo (#007CC2): 0 matching samples (need >= 200 to count as painted)
+FAIL -- PVBackground (#FCFBFA): 74 matching samples (need >= 200 to count as painted)
+```
+GREEN (real render, reverted):
+```
+PASS -- PVInfo (#007CC2): 818 matching samples (need >= 200 to count as painted)
+PASS -- PVBackground (#FCFBFA): 269558 matching samples (need >= 200 to count as painted)
+```
+Screenshots: `ios/evidence/44/44-05-sc-generate-offer-RED.png` /
+`ios/evidence/44/44-05-sc-generate-offer-GREEN.png`. Disclosure, stated plainly: system routing into
+`prepareInterface(for: ASGeneratePasswordsRequest)` is UNPROVEN on this toolchain -- this pixel
+proof shows the view itself paints real PV tokens when constructed with a real candidate, not that
+the system ever constructs it this way in production.
+
+Evidence: `ios/evidence/44/44-05-sc-generate-pvfill.log`,
+`ios/evidence/44/44-05-sc-generate-candidate-compliance.log` (empty -- honest, the candidate was
+never read via the interactive screen since it never appeared), full `sc-generate` transcript in
+44-05-SUMMARY.md.

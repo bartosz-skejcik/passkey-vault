@@ -24,6 +24,7 @@
 
 import Foundation
 import XCTest
+import os
 
 final class SavePasswordFormHarnessUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -143,6 +144,24 @@ final class SavePasswordFormHarnessUITests: XCTestCase {
         return nil
     }
 
+    /// Identifier-exact overload (`NativeAppRegisterUITests.swift`'s own established precedent) --
+    /// this plan's own `generatePassword.use`/`generatePassword.candidate` accessibility
+    /// identifiers are exact strings, never a substring search.
+    @MainActor
+    private static func firstHittableElement(in app: XCUIApplication, identifier: String) -> XCUIElement? {
+        let predicate = NSPredicate(format: "identifier == %@", identifier)
+        let query = app.descendants(matching: .any).matching(predicate)
+        let count = min(query.count, 5)
+        guard count > 0 else { return nil }
+        for i in 0..<count {
+            let element = query.element(boundBy: i)
+            if element.exists && element.isHittable {
+                return element
+            }
+        }
+        return nil
+    }
+
     /// Restricted to `.button` (never `.any`) -- closes off, structurally, the false-positive
     /// match this test's own probe run hit live: a bare `.any` query matching "Save" also matches
     /// this harness's own instructional `StaticText` ("...SAVE-01/02 tracer)...").
@@ -245,6 +264,150 @@ final class SavePasswordFormHarnessUITests: XCTestCase {
             attachDiagnostics(app: harness, label: "generate-affordance-NOT-FOUND")
         }
     }
+
+    /// Plan 44-05, Task 2 (`sc-generate`). Extends `testDriveGeneratePasswordAffordance`'s own
+    /// driving mechanism (configuration X, 44-03-SUMMARY.md) one step further: after tapping the
+    /// system's own "Strong Password" QuickType affordance -- which reliably invokes the SILENT
+    /// entry point (`performWithoutUserInteraction(generatePasswordsRequest:)`, live evidence) --
+    /// this method ALSO polls for the INTERACTIVE offer screen
+    /// (`GeneratePasswordOfferView`'s own `generatePassword.use`/`generatePassword.candidate`
+    /// accessibility identifiers), across the SAME `[harness, springboard]` candidate-app set
+    /// `PasskeyRegistrationConfirmView`'s own live proof already established as the right place to
+    /// look for this extension's OWN presented UI. This is the live experiment that settles
+    /// 44-03-SUMMARY.md's own open question (whether returning a real candidate from the silent
+    /// handler causes the system to ALSO invoke the interactive variant) -- reported honestly
+    /// either way via a named, distinctly-attached screenshot (`generate-offer-found-*` if the
+    /// screen appeared, `generate-offer-NOT-FOUND-*` if it did not), never silently treated as
+    /// equivalent to the other outcome.
+    @MainActor
+    func testDriveGeneratePasswordOffer() throws {
+        let harness = XCUIApplication(bundleIdentifier: Self.harnessBundleId)
+        harness.terminate()
+        harness.activate()
+
+        let passwordField = harness.secureTextFields["savePasswordForm.password"]
+        guard passwordField.waitForExistence(timeout: 10) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.password never appeared (sc-generate run).")
+            return
+        }
+        passwordField.tap()
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let candidateApps = [harness, springboard]
+        // "Passwords" LAST, deliberately -- the QuickType "Strong Password" chip (proven live,
+        // 44-03-SUMMARY.md configuration X) is the PRIMARY driving mechanism; "Passwords" (the
+        // keyboard accessory bar button, `AutoFillFillUITests.swift`'s own established precedent
+        // for the FILL side) is a SECOND, independent trigger this test also explores for the
+        // GENERATE side, since it opens an action sheet offering "PasskeyVault" as an explicit
+        // provider choice -- a plausible route to the INTERACTIVE variant this plan's own open
+        // question needs settled.
+        let affordanceLabels = ["Strong Password", "Suggest Strong Password", "Automatic Strong Password", "Passwords"]
+        let affordanceDeadline = Date().addingTimeInterval(10)
+        var affordanceElement: XCUIElement?
+        var affordanceLabelMatched: String?
+        while Date() < affordanceDeadline && affordanceElement == nil {
+            for app in candidateApps {
+                for label in affordanceLabels {
+                    if let element = Self.firstHittableButton(in: app, labelContains: label) {
+                        affordanceElement = element
+                        affordanceLabelMatched = label
+                        break
+                    }
+                }
+                if affordanceElement != nil { break }
+            }
+            if affordanceElement == nil {
+                usleep(500_000)
+            }
+        }
+        guard let affordanceElement else {
+            attachDiagnostics(app: harness, label: "sc-generate-affordance-NOT-FOUND")
+            return
+        }
+        affordanceElement.tap()
+        attachDiagnostics(app: harness, label: "sc-generate-affordance-tapped-\(affordanceLabelMatched ?? "?")")
+
+        // If the "Passwords" accessory (never the direct "Strong Password" chip) was what fired,
+        // it opens an action sheet -- follow it to a "PasskeyVault" provider row if one appears,
+        // mirroring `AutoFillFillUITests.swift`'s own established follow-up chain for the FILL
+        // side, applied here to see whether the SAME chain leads anywhere different for GENERATE.
+        if affordanceLabelMatched == "Passwords" {
+            let providerRowDeadline = Date().addingTimeInterval(5)
+            var providerRow: XCUIElement?
+            while Date() < providerRowDeadline && providerRow == nil {
+                for app in candidateApps {
+                    if let element = Self.firstHittableButton(in: app, labelContains: "PasskeyVault") {
+                        providerRow = element
+                        break
+                    }
+                }
+                if providerRow == nil { usleep(300_000) }
+            }
+            if let providerRow {
+                attachDiagnostics(app: harness, label: "sc-generate-provider-row-found")
+                providerRow.tap()
+                attachDiagnostics(app: harness, label: "sc-generate-provider-row-tapped")
+            } else {
+                attachDiagnostics(app: harness, label: "sc-generate-provider-row-NOT-FOUND")
+            }
+        }
+
+        // Poll for the interactive offer screen's own accessibility identifiers -- 15s, generous
+        // relative to the affordance poll above, since this is exactly the routing question this
+        // test exists to settle live, not to assume.
+        let offerDeadline = Date().addingTimeInterval(15)
+        var offerUseButton: XCUIElement?
+        while Date() < offerDeadline && offerUseButton == nil {
+            for app in candidateApps {
+                let candidate = Self.firstHittableElement(in: app, identifier: "generatePassword.use")
+                if let candidate, candidate.exists {
+                    offerUseButton = candidate
+                    break
+                }
+            }
+            if offerUseButton == nil {
+                usleep(500_000)
+            }
+        }
+
+        guard let offerUseButton else {
+            // Honest negative: the interactive offer screen did not appear in this run. This is a
+            // valid, informative result (44-03-SUMMARY.md's own "still does not fire" outcome) --
+            // never treated as a substitute for a positive finding.
+            attachDiagnostics(app: harness, label: "generate-offer-NOT-FOUND")
+            return
+        }
+
+        // Found -- capture the candidate BEFORE tapping Use (SAVE-04's own pixel evidence). The
+        // candidate's own plaintext IS readable via its accessibility label
+        // (`generatePassword.candidate` is a plain, non-secure Text view, and this same text is
+        // already visibly rendered on screen for the user) -- but this test never writes the raw
+        // value to `os_log` (T-44-06's inherited discipline, applied even to a value the screen
+        // itself already displays): only the closed-vocabulary rule-compliance BOOLEANS the
+        // harness's own descriptor (`minlength: 10; maxlength: 20; required: lower; required:
+        // upper; required: digit;`) demands are logged, so `scripts/ios-autofill-e44.sh
+        // sc-generate` can grep a pass/fail verdict without the candidate ever leaving this
+        // process in plaintext.
+        for app in candidateApps {
+            let candidateLabel = Self.firstHittableElement(in: app, identifier: "generatePassword.candidate")
+            if let candidateLabel, candidateLabel.exists {
+                let value = candidateLabel.label
+                let lengthOk = value.count >= 10 && value.count <= 20
+                let hasLower = value.contains { $0.isLowercase }
+                let hasUpper = value.contains { $0.isUppercase }
+                let hasDigit = value.contains { $0.isNumber }
+                Self.harnessLogger.log(
+                    "PVHARNESS|stage=candidate-observed lengthOk=\(lengthOk, privacy: .public) hasLower=\(hasLower, privacy: .public) hasUpper=\(hasUpper, privacy: .public) hasDigit=\(hasDigit, privacy: .public)"
+                )
+                break
+            }
+        }
+        attachDiagnostics(app: harness, label: "generate-offer-found")
+        offerUseButton.tap()
+        attachDiagnostics(app: harness, label: "generate-offer-after-use-tap")
+    }
+
+    private static let harnessLogger = Logger(subsystem: "cloud.blonie.PasskeyVaultHarness", category: "sc-generate")
 
     @MainActor
     private func recordFailureWithDiagnostics(app: XCUIApplication, message: String) {

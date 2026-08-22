@@ -1,0 +1,2 @@
+2026-08-22 18:36:46.220786+0200 0xd8be71   Default     0x0                  50963  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=generate-silent stage=lock-check status=unlocked
+2026-08-22 18:36:46.223501+0200 0xd8be71   Default     0x0                  50963  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVFILL|entry=generate-silent stage=generate status=ok
