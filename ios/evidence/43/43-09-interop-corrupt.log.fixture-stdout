@@ -1,0 +1,10 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running `target/debug/rp-fixture --port 8900`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=localhost origin=http://localhost:8900/ status=created
+RPFIXTURE|route=/challenge/register rp_id=localhost user_name=e43-interop-ext-user status=issued
+RPFIXTURE|route=/register/finish rp_id=localhost ok=true reason=registered
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/challenge/assert rp_id=localhost status=issued

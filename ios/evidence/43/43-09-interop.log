@@ -1,0 +1,53 @@
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.hN1x8dApQY for the full transcript
+    t =    20.51s Find the Any (Element at index 0)
+    t =    20.56s Find the Application 'com.apple.springboard'
+    t =    20.70s Added attachment named 'continue-found-poll1-screenshot'
+    t =    20.70s Requesting snapshot of accessibility hierarchy for app with pid 8447
+    t =    21.01s Requesting snapshot of accessibility hierarchy for app with pid 8447
+    t =    21.07s Added attachment named 'continue-found-poll1-hierarchy'
+    t =    21.07s Tap "Continue" StaticText
+    t =    21.07s     Wait for com.apple.springboard to idle
+    t =    21.07s     Find the "Continue" StaticText
+    t =    21.11s     Check for interrupting elements affecting "Continue" StaticText
+    t =    21.16s     Synthesize event
+    t =    21.47s     Wait for com.apple.springboard to idle
+    t =    21.47s Find the Application 'com.apple.mobilesafari'
+    t =    21.59s Added attachment named 'poll-1-screenshot'
+    t =    21.59s Requesting snapshot of accessibility hierarchy for app with pid 26016
+    t =    21.73s Requesting snapshot of accessibility hierarchy for app with pid 26016
+    t =    21.76s Added attachment named 'poll-1-hierarchy'
+    t =    24.77s Find the Application 'com.apple.mobilesafari'
+    t =    24.87s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-screenshot'
+    t =    24.87s Requesting snapshot of accessibility hierarchy for app with pid 26016
+    t =    25.15s Requesting snapshot of accessibility hierarchy for app with pid 26016
+    t =    25.18s Added attachment named 'final-state-selectedProvider=true-tappedContinue=true-hierarchy'
+    t =    25.18s Tear Down
+Test Case '-[PasskeyVaultUITests.AutoFillPasskeyTracerUITests testPasskeyAssertionAgainstRpFixture]' passed (25.425 seconds).
+Test Suite 'AutoFillPasskeyTracerUITests' passed at 2026-08-22 11:07:24.441 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.425 (25.428) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 11:07:24.442 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.425 (25.430) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 11:07:24.444 AM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 25.425 (25.431) seconds
+2026-08-22 11:07:24.803 xcodebuild[25654:13154620] [MT] IDETestOperationsObserverDebug: 30.142 elapsed -- Testing started completed.
+2026-08-22 11:07:24.803 xcodebuild[25654:13154620] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 11:07:24.803 xcodebuild[25654:13154620] [MT] IDETestOperationsObserverDebug: 30.142 sec, +30.142 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_11-06-37-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+
+## crates/rp-fixture stdout, this run
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.40s
+     Running `target/debug/rp-fixture --port 8900`
+RPFIXTURE|route=boot addr=127.0.0.1:8900 status=listening
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=init rp_id=localhost origin=http://localhost:8900/ status=created
+RPFIXTURE|route=/challenge/register rp_id=localhost user_name=e43-interop-ext-user status=issued
+RPFIXTURE|route=/register/finish rp_id=localhost ok=true reason=registered
+RPFIXTURE|route=/ rp_id=localhost mode=get user_name=None
+RPFIXTURE|route=/challenge/assert rp_id=localhost status=issued
+RPFIXTURE|route=/assert/finish rp_id=localhost ok=true reason=verified

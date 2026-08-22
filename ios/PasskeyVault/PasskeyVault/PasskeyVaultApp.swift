@@ -198,6 +198,21 @@ struct PasskeyVaultApp: App {
         }
         #endif
 
+        // Phase 43, Plan 43-09 (ROADMAP SC5, direction 2 -- "extension creates -> iOS asserts"):
+        // signs IN (never registers) to an account interop's Node-side create step already
+        // populated with one real, server-visible passkey item, then drives the SAME production
+        // VaultStore.refresh() ContentView itself calls -- a REAL sync pull, not a hand-staged
+        // single-item cache write. BEFORE the extension is ever invoked, same ordered
+        // host-then-extension sequence every other seeder in this file already establishes.
+        // Compiled in only under `PV_PROBE_E43_INTEROP` -- inert for every other probe. See
+        // `PasskeyInteropSeeder.swift`'s own header for why this deviates from files_modified
+        // (Rule 2, documented in 43-09-SUMMARY.md).
+        #if PV_PROBE_E43_INTEROP
+        Task {
+            await PasskeyInteropSeeder.seed()
+        }
+        #endif
+
         // Phase 38, Plan 38-07, Task 3 (E-C1): writes a marker through the
         // REAL `ClipboardService.shared.copy` path -- the exact production
         // call `ItemDetailView`'s copy handlers make -- as the FIRST thing

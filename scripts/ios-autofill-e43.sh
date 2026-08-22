@@ -85,8 +85,16 @@ NATIVE_SEED_USER_NAME="ios-native-sc2"
 HARNESS_BUNDLE_ID="cloud.blonie.PasskeyVaultHarness"
 HARNESS_APP_PRODUCT="$DD_PATH/Build/Products/Debug-iphonesimulator/PasskeyVaultHarness.app"
 
+# --- Plan 43-09, Task 2 (ROADMAP SC5, direction 2 -- "extension creates -> iOS asserts") ---------
+# Own port, distinct from every other e2e/e43 fixture-server port this workspace already claims
+# (SC4's own 8901, rp-fixture's own 8900).
+INTEROP_SERVER_PORT=8902
+INTEROP_SEED_INPUT_FILE_NAME="pv-43-interop-seed.json"
+INTEROP_STATUS_FILE_NAME="e43-interop-seed-status.json"
+INTEROP_PROBE_SCRIPT="scripts/ios-autofill-e43-interop-probe.mjs"
+
 usage() {
-  echo "Usage: $0 {tracer|sc4|native-app} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
+  echo "Usage: $0 {tracer|sc4|native-app|interop|sc5-register} [--corrupt-signature] [--stale-snapshot] [--assert-only <path> --expect-ok <true|false>]" >&2
   exit 1
 }
 
@@ -437,6 +445,38 @@ assert_tracer() {
   fi
   if ! grep -qE "RPFIXTURE\|route=/assert/finish rp_id=localhost ok=${expect_ok} " "$target"; then
     echo "FAIL: tracer -- crates/rp-fixture's own /assert/finish never reported ok=${expect_ok} for rp_id=localhost in $target" >&2
+    return 1
+  fi
+  return 0
+}
+
+# `interop`'s own assertion (Plan 43-09, Task 2, ROADMAP SC5 direction 2) -- reads the SAME
+# crates/rp-fixture log lines assert_tracer already reads, but tolerates a SECOND valid "fails
+# visibly" shape for the corrupt leg: iOS's "kept and marked, never dropped" cache discipline
+# means a corrupted item still gets a challenge issued (`/challenge/assert status=issued`, generic,
+# not credential-specific) but the extension's own signing attempt fails BEFORE it ever POSTs to
+# `/assert/finish` -- neither ok=true NOR ok=false appears at all, unlike tracer's own
+# marker-file-driven corruption (which always reaches /assert/finish with a bad signature, hence
+# a clean ok=false). expect_ok=true is unchanged/strict (an explicit ok=true line is still
+# required, unambiguous). This function's own header comment (cmd_interop, above) has the full
+# live-finding citation.
+assert_interop() {
+  local target="$1" expect_ok="$2"
+  if ! require_nonempty_file "$target" "e43 interop"; then
+    return 1
+  fi
+  if [ "$expect_ok" = "true" ]; then
+    if ! grep -qE "RPFIXTURE\|route=/assert/finish rp_id=localhost ok=true " "$target"; then
+      echo "FAIL: interop -- crates/rp-fixture's own /assert/finish never reported ok=true for rp_id=localhost in $target" >&2
+      return 1
+    fi
+    return 0
+  fi
+  # expect_ok=false: the ONLY failure mode is an explicit ok=true appearing (the falsification
+  # did not actually break anything) -- an explicit ok=false line, or no /assert/finish line at
+  # all, are BOTH valid "fails visibly" outcomes for a corrupted, unconditionally-unusable item.
+  if grep -qE "RPFIXTURE\|route=/assert/finish rp_id=localhost ok=true " "$target"; then
+    echo "FAIL: interop -- crates/rp-fixture's own /assert/finish reported ok=true for a corrupted credential (falsification did not fail as designed) in $target" >&2
     return 1
   fi
   return 0
@@ -953,6 +993,357 @@ cmd_sc4() {
   fi
 }
 
+# --- Plan 43-09, Task 2 (ROADMAP SC5, direction 2 -- "extension creates -> iOS asserts") ---------
+#
+# `interop`: creates a REAL passkey via `$INTEROP_PROBE_SCRIPT create` (the extension's own
+# production `wasmCreateProviderCredential` code path, Node-side, no browser -- 43-09-PLAN.md
+# Task 2's own read_first-sanctioned "or its own account fixture" alternative), verified receiver-
+# side by `crates/rp-fixture`'s own independent `webauthn-rs`; then forces a REAL sync pull on iOS
+# (`PasskeyInteropSeeder.seed()`: signIn, never register, plus a genuine `VaultStore.refresh()`
+# round trip -- never a hand-staged single-item cache write) and asserts iOS can successfully
+# assert with it via `AutoFillPasskeyTracerUITests`'s own existing, UNCHANGED UI test (it drives
+# Safari generically; it has no idea which seeder populated the cache). `--corrupt-signature`
+# corrupts the item's stored ciphertext via a direct `PUT /api/vault/items/{id}` mutation
+# (`$INTEROP_PROBE_SCRIPT corrupt`) BEFORE the iOS-side sync pull, and expects the SAME assertion
+# to fail visibly, checked by `assert_interop` below.
+#
+# DEVIATION (live finding, this session): iOS's own `VaultStore`/cache-scan discipline is "kept
+# and marked, never dropped" for an undecryptable row (T-38-02-02, `VaultStore.swift`'s own header)
+# -- UNLIKE the extension's "skipped N undecryptable item(s) during sync" discipline
+# (`vault-store.ts`). This means a corrupted item is NEVER actually offered as a completable
+# candidate: the system's own credential-picker sheet still shows a "PasskeyVault" provider row
+# (the row itself is metadata-only, no decrypt needed to list it) and `rp-fixture`'s own
+# `/challenge/assert` still gets issued (a challenge is generic, not credential-specific) -- but
+# the extension's own signing attempt against the corrupted ciphertext fails BEFORE it ever POSTs
+# to `/assert/finish` at all, live-confirmed by this session's own corrupt-leg run (`/challenge
+# /assert rp_id=localhost status=issued` present, `/assert/finish` ABSENT entirely -- neither
+# `ok=true` nor `ok=false`). `assert_tracer`'s own strict "must find an explicit ok=<expect> line"
+# predicate does not recognize this shape as the expected failure -- `assert_interop` below is a
+# NEW, interop-specific assertion (not a parallel RP-driving mechanism -- it reads the SAME
+# `crates/rp-fixture` log lines `assert_tracer` already reads) that accepts EITHER an explicit
+# `ok=false` line OR the complete absence of any `/assert/finish` line as a valid "fails visibly"
+# result for the corrupt leg, while still requiring an explicit `ok=true` line for the plain leg
+# (unambiguous, unchanged from `assert_tracer`'s own proven behavior).
+cmd_interop() {
+  local corrupt="${1:-0}"
+  mkdir -p "$EVIDENCE_DIR"
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> interop: pinned simulator UDID: $udid"
+
+  # --- throwaway, isolated pv-server (D-23 discipline: never the developer's own data/pv.db) ----
+  if lsof -nP -i ":${INTEROP_SERVER_PORT}" >/dev/null 2>&1; then
+    echo "ERROR: something is already listening on :${INTEROP_SERVER_PORT} -- refusing to proceed (D-23)" >&2
+    exit 1
+  fi
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+    exit 1
+  fi
+  local db_dir db_url server_log server_pid server_base
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e43-interop.XXXXXX")
+  db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+  server_log="${db_dir}/pv-server.log"
+  server_base="http://127.0.0.1:${INTEROP_SERVER_PORT}"
+
+  PV_ADDR="127.0.0.1:${INTEROP_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "$server_log" 2>&1 &
+  server_pid=$!
+  cleanup_interop() {
+    kill "$server_pid" >/dev/null 2>&1 || true
+    wait "$server_pid" 2>/dev/null || true
+    stop_fixture
+    rm -rf "$db_dir"
+  }
+  trap cleanup_interop EXIT
+
+  local healthy=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+    cat "$server_log" >&2
+    exit 1
+  fi
+  echo "==> interop: pv-server healthy on ${server_base} (isolated, throwaway db: ${db_dir}/pv.db)"
+
+  local fixture_log
+  if [ "$corrupt" = "1" ]; then
+    fixture_log="$EVIDENCE_DIR/43-09-interop-corrupt.log"
+  else
+    fixture_log="$EVIDENCE_DIR/43-09-interop.log"
+  fi
+  : > "$fixture_log"
+  start_fixture "$fixture_log.fixture-stdout"
+  echo "==> interop: rp-fixture ready on ${FIXTURE_BASE}"
+
+  local wasm_glue="${REPO_ROOT}/web/src/lib/crypto/wasm/pv_wasm.js"
+  local wasm_bytes="${REPO_ROOT}/web/public/wasm/pv_wasm_bg.wasm"
+  if [ ! -f "$wasm_glue" ] || [ ! -f "$wasm_bytes" ]; then
+    echo "ERROR: pv-wasm artifact missing (${wasm_glue} / ${wasm_bytes}). Run scripts/build-wasm.sh first." >&2
+    exit 1
+  fi
+
+  local interop_email interop_password
+  interop_email="pv-43-09-interop-$(date +%s)@example.invalid"
+  interop_password="pv-43-09 interop fixture password $(date +%s) $$"
+
+  echo "==> interop: creating a REAL passkey via wasmCreateProviderCredential (extension's own production ceremony code), against a FRESH rp-fixture process"
+  local create_out
+  create_out=$(node "$INTEROP_PROBE_SCRIPT" create "$server_base" "$FIXTURE_BASE" "$wasm_glue" "$wasm_bytes" \
+    "$interop_email" "$interop_password" "localhost" "e43-interop-ext-user") \
+    || { echo "ERROR: interop create failed: $create_out" >&2; exit 1; }
+  echo "$create_out"
+  local interop_item_id
+  interop_item_id=$(echo "$create_out" | jq -r '.itemId')
+  if [ -z "$interop_item_id" ] || [ "$interop_item_id" = "null" ]; then
+    echo "ERROR: could not parse itemId from interop create output: $create_out" >&2
+    exit 1
+  fi
+  echo "==> interop: created item ${interop_item_id} for ${interop_email}, verified receiver-side by rp-fixture's own webauthn-rs"
+
+  if [ "$corrupt" = "1" ]; then
+    echo "==> interop: --corrupt-signature -- corrupting the item's stored ciphertext via a direct PUT /api/vault/items/${interop_item_id} mutation, BEFORE the iOS-side sync pull"
+    node "$INTEROP_PROBE_SCRIPT" corrupt "$server_base" "$FIXTURE_BASE" "$wasm_glue" "$wasm_bytes" \
+      "$interop_email" "$interop_password" "$interop_item_id" \
+      || { echo "ERROR: interop corrupt failed" >&2; exit 1; }
+  fi
+
+  echo "==> interop: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> interop: building app+extension (PV_PROBE_E43_INTEROP)"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_INTEROP" /tmp/pv-e43-interop-build.log build
+
+  echo "==> interop: building the UI test bundle (PasskeyVaultUITests)"
+  build_with_l10_retry "$udid" "PV_PROBE_E43_INTEROP" /tmp/pv-e43-interop-build-for-testing.log build-for-testing
+
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  # First launch: creates the App Group container on disk (a fresh install has no group directory
+  # until the app runs at least once) -- same double-launch pattern cmd_tracer/cmd_sc4 establish.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+  rm -f "${group_dir}/${INTEROP_STATUS_FILE_NAME}"
+
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${interop_email}\",\"password\":\"${interop_password}\"}" \
+    > "${group_dir}/${INTEROP_SEED_INPUT_FILE_NAME}"
+
+  echo "==> interop: launching host app to run PasskeyInteropSeeder.seed() -- REAL signIn + REAL VaultStore.refresh() sync pull"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "${group_dir}/${INTEROP_STATUS_FILE_NAME}" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: PasskeyInteropSeeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "${group_dir}/${INTEROP_STATUS_FILE_NAME}"; then
+    echo "ERROR: PasskeyInteropSeeder reported a non-ok status:" >&2
+    cat "${group_dir}/${INTEROP_STATUS_FILE_NAME}" >&2
+    exit 1
+  fi
+  echo "==> interop: real sync pull confirmed ok ($(cat "${group_dir}/${INTEROP_STATUS_FILE_NAME}"))"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  echo "==> interop: driving Safari against the fixture (AutoFillPasskeyTracerUITests, reused verbatim -- it drives Safari generically, no idea which seeder populated the cache)"
+  local ui_test_log
+  ui_test_log=$(mktemp)
+  local ui_result=0
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/AutoFillPasskeyTracerUITests/testPasskeyAssertionAgainstRpFixture \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E43_INTEROP" \
+    test > "$ui_test_log" 2>&1 &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || ui_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+
+  echo "## XCUITest drive (exit $ui_result) -- see $ui_test_log for the full transcript" >> "$fixture_log"
+  tail -40 "$ui_test_log" >> "$fixture_log" || true
+
+  echo "" >> "$fixture_log"
+  echo "## crates/rp-fixture stdout, this run" >> "$fixture_log"
+  cat "$fixture_log.fixture-stdout" >> "$fixture_log" 2>/dev/null || true
+
+  local expect_ok="true"
+  if [ "$corrupt" = "1" ]; then
+    expect_ok="false"
+  fi
+
+  if assert_interop "$fixture_log" "$expect_ok"; then
+    echo "PASS: interop (corrupt=$corrupt, expect ok=$expect_ok) -- see $fixture_log"
+    exit 0
+  else
+    echo "FAIL: interop (corrupt=$corrupt, expect ok=$expect_ok) -- see $fixture_log" >&2
+    exit 1
+  fi
+}
+
+# --- Plan 43-09, Task 2 (ROADMAP SC5, direction 1 -- "iOS creates -> extension asserts") ---------
+#
+# `sc5-register <server_base> <email> <password> [<user_name>]`: a stateless helper subcommand
+# consumed by `extension/e2e/ios-created-passkey-assertion.spec.ts`'s own `test.beforeAll` (a Node
+# `child_process` call) -- the CALLER owns rp-fixture's and pv-server's lifecycle (already running
+# and reachable at `$FIXTURE_BASE`/`server_base` BEFORE this subcommand is invoked, and torn down
+# by the caller's own `afterAll`, never by this subcommand). Reuses Plan 43-07's own
+# `PV_PROBE_E43_SC4` build flag + `PasskeyRegistrationSc4Seeder` (a REAL `AccountService.register`
+# against the caller-provided server) + `AutoFillPasskeyRegistrationUITests` VERBATIM, unmodified --
+# 43-09-PLAN.md Task 2's own `<read_first>` instruction to reuse this exact machinery for direction
+# 2's iOS half applies equally here for direction 1's iOS-CREATE half; the only thing that differs
+# from a bare `sc4` run is the server/account coordinates come from the CALLER, not this script's
+# own throwaway account, and nothing is torn down afterward.
+cmd_sc5_register() {
+  local server_base="$1" email="$2" password="$3" user_name="${4:-e43-sc5-ios-create}"
+  if [ -z "$server_base" ] || [ -z "$email" ] || [ -z "$password" ]; then
+    echo "ERROR: sc5-register requires <server_base> <email> <password> [<user_name>]" >&2
+    exit 1
+  fi
+
+  mkdir -p "$EVIDENCE_DIR"
+
+  # Precondition: rp-fixture must ALREADY be reachable -- the caller's own responsibility, verified
+  # read-only here before driving any simulator action (mirrors native-app's own AASA precondition
+  # re-check).
+  if ! curl -sf -o /dev/null "${FIXTURE_BASE}/?rp_id=localhost&mode=get"; then
+    echo "ERROR: sc5-register precondition failed -- ${FIXTURE_BASE} is not reachable (the caller must start rp-fixture first)" >&2
+    exit 1
+  fi
+  if ! curl -sf -o /dev/null "${server_base}/healthz"; then
+    echo "ERROR: sc5-register precondition failed -- ${server_base}/healthz is not reachable (the caller must start pv-server first)" >&2
+    exit 1
+  fi
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> sc5-register: pinned simulator UDID: $udid" >&2
+
+  echo "==> sc5-register: building pv-ffi (plain variant)" >&2
+  "$REPO_ROOT/scripts/build-ios.sh" >&2
+
+  echo "==> sc5-register: building app+extension (PV_PROBE_E43_SC4, reused verbatim)" >&2
+  build_with_l10_retry "$udid" "PV_PROBE_E43_SC4" /tmp/pv-e43-sc5-register-build.log build
+
+  echo "==> sc5-register: building the UI test bundle (PasskeyVaultUITests)" >&2
+  build_with_l10_retry "$udid" "PV_PROBE_E43_SC4" /tmp/pv-e43-sc5-register-build-for-testing.log build-for-testing
+
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+  ensure_biometric_enrollment "$udid"
+
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+  rm -f "${group_dir}/${SC4_STATUS_FILE_NAME}"
+
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${email}\",\"password\":\"${password}\"}" \
+    > "${group_dir}/${SC4_SEED_INPUT_FILE_NAME}"
+
+  echo "==> sc5-register: launching host app to run PasskeyRegistrationSc4Seeder.seed() (REAL AccountService.register against the caller's own server)" >&2
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "${group_dir}/${SC4_STATUS_FILE_NAME}" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: PasskeyRegistrationSc4Seeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "${group_dir}/${SC4_STATUS_FILE_NAME}"; then
+    echo "ERROR: PasskeyRegistrationSc4Seeder reported a non-ok status:" >&2
+    cat "${group_dir}/${SC4_STATUS_FILE_NAME}" >&2
+    exit 1
+  fi
+  echo "==> sc5-register: account registered ok" >&2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  echo "==> sc5-register: driving Safari against the fixture, mode=create (AutoFillPasskeyRegistrationUITests, reused verbatim)" >&2
+  local ui_test_log
+  ui_test_log=$(mktemp)
+  local ui_result=0
+  PV_E43_SC4_USERNAME="$user_name" \
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/AutoFillPasskeyRegistrationUITests/testPasskeyRegistrationAgainstRpFixture \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E43_SC4" \
+    test > "$ui_test_log" 2>&1 &
+  local test_pid=$!
+  run_pearl_match_loop "$udid" &
+  local match_pid=$!
+  wait "$test_pid" || ui_result=$?
+  kill "$match_pid" >/dev/null 2>&1 || true
+  wait "$match_pid" 2>/dev/null || true
+  echo "## XCUITest drive (exit $ui_result)" >&2
+  tail -60 "$ui_test_log" >&2 || true
+
+  local wasm_glue="${REPO_ROOT}/web/src/lib/crypto/wasm/pv_wasm.js"
+  local wasm_bytes="${REPO_ROOT}/web/public/wasm/pv_wasm_bg.wasm"
+  if [ ! -f "$wasm_glue" ] || [ ! -f "$wasm_bytes" ]; then
+    echo "ERROR: pv-wasm artifact missing (${wasm_glue} / ${wasm_bytes}). Run scripts/build-wasm.sh first." >&2
+    exit 1
+  fi
+
+  echo "==> sc5-register: confirming server-visible via a direct GET /api/vault/items snapshot (receiver-side proof: rp-fixture's own webauthn-rs already verified the ceremony -- this confirms the resulting item genuinely persisted server-side, the precondition direction 1's own sync-pull proof needs)" >&2
+  local snapshot_file
+  snapshot_file=$(mktemp)
+  node "$SC4_PROBE_SCRIPT" snapshot "$server_base" "$wasm_glue" "$wasm_bytes" "$email" "$password" "$snapshot_file" >&2 \
+    || { echo "ERROR: sc5-register snapshot failed" >&2; exit 1; }
+  if ! assert_sc4_snapshot "$snapshot_file" "present"; then
+    echo "ERROR: sc5-register -- no server-visible passkey row (rp_id=localhost) after the registration ceremony" >&2
+    exit 1
+  fi
+  local item_id
+  item_id=$(jq -r '[.[] | select(.isPasskeyShape == true and .rpId == "localhost")][0].id' "$snapshot_file")
+  rm -f "$snapshot_file"
+  if [ -z "$item_id" ] || [ "$item_id" = "null" ]; then
+    echo "ERROR: sc5-register could not resolve the created item's own id from the snapshot" >&2
+    exit 1
+  fi
+
+  echo "PASS: sc5-register -- see stderr for the full transcript" >&2
+  echo "{\"email\":\"${email}\",\"itemId\":\"${item_id}\"}"
+  exit 0
+}
+
 main() {
   case "${1:-}" in
     sc4)
@@ -999,6 +1390,29 @@ main() {
         shift
       fi
       cmd_native_app "$corrupt"
+      ;;
+    interop)
+      shift
+      if [ "${1:-}" = "--assert-only" ]; then
+        shift
+        assert_only_path="${1:-}"
+        shift || true
+        if [ "${1:-}" != "--expect-ok" ] || [ -z "${2:-}" ]; then
+          echo "ERROR: --assert-only <path> requires --expect-ok <true|false>" >&2
+          exit 1
+        fi
+        if assert_interop "$assert_only_path" "$2"; then exit 0; else exit 1; fi
+      fi
+      corrupt=0
+      if [ "${1:-}" = "--corrupt-signature" ]; then
+        corrupt=1
+        shift
+      fi
+      cmd_interop "$corrupt"
+      ;;
+    sc5-register)
+      shift
+      cmd_sc5_register "$1" "$2" "$3" "${4:-}"
       ;;
     *) usage ;;
   esac
