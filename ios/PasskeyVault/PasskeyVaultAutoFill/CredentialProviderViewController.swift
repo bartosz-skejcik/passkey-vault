@@ -86,20 +86,6 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     // they existed to answer a question, the question is answered, and keeping them would ship a
     // deprecated spelling that `scripts/audit-ios-autofill-deprecated-apis.sh` correctly refuses.
 
-    /// Never implemented in production (no `ProvidesTextToInsert` capability declared, though Plan
-    /// 44-03 has since ADDED it to Info.plist for the SAVE-01/02/03 tracer -- this override is
-    /// still diagnostic-only, `#if DEBUG`-gated). Logged purely for completeness of "every AS*
-    /// override this class can implement". Plan 44-03's own `<action>` text: there is no method
-    /// PARAMETER to inspect here (unlike the two new overrides below, which each receive a real
-    /// request object) -- `self`/`extensionContext` expose no per-invocation context either
-    /// (`ASCredentialProviderExtensionContext`'s own public surface carries no property describing
-    /// "what triggered this call"). Logging that absence plainly is itself part of settling Open
-    /// Question 1/2 for SAVE-03 -- carried forward honestly into Plan 44-06 rather than assumed.
-    override func prepareInterfaceForUserChoosingTextToInsert() {
-        Self.diagLogger.log("PVDIAG|method=prepareInterfaceForUserChoosingTextToInsert context=none-available")
-        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
-    }
-
     /// Never implemented in production (no OTP capability declared) -- logged purely for
     /// completeness; NOT expected on a passkey registration request, but ruling it out costs one
     /// override.
@@ -1255,6 +1241,102 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
         hosting.didMove(toParent: self)
+    }
+
+    // MARK: - Plan 44-06 (SAVE-03) -- text-to-insert (cached TOTP codes)
+
+    /// Real, unconditional implementation (Plan 44-06), replacing Plan 44-03's `#if DEBUG`
+    /// cancel-only stub. No per-invocation context is available (44-03-SUMMARY.md: confirmed
+    /// directly from the SDK header -- this method takes no parameters, and
+    /// `ASCredentialProviderExtensionContext`'s own public surface carries no property describing
+    /// "what triggered this call"), so this offers every cached TOTP-typed item, bounded and
+    /// sorted for a stable presentation order (T-44-13, `<threat_model>`'s own named, accepted
+    /// scope limitation -- this is the only implementable behaviour without inventing an
+    /// unsupported API contract).
+    ///
+    /// Runs the SAME unlock-gating sequence every other entry point in this file runs
+    /// (`SessionLifecycle.checkAndExpireIfNeeded` -> `SessionKeyReader.importUserKey`) before
+    /// touching the cold cache -- a locked vault cancels via `.userInteractionRequired`
+    /// (retriable, matching the save path's own convention for "the vault needs to be unlocked
+    /// first", never `.failed`).
+    override func prepareInterfaceForUserChoosingTextToInsert() {
+        let entryPoint = "text-insert"
+        let lockState = SessionLifecycle.checkAndExpireIfNeeded(entryPoint: entryPoint, deleteKeyArtifact: SessionKeyReader.delete)
+        guard lockState == .unlocked else {
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=locked")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=lock-check status=unlocked")
+
+        let userKey: FfiUserKey
+        switch SessionKeyReader.importUserKey() {
+        case let .success(uk):
+            userKey = uk
+        case .failure:
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=sessionkey status=fail")
+            extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+            return
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=sessionkey status=ok")
+
+        // The extension's own cold cache -- `AppGroupCiphertextCacheStore`, the SAME store
+        // `performPasskeyAssertion`/`runIdentityRebuildIfPending` already read -- is the ONLY data
+        // source (FILL-05's offline discipline, `<key_links>`): no network call. Absent/unreadable
+        // cache is not a failure here -- an empty candidate list is a legitimate, valid answer.
+        var candidates: [TextToInsertDispatch.Candidate] = []
+        let store = AppGroupCiphertextCacheStore()
+        if
+            let accountMarker = store.currentAccountMarker(),
+            let snapshot = store.readCurrentSnapshot(accountId: accountMarker.accountId, serverBaseURL: accountMarker.serverBaseURL)
+        {
+            candidates = TextToInsertDispatch.buildCandidates(snapshot: snapshot, userKey: userKey)
+        }
+        Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=list status=ok count=\(candidates.count, privacy: .public)")
+
+        presentTextToInsertList(candidates: candidates, entryPoint: entryPoint)
+    }
+
+    /// Presents `TextToInsertListView` (SAVE-04) embedded as a child view controller -- same
+    /// `UIHostingController` embedding `presentGeneratePasswordOffer`/`presentRegistrationConfirm`
+    /// above already establish.
+    private func presentTextToInsertList(candidates: [TextToInsertDispatch.Candidate], entryPoint: String) {
+        let hosting = UIHostingController(
+            rootView: TextToInsertListView(
+                items: candidates,
+                onSelect: { [weak self] candidate in
+                    self?.completeTextToInsert(candidate: candidate, entryPoint: entryPoint)
+                }
+            )
+        )
+        addChild(hosting)
+        hosting.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hosting.view)
+        NSLayoutConstraint.activate([
+            hosting.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hosting.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            hosting.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hosting.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        hosting.didMove(toParent: self)
+    }
+
+    /// `<behavior>` (44-06-PLAN.md): re-computes `candidate`'s code FRESH at the instant of
+    /// selection -- never the value the row last rendered, which could already have rolled over
+    /// given TOTP's 30s-default window. `SessionLifecycle.refreshActivity` runs on success, mirroring
+    /// `performPasskeyAssertion`'s own discipline (a real value was delivered to the requesting
+    /// app, unlike the generate-only path above which never calls it).
+    private func completeTextToInsert(candidate: TextToInsertDispatch.Candidate, entryPoint: String) {
+        let now = UInt64(max(0, Date().timeIntervalSince1970))
+        switch TextToInsertDispatch.freshCode(for: candidate, at: now) {
+        case let .success(result):
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=select status=ok itemId=\(candidate.itemId, privacy: .public)")
+            extensionContext.completeRequest(withTextToInsert: result.code, completionHandler: nil)
+            SessionLifecycle.refreshActivity(writer: "extension")
+        case .failure:
+            Self.fillLogger.log("PVFILL|entry=\(entryPoint, privacy: .public) stage=select status=fail itemId=\(candidate.itemId, privacy: .public)")
+            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+        }
     }
 
     // MARK: - Plan 41-04 (FILL-03) -- the full-rebuild recovery path
