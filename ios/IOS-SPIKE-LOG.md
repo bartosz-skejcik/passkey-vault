@@ -2259,6 +2259,97 @@ by Phase 43.
 
 ---
 
+## 1o. Phase 44 decision records — DR-44-A, DR-44-B, 2026-08-22
+
+### DR-44-A -- Deployment floor raised: 18.0 (IOS-03) to 26.2: **DECIDED**
+
+**1. Decision.** Raise `IPHONEOS_DEPLOYMENT_TARGET` from 18.0 to 26.2 everywhere it is declared
+(`project.pbxproj`'s 8 occurrences, `scripts/build-ios.sh`'s own exported value). This **REVISES**
+IOS-03, it does not overwrite it. IOS-03's original table row, quoted verbatim: *"IOS-03 | Minimum
+deployment target **iOS 18.0** | Every PRF symbol is `iOS 18.0+`. Xcode's default 26.5 discards
+supported devices for zero gain | Xcode default 26.5; iOS 17 (passkey provider, but **no** PRF)"*.
+PRF's own 18.0+ requirement stays satisfied (26.2 ≥ 18.0) — nothing about IOS-03's original reasoning
+is wrong or reversed. The reason for THIS raise is different and additive: `ASSavePasswordRequest`
+and `ASGeneratePasswordsRequest` are `API_AVAILABLE(ios(26.2))` in the shipped iPhoneOS26.5 SDK
+header, full stop — no lower floor is possible for either API, so SAVE-01/SAVE-02 cannot exist on
+this codebase's own 18.0 floor at all.
+
+**2. The price, named plainly** (ROADMAP Phase 44 SC1's own instruction). Users on iOS 18.0–26.1
+lose the app entirely — it will refuse to install/launch on those OS versions once
+`IPHONEOS_DEPLOYMENT_TARGET` is raised and any TestFlight/ad-hoc build ships. Stated honestly rather
+than minimized: `.planning/REQUIREMENTS.md`'s own "Świadomie poza zakresem" already excludes App
+Store distribution from this milestone, so today's actual blast radius is limited to any future
+TestFlight/ad-hoc install target running below 26.2 — a small/unknown population, not zero, and not
+softened into "should be fine." Bartek's own real device (iPhone 16, iOS 27.0) is unaffected.
+
+**3. Rejected alternative: keep the 18.0 floor and gate SAVE-01/SAVE-02 behind their own
+`@available(iOS 26.2, *)` branches.** Rejected because it would ADD a new long-lived conditional
+pair in the exact place ROADMAP SC1 asks to SIMPLIFY (this same plan removes six existing
+`#available(iOS 26.0, *)` branches), for a capability that is entirely unavailable below 26.2
+regardless of any conditional wrapper — a user between 18.0 and 26.1 gets nothing from Phase 44's
+headline capability either way, so the conditional buys no real coverage for that user population,
+only permanent maintenance cost on two code paths that can never both execute on the same OS
+version. Raising the floor outright is strictly simpler and loses nothing the conditional would
+have preserved.
+
+**4. What this closes.** The "iOS 18 dock fallback (`AvailableFallbackCreateButton`) has never been
+on a screen" open item (§6 "Phase 38 — evidence", both its "Proof limitations" bullet and its "Not
+closed, named openly" bullet — see the edits made in place alongside this record) is CLOSED as
+no-longer-applicable, not finally tested: once the floor is 26.2, that fallback path is provably
+unreachable on any supported OS version — there is no longer any live OS version this simulator or
+any device could run where the fallback branch is selectable. Stated explicitly here rather than
+left implicit.
+
+**5. Addendum (Task 2): the six now-dead `#available(iOS 26.0, *)` branches and
+`AvailableFallbackCreateButton` were removed in the same plan; the `project.pbxproj`/
+`build-ios.sh` floor change was verified via `vtool` on a rebuilt `pv_ffi*.o` object (L-9); the
+L-14 Release-configuration crash was re-probed live post-raise and the result recorded below,
+unsoftened, whichever way it goes.**
+
+### DR-44-B -- SAVE-02 password-rules translation: **DECIDED -- extend the Rust generator, additive**
+
+**1. Decision.** Plan 44-02 adds a new, additive Rust entry point
+(`generate_character_password_from_rules`) to `crates/pv-core`'s existing generator module, that
+parses Apple's Password Rules DSL (`https://developer.apple.com/password-rules/`) and genuinely
+honours `minlength`/`maxlength`, named `required`/`allowed` classes
+(`lower`/`upper`/`digit`/`special`/`ascii-printable`), and `max-consecutive` — via guaranteed
+per-class inclusion and a bounded reject-and-retry loop for `max-consecutive`, both real constraints
+this project's existing `generate_character_password` deliberately does not enforce.
+
+**2. What stays unchanged, stated explicitly.** `generate_character_password`'s own documented
+design is UNCHANGED — quoting its own doc comment verbatim: *"Deliberately NO 'guarantee one
+character per selected class' option -- the canonical generator draws uniformly over the union, and
+an inclusion rule would change that distribution."* It remains exactly the generator the vault's own
+"Generate password" screen (DR-38-A, UI-06) calls, with the identical uniform-distribution guarantee
+it has always had. The new `generate_character_password_from_rules` function is purely additive, for
+a genuinely different caller (an RP's own stated Password Rules), not a modification or replacement
+of the existing function or its callers.
+
+**3. Two shapes explicitly REFUSED, never silently substituted:** a custom bracket character class
+(e.g. `required: [ABCDEFGH]`) and the `unicode` allowed/required class. This project's charset
+constants (`CHARSET_LOWERCASE`/`CHARSET_UPPERCASE`/`CHARSET_DIGITS`/`CHARSET_SYMBOLS`) are
+ASCII-only by construction — claiming to satisfy either shape would produce exactly the "generated
+password an RP will reject" defect `44-RESEARCH.md`'s Pitfall 3 named. The parser returns a named
+error for both shapes rather than silently ignoring or coarsely approximating them; the Swift caller
+(Plan 44-05) falls back to the documented `ascii-printable` default rather than failing the whole
+generate request outright — recorded here as part of the same decision, not left for 44-05 to invent
+independently.
+
+**4. Rejected alternative: the coarse mapping** (length + named classes only, no guaranteed
+inclusion, no max-consecutive). Rejected because it would silently violate exactly the two
+constraints real RPs commonly enforce (guaranteed per-class inclusion, max-consecutive), reproducing
+`44-RESEARCH.md` Pitfall 3's defect shape verbatim: a generated password that looks valid but fails
+an RP's own client-side validation, with no PV-side warning it could happen.
+
+**5. Rejected alternative: a full bracket-class grammar** (arbitrary nested `[...]` custom character
+sets, matching the full published spec's grammar). Rejected because it is genuinely more parser
+complexity for a shape this project's own generator could not honour even if parsed correctly — no
+custom-charset concept exists in `CharacterPasswordOptions` at all, so a fully general parser would
+produce structured output with no consumer able to act on the general case, only its ASCII-named-class
+subset.
+
+---
+
 ## 2. Verified against reality (2026-08-11)
 
 ### 2.1 PRF is available on iOS in both directions — iOS 18.0+
@@ -4778,10 +4869,12 @@ actually calls.
   (store wipe, nav truncation, sheet dismissal, reveal-set clear, key-handle release) — it is a
   mitigation of the RISK, not a proof the underlying heap bytes are gone. Stated in writing rather than
   silently absorbed, per DR-38-E's own text.
-- **The iOS 18 dock fallback (`AvailableFallbackCreateButton`) has never been on a screen.** This
+- ~~**The iOS 18 dock fallback (`AvailableFallbackCreateButton`) has never been on a screen.** This
   machine has exactly one simulator runtime installed (`iOS 26.5`); the fallback code path is a
   signature argument (it compiles against the SDK's own `@available` guards), not a picture. Recorded
-  as untested, not as working.
+  as untested, not as working.~~ **CLOSED, Phase 44 (`DR-44-A` item 4, `ios/IOS-SPIKE-LOG.md` §1o):**
+  no longer applicable, not finally tested — the deployment floor raise to iOS 26.2 (Plan 44-01)
+  deleted this type entirely; it is provably unreachable on any OS version this project now supports.
 - **Lock state 2 (Face ID actively presenting, mid-prompt) is undriven on this simulator.**
   `BiometricUnlockService`'s own probe returns `-1020` (no enrolled biometry in this simulator/OS
   combination) — this state has never been observed, forced-screenshot or otherwise, and is recorded as
@@ -4822,7 +4915,9 @@ actually calls.
 | Lock states 6/7 (throttled/no-passcode) | pre-existing before 38-11 (`throttledUntil`/`requiresDevicePasscode`, both real production properties, not new this plan) | `LockView.swift`'s `throttleRemaining`/`availability?.requiresDevicePasscode` branches |
 
 **Not closed, named openly rather than silently dropped:**
-- iOS 18 dock fallback — untested (no iOS 18 runtime on this machine), see proof limitations above.
+- ~~iOS 18 dock fallback — untested (no iOS 18 runtime on this machine), see proof limitations above.~~
+  **CLOSED, Phase 44 (`DR-44-A`):** no longer applicable — the type is deleted, the fallback branch is
+  provably unreachable once the deployment floor is 26.2.
 - VoiceOver on ＋ announcing the search role despite its "Create item" label — explicitly handed to
   Phase 42's audit register by 38-06's own header note; not touched this plan.
 - `.searchable(isPresented:)` death after ＋ use — already documented in 38-06b; referenced, not
