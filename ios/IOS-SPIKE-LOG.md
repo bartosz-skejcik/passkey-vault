@@ -5874,3 +5874,86 @@ plain:                RPFIXTURE|route=/assert/finish rp_id=vault.blonie.cloud ok
 ```
 `git diff --stat -- crates/pv-server` empty throughout. Evidence under `ios/evidence/43/43-08-
 native-app*.{log,harness-stdout,log.fixture-stdout}`.
+
+## 17. Phase 43, Plan 43-09 — ROADMAP SC5 two-direction interop, live and falsifiable, both directions (2026-08-22)
+
+43-PLAN-CHECK.md B3's own gap closed: direction 1 ("iOS creates → extension asserts") had no named
+harness anywhere. This plan proves BOTH directions of SC5 receiver-side against `crates/rp-fixture`
+(43-03), each with its own corruption falsification, plus the Rust-layer byte-identity round trip
+(Task 1) proving `create_provider_credential` and `make_credential_ctap2` produce field-identical
+`Passkey` values from equivalent inputs (rp_id/user_handle/username match; credential_id/key
+legitimately differ — two independent keypairs, not one credential synced twice).
+
+**Direction 2 ("extension creates → iOS asserts"), the simpler half.** `scripts/ios-autofill
+-e43.sh interop` reuses this plan's own `<read_first>`-sanctioned escape hatch: instead of driving
+a real headed Chromium/Playwright ceremony, `scripts/ios-autofill-e43-interop-probe.mjs create`
+calls `wasmCreateProviderCredential` directly, Node-side — the EXACT function the extension's own
+popup calls, real ES256 keypair, real `crates/rp-fixture` verification (`/register/finish
+ok=true`), then a real `POST /api/vault/items`. `PasskeyInteropSeeder.swift` (new,
+`PV_PROBE_E43_INTEROP`) signs INTO that account (never registers a second one) and drives the
+SAME production `VaultStore.refresh()` `ContentView` calls on every foreground — a real `GET
+/api/sync` round trip, not a hand-staged cache write. `AutoFillPasskeyTracerUITests` (43-03's own
+file) is reused completely unchanged — it just drives Safari generically and has no idea which
+seeder populated the local cache.
+
+**The corruption-leg surprise: iOS "kept and marked" vs. the extension's "skipped".** Both
+`vault-store.ts` (extension) and `VaultStore.swift` (iOS) handle an undecryptable synced row, but
+DIFFERENTLY — the extension's own doc comment says "skipped N undecryptable item(s) during sync"
+(dropped from `vault.list` entirely); iOS's own T-38-02-02 discipline says "kept and marked, never
+dropped." Live consequence for `interop --corrupt-signature`: the credential-picker sheet still
+shows a "PasskeyVault" row (row metadata needs no decrypt), `crates/rp-fixture`'s own
+`/challenge/assert` still gets issued (a generic challenge, not credential-specific) — but the
+extension's own signing attempt against the corrupted ciphertext fails BEFORE it ever POSTs to
+`/assert/finish` at all. Neither `ok=true` nor `ok=false` appears — `assert_tracer`'s own strict
+"must find an explicit ok=<expect> line" predicate doesn't recognize this as the expected failure.
+Fixed with a new `assert_interop` (reads the SAME `crates/rp-fixture` log lines, never a second RP-
+driving mechanism) that accepts EITHER an explicit `ok=false` line OR complete absence of
+`/assert/finish` as valid "fails visibly" for the corrupt leg — the ONLY failure mode is an
+explicit `ok=true` appearing. Sanity-checked against a synthetic ok=true log line to confirm
+`assert_interop` itself is genuinely falsifiable (L-3/L-9).
+
+**Direction 1 ("iOS creates → extension asserts"), three real bugs found live, in order.**
+`extension/e2e/ios-created-passkey-assertion.spec.ts` (new, `chromium-ceremony` project) drives a
+REAL iOS registration via a new `sc5-register` subcommand (reuses Plan 43-07's own
+`PV_PROBE_E43_SC4` + `PasskeyRegistrationSc4Seeder` + `AutoFillPasskeyRegistrationUITests`
+VERBATIM — zero new Swift needed for this half, since SC4's own machinery already does exactly
+"register a fresh account, then a real registration ceremony against `crates/rp-fixture`"), then
+signs into that SAME account via the extension's real popup UI, polls `vault.list` (the real sync
+pull), drives a real `navigator.credentials.get()` against `crates/rp-fixture` from the
+extension's own browser context, and asserts receiver-side via `#rp-fixture-result[data-ok]`.
+
+1. **Missing extension build.** First run failed in 1ms — `extension/.output/chrome-mv3` didn't
+   exist (`npx playwright test` doesn't run the `pretest:e2e:chrome` npm-script hook `wxt build -b
+   chrome` that `npm run test:e2e:chrome` would have). Fixed: `npx wxt build -b chrome` first.
+2. **`PV_STATIC_DIR` — a pre-existing, previously-undocumented-in-code hazard, now cross-
+   referenced.** The extension's own `SignInView.tsx` opens a REAL server-hosted ceremony window
+   (`unlock.serverCeremony.start`) — a bare `pv-server` binary with no `PV_STATIC_DIR` is API-only
+   (`crates/pv-server/src/main.rs`'s own `PV_STATIC_DIR` env read), so that window has nothing
+   servable and the extension's own ceremony-window lifecycle silently self-closes it. This EXACT
+   failure mode is already recorded in `STATE.md`'s own `[Phase 28]` note and 27-04/27-05/27-06-
+   SUMMARY.md ("two separate agents" before this session) — this plan's `beforeAll` now sets
+   `PV_STATIC_DIR=web/out` (built via `npm run build` in `web/`, a `next export` static bundle)
+   and `PV_EXTENSION_ORIGINS=chrome-extension://*` directly, so a THIRD agent never repeats it.
+3. **The popup closes itself on a successful confirm — a real, documented UX, not a bug.**
+   `App.tsx`'s `resolveCeremony()` calls `window.close()` UNCONDITIONALLY on a successful confirm
+   (`dual-extension-ceremony.spec.ts`'s own documented precedent, `popupA`/`popupA2`) — this
+   spec's OWN first plain-path confirm closed `popup`, and the LATER corruption-phase
+   `listVaultItems(popup)` call (many steps downstream, after an unrelated `execFileSync` blocking
+   call made the symptom look like a Node-event-loop/CDP-starvation crash) failed with "Target
+   page ... has been closed." Two candidate fixes were tried in order: making the corrupt-probe
+   call async (`execFile` + `promisify`, objectively better practice regardless, kept) did NOT fix
+   it — same failure, three consecutive full runs. The REAL fix: reopen a fresh `popup2` after the
+   first confirm, mirroring `dual-extension-ceremony.spec.ts`'s own `popupA2` pattern exactly.
+
+**Final live result, both directions:**
+```
+interop (plain):          RPFIXTURE|route=/register/finish rp_id=localhost ok=true reason=registered
+                           RPFIXTURE|route=/assert/finish rp_id=localhost ok=true reason=verified
+interop (--corrupt-signature): RPFIXTURE|route=/challenge/assert rp_id=localhost status=issued
+                                (no /assert/finish line at all -- assert_interop's own new predicate)
+direction 1 spec:          1 passed (plain path data-ok="true" + its own falsification data-ok="false", one test)
+```
+Combined plan verify command (`bash scripts/ios-autofill-e43.sh interop && (cd extension && npx
+playwright test e2e/ios-created-passkey-assertion.spec.ts --project=chromium-ceremony)`) run once
+more, end to end, exit 0. `bash scripts/check-ios-gate.sh` exits 0. Evidence under
+`ios/evidence/43/43-09-interop*.{log,log.fixture-stdout}`.
