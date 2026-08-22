@@ -7117,3 +7117,106 @@ third pixel proof actually landed. Recorded here as exactly the class of defect 
 QA-01/§19 discipline exists to catch (a checkbox marked true in the artifact before it was true in
 reality), not as a scandal — the correction happened within the same phase, before this closing gate
 ever ran.
+
+## 24. Phase 44 — gap-closure cycle: §23's own closing gate re-checked itself, found the exact CR-02
+defect shape recurring inside the review-fix pass, three commits, 2026-08-22
+
+`44-VERIFICATION.md` (run after §23, same day) scored 6/8 truths and found ONE blocking gap plus two
+warnings, all in the phase's OWN evidence layer, none in the feature code. Asked in this project's
+own §19 terms of every gate it touched — "could this have failed?" — because two separate gates in
+this phase answered no.
+
+**Gap 1 (blocking): `scripts/audit-ios-save-preflight-ordering.sh` (WR-08's own T-43-12 gate,
+`705b7fb`) could not fail.** The WR-01 fix (`1fe55a0`) landed nine minutes after WR-08 and inserted a
+SECOND `SessionLifecycle.checkAndExpireIfNeeded(` call inside `runSavePipeline` (a closure declared
+textually EARLY in the function body but invoked LATE, after the user confirms the sheet — Swift
+closures are written where declared, run where called). Assertion (A)'s `grep … | head -1` anchor
+had no way to distinguish "the pre-UI check that actually gates the confirmation screen" from "the
+first textual match in the whole window" — once two calls existed, `head -1` answered a question
+that no longer meant what WR-08 needed it to mean. The verifier proved this directly: deleting the
+real pre-UI check and hardcoding `SavePasswordPreflight.decide(isUnlocked: true)` — leaving a locked
+device able to reach the confirmation sheet, with the service identifier and username on it — still
+printed `OVERALL: PASS`. The committed falsification transcript at `ios/evidence/44/44-fix-wr08-
+falsification.log` (18:53) predated the WR-01 regression it was supposed to prove couldn't happen,
+so it proved nothing about the tree it shipped with.
+
+**Fix, not a workaround:** re-anchored assertion (A) on WHAT the check feeds, not WHERE it sits
+textually. `SavePasswordPreflight.decide(` is the single call whose `isUnlocked:` argument IS the
+T-43-12 security decision — required to appear exactly once (ambiguous-or-absent is a hard `ERROR`,
+never a silent skip), then `SessionLifecycle.checkAndExpireIfNeeded(` is required within a small,
+bounded window (10 lines; the real gap in this tree is 1) strictly BEFORE it. A call anywhere else in
+the body — including inside a later closure that runs after the fact — can no longer satisfy the
+assertion merely by existing. Re-falsified three ways against the current tree, all correctly FAIL:
+(1) the verifier's own exact mutation (pre-UI check deleted, hardcoded `true`, WR-01's in-closure
+re-check left intact); (2) the ORIGINAL WR-08 mutation re-run (check commented out entirely) — proof
+the re-anchoring did not trade one blind spot for another; (3) a throwaway `presentSavePasswordConfirm(`
+call planted before the real check (assertion (B) still fires). All three reverted byte-identically;
+clean tree confirmed `OVERALL: PASS` before and after each. `ios/evidence/44/44-fix-wr08-falsification.log`
+re-recorded end-to-end against the current tree, the stale transcript retired.
+
+**Gap 3 (warning, fixed alongside gap 1's re-anchor): three audit scripts existed but ran nowhere
+automatically.** `audit-ios-save-preflight-ordering.sh`, `audit-generator-uses-ffi.sh` (SC3's own
+cited CSPRNG-provenance gate), and `audit-evidence-no-plaintext-secrets.sh` (CR-04's scanner) were in
+neither `check-ios-gate.sh`'s composer nor `ci.yml` — this project's own ci.yml WR-06 comment
+verbatim: "a gate nobody runs cannot catch the regression it exists for." Composed all three as
+`gate_*`/`falsify_*` pairs into `check-ios-gate.sh` (now ten sub-gates), following the composer's own
+invoke-don't-reimplement discipline. Two (`preflight_ordering`, `generator_ffi`) document an HONEST
+falsification limitation rather than bolt new, unreviewed scratch-fixture plumbing onto a
+security-load-bearing scan under a gap-closure task's own time budget — each cites the real,
+independently-recorded falsification evidence instead (the re-recorded transcript above; 44-VERIFICATION.md
+truth #3's own live re-falsification of the generator gate, plus this phase's own §21/E-G1 history).
+The third (`evidence_no_plaintext`) got a genuine scratch-fixture falsification: the script now
+honours a `PV_AUDIT_EVIDENCE_DIR_OVERRIDE` env var (mirroring the identity-store chokepoint gate's own
+override idiom), so both branches (a plaintext value → FAIL naming the key; CR-04's own safe
+`passwordSha256`/`passwordLength` shape → PASS) are proven with zero mutation of any real evidence
+file. `preflight_ordering` and `evidence_no_plaintext` (both pure bash/python3, no Xcode dependency)
+were also added to `ci.yml`'s `ios-structural-gates` job; `generator_ffi` cannot run there (it needs
+the generated Swift bindings, a real cross-compile artifact ubuntu-latest has no toolchain to
+produce) and stays composed only via `check-ios-gate.sh`, this milestone's own documented CI
+surrogate for the iOS surface — a documented reason it doesn't run there, not an oversight.
+
+**Gap 2 (warning): the flagship SAVE-01 live evidence predated six commits to the exercised path.**
+The 19:17 `sc-save` run was captured before CR-01 (`24300c6`), CR-03 (`7c0213a`), WR-01 (`1fe55a0`),
+WR-02 (`fa80773`), WR-12 (`2e632ab`), and 44-06 (`47c9983`) all landed on the save/generate pipeline —
+the current pipeline had never run live end-to-end. Separately, `44-05-sc-generate-candidate-
+compliance.log` was 0 bytes: its sole source — the interactive generate-offer screen's own
+accessibility-read candidate text — never fires live on this toolchain (§21's own settled negative,
+L1), so there was never anything for that log line to capture.
+
+**Re-ran `scripts/ios-autofill-e44.sh sc-save` end-to-end against the current tree** (real ceremony on
+the pinned simulator, a real isolated throwaway `pv-server`, an independent `pv-wasm` client
+decrypting the server-side row, a genuine pre-save absence control). Fresh evidence written in place;
+`ios/evidence/44/44-gap2-live-rerun-manifest.log` records which run (old vs new) corresponds to which
+tree state, with exact commit hashes — the prior run's artifacts remain fully recoverable from git
+history (`5ed2072`, `03a4c30`), never silently discarded.
+
+**For the compliance gap, a second independent live-evidence path, not a synthetic substitute:** the
+SILENT generate entry point (the one that actually fires) autofills the SAME harness field
+(`savePasswordForm.password`) `sc-save` already reads back off-device via `UserDefaults` — CR-04's own
+established technique, reused verbatim, plaintext never logged. The harness's rules descriptor
+(`SavePasswordFormView.swift`) was extended with `max-consecutive: 4;`, which `GeneratePasswordDispatch
+.resolve` passes through completely UNPARSED into `pv-core`'s real `parse_password_rules` (DR-44-B) —
+a genuinely richer live-exercised descriptor, not a re-run of the old one under a new label. Observed,
+live, this run: `candidateLength=20` (NOT 10 — the exact CR-03 regression shape, checked against a
+REAL candidate, not only the unit tests already covering it), `honoursMinlengthAsFloor=true`,
+`hasLower`/`hasUpper`/`hasDigit=true`, `longestRunOfSameChar=1`, `maxConsecutiveOk=true`. The plaintext
+candidate was read into the shell process ONLY to compute these booleans, never written to any
+artifact — confirmed by re-running `audit-evidence-no-plaintext-secrets.sh` (exit 0) and by reading
+back the harness's `UserDefaults` key afterward (`does not exist`).
+
+**Verified after all three fixes:** `bash scripts/check-ios-gate.sh` (full composer, no `--only`
+slicing) — exit 0, all TEN sub-gates (`qa05 ffi_build ffi_falsifiable ffi_opaque swift_tests
+qa_register asset_resolution preflight_ordering generator_ffi evidence_no_plaintext`), re-run twice
+(once before, once after the live re-runs touched harness/evidence files) with the same result both
+times. `cargo test --workspace` — 0 failed, both times.
+
+Three atomic commits (`ios/spike`): `24db855` (gap 1, the re-anchor), `d8efe07` (gap 3, the
+composition), `d293f21` (gap 2, the live re-runs). No `.planning/` file committed by any of the
+three (`commit_docs: false` honoured throughout).
+
+Not touched by this cycle, deliberately out of scope (owed elsewhere): the two `human_verification`
+items `44-VERIFICATION.md` itself named — real-device confirmation on iOS 27.0, and the CR-04
+plaintext-in-git-history business decision (`03a4c30`, nothing pushed yet) — neither is a code
+defect this cycle's own gap items asked to close, and manufacturing a code fix for either here would
+be exactly the "answered a question nobody asked" shape this project's own review discipline warns
+against.
