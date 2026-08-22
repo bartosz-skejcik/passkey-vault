@@ -248,6 +248,12 @@ struct PasskeyVaultApp: App {
             // for every other build (never reachable in a real user session).
             #if PV_PROBE_E44_05_OFFER
             GeneratePasswordOfferPreviewHost()
+            #elseif PV_PROBE_E44_04_CONFIRM
+            // Plan 44-04, Task 3 (SAVE-04 direct-invocation route, `SavePasswordConfirmPreviewHost
+            // .swift`'s own header): swaps the ENTIRE root view for a direct render of the real
+            // `SavePasswordConfirmView` -- compiled in only under `PV_PROBE_E44_04_CONFIRM`, inert
+            // for every other build (never reachable in a real user session).
+            SavePasswordConfirmPreviewHost()
             #else
             ContentView()
                 .snapshotCoverOverlay()

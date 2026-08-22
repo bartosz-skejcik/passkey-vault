@@ -16,6 +16,12 @@
 //                new, divergent shape check (43-07-PLAN.md Task 2's own `<action>` text). Writes
 //                the classified array to `outFile` -- the harness's own bash layer does the
 //                PASS/FAIL assertion (row present vs. absent) by reading this file with `jq`.
+//   find-login -- Plan 44-04, Task 3 (SAVE-01's own receiver-side proof). Signs in, fetches
+//                `GET /api/vault/items` directly, decrypts every row, and looks for a
+//                `type === "login"` row whose `username` matches exactly -- writes
+//                `{found, username, password, urls, rowCount}` (or `{found: false, rowCount}`) to
+//                `outFile`, reused for both the pre-save absence check and the post-save
+//                presence+byte-match check by `scripts/ios-autofill-e44.sh sc-save`.
 //
 // Never imports the crypto WASM twice per process -- `register` and `snapshot` are separate
 // invocations (separate node processes), matching `sync-contract-probe.sh`'s own one-script-one-
@@ -155,6 +161,75 @@ async function doSnapshot(email, password, outFile) {
   console.log(JSON.stringify({ email, rowCount: rows.length, passkeyRowCount: classified.filter((c) => c.isPasskeyShape).length }));
 }
 
+/** Plan 44-04, Task 3 (`sc-save`'s own receiver-side proof). Signs in, fetches
+ * `GET /api/vault/items` directly against the live server (bypassing any client cache -- the SAME
+ * discipline `doSnapshot` above already establishes), decrypts every row, and looks for a
+ * `type === "login"` row whose `username` matches `wantUsername` exactly. Writes
+ * `{ found: bool, username, password, urls, rowCount }` to `outFile` -- `password` is the
+ * DECRYPTED plaintext read directly off the live server by this INDEPENDENT client (never the
+ * extension process that wrote it, L-17) -- the harness's own driving script compares this against
+ * its OWN separately-captured ground truth (the harness app's `UserDefaults`-persisted observed
+ * fill value) for the byte-match proof. `found: false` with no `password` key is the correct,
+ * expected shape for a BEFORE snapshot (the absence check).*/
+async function doFindLogin(email, password, wantUsername, outFile) {
+  const { mod, uk, token } = await signIn(email, password);
+
+  const listResp = await req("GET", "/api/vault/items", { token });
+  if (listResp.status !== 200) fail(`GET /api/vault/items: expected 200, got ${listResp.status}: ${JSON.stringify(listResp.body)}`);
+  const rows = listResp.body;
+  if (!Array.isArray(rows)) fail(`GET /api/vault/items did not return a JSON array: ${JSON.stringify(rows)}`);
+
+  // Debug-only observation (never gates PASS/FAIL, never printed with the real password) -- lets
+  // a run that finds nothing distinguish "no rows at all", "rows exist but none decrypted", and
+  // "rows decrypted but none matched wantUsername/type=login" instead of one flat FAIL.
+  let decryptFailures = 0;
+  let parseFailures = 0;
+  const observedTypesAndUsernameLengths = [];
+
+  let result = { found: false, rowCount: rows.length };
+  for (const row of rows) {
+    const combinedJson = JSON.stringify({ enc_key: JSON.parse(row.enc_key), enc_data: JSON.parse(row.enc_data) });
+    let plaintext;
+    try {
+      plaintext = mod.decryptItem(uk, combinedJson, row.id, row.revision);
+    } catch {
+      decryptFailures += 1;
+      continue;
+    }
+    let raw;
+    try {
+      raw = JSON.parse(plaintext);
+    } catch {
+      parseFailures += 1;
+      continue;
+    }
+    observedTypesAndUsernameLengths.push({
+      type: raw && typeof raw === "object" ? raw.type : null,
+      usernameLength: raw && typeof raw === "object" && typeof raw.username === "string" ? raw.username.length : null,
+    });
+    if (raw && typeof raw === "object" && raw.type === "login" && raw.username === wantUsername) {
+      result = {
+        found: true,
+        id: row.id,
+        username: raw.username,
+        password: raw.password,
+        urls: raw.urls,
+        name: raw.name,
+        rowCount: rows.length,
+      };
+      break;
+    }
+  }
+
+  if (!result.found) {
+    result.debug = { decryptFailures, parseFailures, observedTypesAndUsernameLengths };
+  }
+
+  const fs = await import("node:fs");
+  fs.writeFileSync(outFile, JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({ found: result.found, rowCount: rows.length, decryptFailures, parseFailures }));
+}
+
 async function main() {
   if (action === "register") {
     const [email, password] = rest;
@@ -164,8 +239,12 @@ async function main() {
     const [email, password, outFile] = rest;
     if (!email || !password || !outFile) fail("snapshot requires <email> <password> <outFile>");
     await doSnapshot(email, password, outFile);
+  } else if (action === "find-login") {
+    const [email, password, wantUsername, outFile] = rest;
+    if (!email || !password || !wantUsername || !outFile) fail("find-login requires <email> <password> <wantUsername> <outFile>");
+    await doFindLogin(email, password, wantUsername, outFile);
   } else {
-    fail(`unknown action: ${action} (expected register|snapshot)`);
+    fail(`unknown action: ${action} (expected register|snapshot|find-login)`);
   }
 }
 

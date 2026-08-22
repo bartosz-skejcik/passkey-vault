@@ -34,10 +34,19 @@ APP_GROUP_ID="group.cloud.blonie.PasskeyVault"
 # Plan 44-05, Task 2: a distinct port from `ios-autofill-e43.sh`'s own `SC4_SERVER_PORT` (8901) --
 # both scripts can run in the same session without colliding.
 SC_GENERATE_SERVER_PORT=8902
+# Plan 44-04, Task 3: a distinct port again from BOTH SC4_SERVER_PORT (8901) and
+# SC_GENERATE_SERVER_PORT (8902) -- all three throwaway-server scripts can run in the same session
+# without colliding.
+SC_SAVE_SERVER_PORT=8903
+# Reused, never duplicated -- `scripts/ios-autofill-e43-sc4-probe.mjs`'s own `find-login` action
+# (added by this plan) is the SAME real `pv-wasm` client `sc4`/`sc-generate`'s own receiver-side
+# proofs already trust (the E-W1 precedent).
+SC4_PROBE_SCRIPT="scripts/ios-autofill-e43-sc4-probe.mjs"
 
 usage() {
   echo "Usage: $0 probe [--run2] [--assert-only <path> [--run2]]" >&2
   echo "       $0 sc-generate [--skip-red-control]" >&2
+  echo "       $0 sc-save [--skip-red-control]" >&2
   exit 1
 }
 
@@ -602,6 +611,392 @@ PY
   echo "CONFIRMED RED: measure-ios-color-token.py correctly FAILED against the genuinely unresolved-asset render (exit $red_status)"
 }
 
+# `sc-save`: Plan 44-04, Task 3 (SAVE-01's live receiver-side proof + SAVE-04's pixel proof for the
+# save surface). Drives `testDriveSaveViaGeneratedPassword` (configuration X, 44-03-SUMMARY.md: tap
+# the new-password field with NO typing, tap the system's own "Strong Password" QuickType
+# affordance, let the field fill, THEN submit) against a REAL, isolated, throwaway `pv-server`,
+# seeded with a genuinely unlocked session (`PasskeyRegistrationSc4Seeder`, reused verbatim from
+# `ios-autofill-e43.sh`/`sc-generate`, per <live_findings> item 4). Captures the extension
+# process's own `PVFILL|entry=save-*` routing verdict, then performs the receiver-side proof via
+# `SC4_PROBE_SCRIPT find-login` (an INDEPENDENT `pv-wasm` client, never this process's own
+# assertion) BOTH before (absence check) and after (presence + byte-match against the harness's
+# own separately-captured ground-truth fill value) the drive.
+#
+# `--skip-red-control`: skip the mandatory RED-control mutation/rebuild/revert cycle
+# (44-PLAN-CHECK.md W4) -- only for a quick iteration re-run; the plan's own acceptance criteria
+# require the RED control to have been run and recorded at least once.
+cmd_sc_save() {
+  mkdir -p "$EVIDENCE_DIR"
+  local skip_red_control=0
+  if [ "${1:-}" = "--skip-red-control" ]; then
+    skip_red_control=1
+  fi
+
+  local udid
+  udid=$(resolve_pinned_udid)
+  echo "==> sc-save: pinned simulator UDID: $udid"
+
+  # --- throwaway, isolated pv-server (D-23 discipline: never the developer's own data/pv.db) ----
+  local server_pid="" db_dir=""
+  cleanup_sc_save() {
+    if [ -n "${server_pid:-}" ]; then
+      kill "$server_pid" >/dev/null 2>&1 || true
+      wait "$server_pid" 2>/dev/null || true
+    fi
+    if [ -n "${db_dir:-}" ]; then
+      rm -rf "$db_dir"
+    fi
+  }
+  trap cleanup_sc_save EXIT
+
+  # LIVE FINDING, this session: a plain `lsof -i :<port>` (no state filter) also matches the
+  # extension process's own now-CLOSED client-side socket from a prior run's `createItem` POST --
+  # a stale, non-listening connection lingering in the kernel's own TIME_WAIT-shaped bookkeeping,
+  # never a real port conflict. Scoped to `LISTEN` specifically, matching this precheck's own
+  # actual intent ("is a SERVER already bound here").
+  if lsof -nP -i ":${SC_SAVE_SERVER_PORT}" 2>/dev/null | grep -q LISTEN; then
+    echo "ERROR: something is already listening on :${SC_SAVE_SERVER_PORT} -- refusing to proceed" >&2
+    exit 1
+  fi
+  local server_bin="$REPO_ROOT/target/release/pv-server"
+  if [ ! -x "$server_bin" ]; then
+    server_bin="$REPO_ROOT/target/debug/pv-server"
+  fi
+  if [ ! -x "$server_bin" ]; then
+    echo "ERROR: no pv-server binary found at target/release/pv-server or target/debug/pv-server. Build one first: cargo build -p pv-server --release" >&2
+    exit 1
+  fi
+  db_dir=$(mktemp -d "${TMPDIR:-/tmp}/pv-e44-04-sc-save.XXXXXX")
+  local db_url="sqlite://${db_dir}/pv.db?mode=rwc"
+  local server_base="http://127.0.0.1:${SC_SAVE_SERVER_PORT}"
+  PV_ADDR="127.0.0.1:${SC_SAVE_SERVER_PORT}" PV_DB_URL="$db_url" RUST_LOG=warn "$server_bin" > "${db_dir}/pv-server.log" 2>&1 &
+  server_pid=$!
+  local healthy=0
+  for _ in $(seq 1 50); do
+    if curl -fsS "${server_base}/healthz" >/dev/null 2>&1; then healthy=1; break; fi
+    sleep 0.3
+  done
+  if [ "$healthy" -ne 1 ]; then
+    echo "ERROR: pv-server did not become healthy on ${server_base} within 15s" >&2
+    cat "${db_dir}/pv-server.log" >&2
+    exit 1
+  fi
+  echo "==> sc-save: pv-server healthy on ${server_base} (isolated, throwaway db)"
+
+  # --- real, throwaway account, via the SAME real pv-wasm client scripts/ios-autofill-e43.sh's
+  # own sc4 already trusts (E-W1) -----------------------------------------------------------------
+  local wasm_glue="${REPO_ROOT}/web/src/lib/crypto/wasm/pv_wasm.js"
+  local wasm_bytes="${REPO_ROOT}/web/public/wasm/pv_wasm_bg.wasm"
+  if [ ! -f "$wasm_glue" ] || [ ! -f "$wasm_bytes" ]; then
+    echo "ERROR: pv-wasm artifact missing (${wasm_glue} / ${wasm_bytes}). Run scripts/build-wasm.sh first." >&2
+    exit 1
+  fi
+  local sc_save_email sc_save_password sc_save_username
+  sc_save_email="pv-e44-04-sc-save-$(date +%s)@example.invalid"
+  sc_save_password="pv-e44-04 sc-save fixture password $(date +%s) $$"
+  sc_save_username="pv-e44-04-sc-save-user-$(date +%s)"
+
+  echo "==> sc-save: registering throwaway account ${sc_save_email} via real pv-wasm client" | tee "${db_dir}/sc-save.log"
+  node "$SC4_PROBE_SCRIPT" register "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" \
+    >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: account registration failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
+
+  local before_file="$EVIDENCE_DIR/44-04-sc-save-before.json"
+  local after_file="$EVIDENCE_DIR/44-04-sc-save-after.json"
+  echo "==> sc-save: capturing the BEFORE snapshot (must show no login item for ${sc_save_username})"
+  node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" "$sc_save_username" "$before_file" \
+    >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: BEFORE find-login failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
+  if ! python3 -c "import json,sys; d=json.load(open('$before_file')); sys.exit(0 if d.get('found') is False else 1)"; then
+    echo "ERROR: the BEFORE snapshot already shows a login item for ${sc_save_username} -- the account is not genuinely fresh" >&2
+    cat "$before_file" >&2
+    exit 1
+  fi
+  echo "==> sc-save: BEFORE snapshot confirmed absent ($before_file)"
+
+  # --- build+install app+extension (PV_PROBE_E43_SC4, for the real-unlock seeder) + harness -------
+  echo "==> sc-save: building pv-ffi (plain variant)"
+  "$REPO_ROOT/scripts/build-ios.sh"
+
+  echo "==> sc-save: building PasskeyVault app+extension (PV_PROBE_E43_SC4)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-build.log build "PV_PROBE_E43_SC4"
+
+  echo "==> sc-save: building PasskeyVaultHarness app"
+  build_with_l10_retry "$udid" "PasskeyVaultHarness" /tmp/pv-e44-04-harness-build.log build
+
+  echo "==> sc-save: building the UI test bundle (PasskeyVaultUITests)"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-build-for-testing.log build-for-testing "PV_PROBE_E43_SC4"
+
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl install "$udid" "$HARNESS_APP_PRODUCT"
+  ensure_provider_enabled "$udid"
+
+  # First launch: creates the App Group container on disk.
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  local group_dir
+  group_dir=$(app_group_dir "$udid")
+  if [ -z "$group_dir" ]; then
+    echo "ERROR: App Group container not found after first launch" >&2
+    exit 1
+  fi
+
+  local seed_input_file="${group_dir}/pv-43-sc4-seed.json"
+  local status_file="${group_dir}/e43-sc4-seed-status.json"
+  rm -f "$status_file"
+  echo "{\"serverBaseURL\":\"${server_base}\",\"email\":\"${sc_save_email}\",\"password\":\"${sc_save_password}\"}" \
+    > "$seed_input_file"
+  echo "==> sc-save: launching host app to seed a REAL unlocked session (PasskeyRegistrationSc4Seeder, verbatim from ios-autofill-e43.sh)"
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  local waited=0
+  while [ ! -f "$status_file" ]; do
+    sleep 1
+    waited=$((waited + 1))
+    if [ "$waited" -gt 30 ]; then
+      echo "ERROR: PasskeyRegistrationSc4Seeder never wrote its status marker within 30s" >&2
+      exit 1
+    fi
+  done
+  if ! grep -q '"status":"ok"' "$status_file"; then
+    echo "ERROR: PasskeyRegistrationSc4Seeder reported a non-ok status:" >&2
+    cat "$status_file" >&2
+    exit 1
+  fi
+  echo "==> sc-save: seed confirmed ok (real host-unlock + Secret C written)"
+  xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
+  xcrun simctl launch --terminate-running-process "$udid" "$HARNESS_BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 1
+
+  local out_root="ios/PasskeyVault/build/sc-save"
+  rm -rf "$out_root"
+  mkdir -p "$out_root"
+
+  local run_start
+  run_start=$(date '+%Y-%m-%d %H:%M:%S')
+
+  local result="$out_root/result.xcresult"
+  local ui_test_log="$out_root/xcodebuild.log"
+  local ui_result=0
+  # LIVE FINDING, this session: a plain (non-prefixed) env var set on the invoking `xcodebuild`
+  # process does NOT propagate into the XCUITest RUNNER process (a separate simulator-launched app)
+  # -- confirmed by the saved item's own username genuinely landing as the Swift default fallback
+  # ("pv-e44-04-sc-save-user", 22 bytes, not the per-run unique value), not a decrypt/parse/type
+  # mismatch (`ios/evidence/44/44-04-sc-save-after.json`'s own `debug` block ruled those out).
+  # `TEST_RUNNER_<VAR>` is xcodebuild's own documented mechanism for exactly this -- it strips the
+  # prefix and injects the remainder into the runner's own process environment. This is a LATENT
+  # bug this same plain-env-var pattern already carried in `ios-autofill-e43.sh`'s own
+  # `PV_E43_SC4_USERNAME` (never caught there because that script's own `assert_sc4_snapshot` never
+  # checks the exact username value, only `isPasskeyShape`/`rpId`) -- recorded here, not fixed
+  # there (out of this plan's own file scope).
+  TEST_RUNNER_PV_E44_04_SC_SAVE_USERNAME="$sc_save_username" \
+  xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj \
+    -scheme PasskeyVault -configuration Debug \
+    -destination "platform=iOS Simulator,id=$udid" \
+    -derivedDataPath "$DD_PATH" \
+    -only-testing:PasskeyVaultUITests/SavePasswordFormHarnessUITests/testDriveSaveViaGeneratedPassword \
+    -skip-testing:PasskeyVaultTests \
+    -parallel-testing-enabled NO \
+    -maximum-concurrent-test-simulator-destinations 1 \
+    -resultBundlePath "$result" \
+    SWIFT_ACTIVE_COMPILATION_CONDITIONS="\$(inherited) PV_PROBE_E43_SC4" \
+    test > "$ui_test_log" 2>&1 || ui_result=$?
+
+  echo "==> sc-save: XCUITest drive exit $ui_result (see $ui_test_log)"
+
+  # --- routing verdict: silent-generate-seeded save chain, from the EXTENSION process's own
+  # os_log -------------------------------------------------------------------------------------
+  local ext_log="$out_root/extension-pvfill.log"
+  xcrun simctl spawn "$udid" log show \
+    --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND category == "fill"' --start "$run_start" \
+    2>&1 | grep -E 'PVFILL\|entry=save|PVFILL\|entry=generate-silent' > "$ext_log" || true
+  cp "$ext_log" "$EVIDENCE_DIR/44-04-sc-save-pvfill.log"
+
+  local confirm_presented=0
+  if grep -q 'PVFILL|entry=save stage=confirm status=confirmed' "$ext_log"; then
+    confirm_presented=1
+    echo "VERDICT: prepareInterface(for: ASSavePasswordRequest) FIRED and the confirmation was CONFIRMED -- $(grep 'PVFILL|entry=save stage=confirm' "$ext_log" | head -1)"
+  elif grep -q 'PVFILL|entry=save stage=confirm status=skipped-generated-password-filled' "$ext_log"; then
+    echo "VERDICT: prepareInterface(for: ASSavePasswordRequest) FIRED for a .generatedPasswordFilled event (no confirm UI, per the header) -- $(grep 'PVFILL|entry=save stage=confirm' "$ext_log" | head -1)"
+  elif grep -q 'PVFILL|entry=save ' "$ext_log"; then
+    echo "VERDICT: prepareInterface(for: ASSavePasswordRequest) fired, but did not reach a confirmed/skipped completion in this run:"
+    grep 'PVFILL|entry=save ' "$ext_log"
+  else
+    echo "VERDICT: prepareInterface(for: ASSavePasswordRequest) did NOT fire in this run"
+    grep 'PVFILL|entry=save-silent' "$ext_log" || echo "  (no save-silent PVFILL| lines at all)"
+  fi
+
+  # --- ground-truth password, read from the harness's own UserDefaults (never a public log line,
+  # T-44-06) ------------------------------------------------------------------------------------
+  local harness_container observed_password=""
+  harness_container=$(xcrun simctl get_app_container "$udid" "$HARNESS_BUNDLE_ID" data 2>/dev/null || true)
+  if [ -n "$harness_container" ]; then
+    local prefs_plist="${harness_container}/Library/Preferences/${HARNESS_BUNDLE_ID}.plist"
+    if [ -f "$prefs_plist" ]; then
+      observed_password=$(plutil -extract "pv-e44-04-sc-save-observed-password" raw -o - "$prefs_plist" 2>/dev/null || true)
+    fi
+  fi
+  if [ -n "$observed_password" ]; then
+    echo "==> sc-save: harness observed a filled password (length ${#observed_password}) -- never printed verbatim"
+  else
+    echo "==> sc-save: harness recorded NO observed password this run (the field was never filled)"
+  fi
+
+  # --- receiver-side proof: an INDEPENDENT pv-wasm client reads the LIVE server directly (L-17) --
+  echo "==> sc-save: capturing the AFTER snapshot (direct GET /api/vault/items, bypassing any client cache)"
+  sleep 2
+  node "$SC4_PROBE_SCRIPT" find-login "$server_base" "$wasm_glue" "$wasm_bytes" "$sc_save_email" "$sc_save_password" "$sc_save_username" "$after_file" \
+    >> "${db_dir}/sc-save.log" 2>&1 || { echo "ERROR: AFTER find-login failed -- see ${db_dir}/sc-save.log" >&2; exit 1; }
+  cp "${db_dir}/sc-save.log" "$EVIDENCE_DIR/44-04-sc-save-probe.log"
+
+  local receiver_side_pass=0
+  if python3 -c "import json,sys; d=json.load(open('$after_file')); sys.exit(0 if d.get('found') is True else 1)"; then
+    local server_password
+    server_password=$(python3 -c "import json; print(json.load(open('$after_file'))['password'])")
+    if [ -n "$observed_password" ] && [ "$server_password" = "$observed_password" ]; then
+      receiver_side_pass=1
+      echo "PASS: sc-save -- an INDEPENDENT pv-wasm client decrypted a server-visible login item for ${sc_save_username}, byte-matching the harness's own separately-captured fill value ($after_file)"
+    elif [ -z "$observed_password" ]; then
+      echo "PARTIAL: sc-save -- a server-visible, independently-decrypted login item for ${sc_save_username} exists ($after_file), but the harness never captured its own ground-truth fill value this run -- presence proven, byte-match NOT proven this run"
+    else
+      echo "FAIL: sc-save -- the server-visible item's decrypted password does NOT byte-match the harness's own observed fill value" >&2
+      exit 1
+    fi
+  else
+    echo "FAIL: sc-save -- no server-visible login item for ${sc_save_username} after the drive ($after_file)" >&2
+    exit 1
+  fi
+
+  # --- SAVE-04 pixel proof ------------------------------------------------------------------------
+  local pv_success_hex pv_bg_hex
+  pv_success_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVSuccess.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+  pv_bg_hex="$(python3 - <<'PY'
+import json
+with open("ios/PasskeyVault/Shared/PVColors.xcassets/PVBackground.colorset/Contents.json") as f:
+    data = json.load(f)
+c = data["colors"][0]["color"]["components"]
+print(f"{int(c['red'],16):02X}{int(c['green'],16):02X}{int(c['blue'],16):02X}")
+PY
+)"
+
+  if [ "$confirm_presented" = "1" ]; then
+    echo "==> sc-save: SavePasswordConfirmView appeared via LIVE system routing this run -- capturing GREEN pixel proof from the live route"
+    local exported="$out_root/attachments"
+    xcrun xcresulttool export attachments --path "$result" --output-path "$exported" >/dev/null
+    local screenshot_file
+    screenshot_file="$(python3 - "$exported/manifest.json" "save-confirm-found-screenshot" <<'PY'
+import json, sys
+manifest_path, wanted = sys.argv[1], sys.argv[2]
+with open(manifest_path) as f:
+    manifest = json.load(f)
+for test in manifest:
+    for att in test.get("attachments", []):
+        name = att.get("suggestedHumanReadableName") or ""
+        if name == wanted or name.startswith(wanted + "_"):
+            print(att["exportedFileName"])
+            sys.exit(0)
+sys.exit(1)
+PY
+)" || { echo "ERROR: 'save-confirm-found-screenshot' attachment not in the result bundle" >&2; exit 1; }
+    local live_dest="$EVIDENCE_DIR/44-04-sc-save-confirm-GREEN.png"
+    cp "$exported/$screenshot_file" "$live_dest"
+    python3 scripts/measure-ios-color-token.py "$live_dest" \
+      --expect "PVSuccess=$pv_success_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+    echo "==> sc-save: GREEN pixel proof PASSED against the LIVE system-routed screenshot"
+  else
+    echo "==> sc-save: SavePasswordConfirmView did NOT appear via live system routing (settled negative this run) -- capturing SAVE-04's pixel proof via the direct-invocation fallback"
+  fi
+
+  sc_save_direct_invocation_pixel_proof "$udid" "$skip_red_control" "$confirm_presented" "$pv_success_hex" "$pv_bg_hex"
+
+  exit 0
+}
+
+# The plan's own pre-authorized fallback (and, regardless of live routing, the cheap standalone
+# route for the mandatory RED control -- see `SavePasswordConfirmPreviewHost.swift`'s own header).
+# W4 (44-PLAN-CHECK.md): the RED control MUST be a genuinely unresolved-asset render, never a
+# deliberately-wrong-hex substitution -- temporarily renames `Color("PVSuccess")`/
+# `Color("PVBackground")` in `SavePasswordConfirmView.swift` to an unresolvable name, rebuilds,
+# screenshots the resulting (genuinely blank) render, asserts `measure-ios-color-token.py` FAILS
+# against it (`--tolerance 2`, `ios/IOS-SPIKE-LOG.md` §19's own anti-false-positive precedent: at
+# the default tolerance, `PVBackground`'s near-white `#FCFBFA` false-positive-matches the
+# platform's own `#FFFFFF` unresolved-asset fallback), then reverts and rebuilds to restore the
+# real GREEN artifact.
+sc_save_direct_invocation_pixel_proof() {
+  local udid="$1" skip_red_control="$2" confirm_presented="$3" pv_success_hex="$4" pv_bg_hex="$5"
+
+  if [ "$confirm_presented" != "1" ]; then
+    echo "==> sc-save: direct-invocation GREEN -- building PasskeyVault with PV_PROBE_E44_04_CONFIRM"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-confirm-build.log build "PV_PROBE_E44_04_CONFIRM"
+    xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 2
+    local green_dest="$EVIDENCE_DIR/44-04-sc-save-confirm-GREEN.png"
+    xcrun simctl io "$udid" screenshot "$green_dest"
+    echo "==> sc-save: wrote $green_dest (direct-invocation, system routing UNPROVEN for this screen)"
+    echo "==> sc-save: measuring direct-invocation GREEN render (PVSuccess=$pv_success_hex, PVBackground=$pv_bg_hex)"
+    python3 scripts/measure-ios-color-token.py "$green_dest" \
+      --expect "PVSuccess=$pv_success_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+  fi
+
+  if [ "$skip_red_control" = "1" ]; then
+    echo "==> sc-save: --skip-red-control set -- restoring the ordinary (non-probe) build and skipping the RED control"
+    build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-restore-build.log build
+    return 0
+  fi
+
+  local view_file="ios/PasskeyVault/Shared/SavePasswordConfirmView.swift"
+  echo "==> sc-save: RED control -- unresolving PVSuccess/PVBackground in $view_file"
+  cp "$view_file" "/tmp/pv-e44-04-confirmview-backup.swift"
+  sed -i '' \
+    -e 's/Color("PVSuccess")/Color("PVSuccessZZZUNRESOLVED")/g' \
+    -e 's/Color("PVBackground")/Color("PVBackgroundZZZUNRESOLVED")/g' \
+    "$view_file"
+
+  local restored=0
+  restore() {
+    if [ "$restored" = "0" ]; then
+      cp "/tmp/pv-e44-04-confirmview-backup.swift" "$view_file"
+      restored=1
+    fi
+  }
+  trap restore EXIT
+
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-red-build.log build "PV_PROBE_E44_04_CONFIRM"
+  xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$udid" "$PV_APP_PRODUCT"
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  sleep 2
+  local red_dest="$EVIDENCE_DIR/44-04-sc-save-confirm-RED.png"
+  xcrun simctl io "$udid" screenshot "$red_dest"
+  echo "==> sc-save: RED control screenshot -- $red_dest"
+
+  restore
+  trap - EXIT
+  echo "==> sc-save: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
+  build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-restore-build.log build
+
+  set +e
+  python3 scripts/measure-ios-color-token.py "$red_dest" \
+    --expect "PVSuccess=$pv_success_hex" --expect "PVBackground=$pv_bg_hex" --mode present --tolerance 2
+  local red_status=$?
+  set -e
+  if [ "$red_status" -eq 0 ]; then
+    echo "ERROR: RED control unexpectedly PASSED -- the unresolved-asset render was not genuinely blank" >&2
+    exit 1
+  fi
+  echo "CONFIRMED RED: measure-ios-color-token.py correctly FAILED against the genuinely unresolved-asset render (exit $red_status)"
+}
+
 main() {
   if [ $# -lt 1 ]; then
     usage
@@ -633,6 +1028,9 @@ main() {
       ;;
     sc-generate)
       cmd_sc_generate "${1:-}"
+      ;;
+    sc-save)
+      cmd_sc_save "${1:-}"
       ;;
     *)
       usage

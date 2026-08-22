@@ -1,0 +1,16 @@
+==> sc-save: registering throwaway account pv-e44-04-sc-save-1787418953@example.invalid via real pv-wasm client
+(node:79309) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"email":"pv-e44-04-sc-save-1787418953@example.invalid"}
+(node:79312) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"found":false,"rowCount":0,"decryptFailures":0,"parseFailures":0}
+(node:82146) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///Users/j5on/.work/projects/passkey-vault-ios/web/src/lib/crypto/wasm/pv_wasm.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /Users/j5on/.work/projects/passkey-vault-ios/web/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"found":true,"rowCount":1,"decryptFailures":0,"parseFailures":0}

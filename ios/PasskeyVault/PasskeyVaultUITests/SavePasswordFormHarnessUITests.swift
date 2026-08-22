@@ -407,6 +407,152 @@ final class SavePasswordFormHarnessUITests: XCTestCase {
         attachDiagnostics(app: harness, label: "generate-offer-after-use-tap")
     }
 
+    /// Plan 44-04, Task 3 (`sc-save`'s own live drive). The <live_findings> configuration X:
+    /// "tap the new-password field with NO typing -> tap the system's own `GenerateStrongPasswordButton`
+    /// (label 'Strong Password') -> let the generated password be filled -> THEN submit / remove
+    /// the form, and watch for all three event kinds" -- the save chain is normally SEEDED by a
+    /// completed generate (`ASSavePasswordRequestEventGeneratedPasswordFilled`'s own header doc),
+    /// so this is the driving mechanism this task's own `sc-save` subcommand needs, extending
+    /// `testDriveGeneratePasswordOffer`'s own proven affordance-tapping mechanism one step further
+    /// into an actual form submission.
+    ///
+    /// Unlike `testDriveGeneratePasswordOffer`, this method types a REAL username FIRST (the
+    /// receiver-side proof needs a real, non-empty username to look the saved item up by) --
+    /// `savePasswordForm.username` accepts free text same as `testDriveSavePasswordForm`.
+    @MainActor
+    func testDriveSaveViaGeneratedPassword() throws {
+        let harness = XCUIApplication(bundleIdentifier: Self.harnessBundleId)
+        harness.terminate()
+        harness.activate()
+
+        let usernameField = harness.textFields["savePasswordForm.username"]
+        guard usernameField.waitForExistence(timeout: 10) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.username never appeared (sc-save run).")
+            return
+        }
+        let username = ProcessInfo.processInfo.environment["PV_E44_04_SC_SAVE_USERNAME"] ?? "pv-e44-04-sc-save-user"
+        usernameField.tap()
+        usernameField.typeText(username)
+        attachDiagnostics(app: harness, label: "sc-save-after-username-type")
+
+        let passwordField = harness.secureTextFields["savePasswordForm.password"]
+        guard passwordField.waitForExistence(timeout: 5) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.password never appeared (sc-save run).")
+            return
+        }
+        // NO typing -- configuration X's own precondition (typing replaces the QuickType
+        // strong-password suggestion with the user's own draft).
+        passwordField.tap()
+        attachDiagnostics(app: harness, label: "sc-save-after-password-tap-no-typing")
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let candidateApps = [harness, springboard]
+        let affordanceLabels = ["Strong Password", "Suggest Strong Password", "Automatic Strong Password"]
+        let affordanceDeadline = Date().addingTimeInterval(10)
+        var affordanceElement: XCUIElement?
+        while Date() < affordanceDeadline && affordanceElement == nil {
+            for app in candidateApps {
+                for label in affordanceLabels {
+                    if let element = Self.firstHittableButton(in: app, labelContains: label) {
+                        affordanceElement = element
+                        break
+                    }
+                }
+                if affordanceElement != nil { break }
+            }
+            if affordanceElement == nil {
+                usleep(500_000)
+            }
+        }
+        guard let affordanceElement else {
+            attachDiagnostics(app: harness, label: "sc-save-affordance-NOT-FOUND")
+            return
+        }
+        affordanceElement.tap()
+        attachDiagnostics(app: harness, label: "sc-save-affordance-tapped")
+
+        // Give the silent generate handler time to answer and the system time to fill the field
+        // (this is the SAME entry point 44-05's own `sc-generate` already proved fires and fills
+        // reliably under this exact configuration) -- generous settle margin before the next step,
+        // since `ASSavePasswordRequestEventGeneratedPasswordFilled` (if it fires at all) is a
+        // SEPARATE, asynchronous save-request delivery, not a synchronous side effect of this tap.
+        usleep(2_000_000)
+        attachDiagnostics(app: harness, label: "sc-save-after-fill-settle")
+
+        // LIVE FINDING, this session (unlike `testDriveSavePasswordForm`'s own typed-Submit path):
+        // once the system's own "Strong Password" QuickType affordance fills the field, the
+        // keyboard/QuickType bar is ALREADY dismissed and the field no longer holds first
+        // responder -- `passwordField.typeText("\n")` here fails outright ("Neither element nor
+        // any descendant has keyboard focus"), unlike the typed-password path where Return is the
+        // only available dismiss action. No keyboard-dismiss step is needed; `savePasswordForm
+        // .submit` is already reachable.
+        attachDiagnostics(app: harness, label: "sc-save-after-keyboard-dismiss")
+
+        let submitButton = harness.buttons["savePasswordForm.submit"]
+        guard submitButton.waitForExistence(timeout: 5) else {
+            recordFailureWithDiagnostics(app: harness, message: "savePasswordForm.submit never appeared (sc-save run).")
+            return
+        }
+        submitButton.tap()
+        attachDiagnostics(app: harness, label: "sc-save-after-submit-tap")
+
+        // Poll for OUR OWN confirmation screen (`SavePasswordConfirmView`, `savePassword.confirm`)
+        // across [harness, springboard] -- the SAME route `AutoFillPasskeyRegistrationUITests
+        // .swift`'s own live-proven pattern already established for a system-presented sheet
+        // hosting this extension's own view controller (a `.userInitiated`/`.formDidDisappear`
+        // event, per `<behavior>`, presents this screen; `.generatedPasswordFilled` alone would
+        // not -- Submit's own resign+removal above is what supplies the
+        // `.userInitiated`/`.formDidDisappear` half of the pair, per the header's own documented
+        // "will generally be followed by" relationship).
+        let deadline = Date().addingTimeInterval(20)
+        var confirmTapped = false
+        var pollCount = 0
+        while Date() < deadline {
+            pollCount += 1
+            var actedThisPoll = false
+            for app in candidateApps {
+                let confirmButton = app.buttons["savePassword.confirm"]
+                if confirmButton.exists, confirmButton.isHittable {
+                    // LIVE FINDING, this session: `attachDiagnostics(label:)` ALWAYS appends its
+                    // own `-screenshot`/`-hierarchy` suffix (see that helper's own body below) --
+                    // passing "save-confirm-found-screenshot" here produced the DOUBLED attachment
+                    // name "save-confirm-found-screenshot-screenshot", which `sc-save`'s own
+                    // `xcresulttool export attachments` lookup (searching for the un-doubled name)
+                    // could not find. Mirrors `testDriveGeneratePasswordOffer`'s own correct
+                    // precedent (`attachDiagnostics(app: harness, label: "generate-offer-found")`)
+                    // -- the label passed here must NOT itself already end in `-screenshot`.
+                    attachDiagnostics(app: app, label: "save-confirm-found")
+                    confirmButton.tap()
+                    confirmTapped = true
+                    actedThisPoll = true
+                    break
+                }
+            }
+            if pollCount <= 5 || actedThisPoll {
+                attachDiagnostics(app: harness, label: "sc-save-poll-\(pollCount)")
+            }
+            if confirmTapped {
+                break
+            }
+            if !actedThisPoll {
+                usleep(500_000)
+            }
+        }
+
+        if !confirmTapped {
+            // Honest negative -- recorded plainly, never treated as a substitute for a positive
+            // finding. `scripts/ios-autofill-e44.sh sc-save`'s own receiver-side check (not this
+            // test's PASS/FAIL) is the load-bearing evidence either way.
+            attachDiagnostics(app: harness, label: "sc-save-confirm-NOT-FOUND")
+        }
+
+        // Settle margin: the extension's own encrypt/network/identity-store pipeline all need a
+        // moment after the last tap, mirroring `AutoFillPasskeyRegistrationUITests`'s own
+        // established pattern.
+        sleep(3)
+        attachDiagnostics(app: harness, label: "sc-save-final-state-confirmTapped=\(confirmTapped)")
+    }
+
     private static let harnessLogger = Logger(subsystem: "cloud.blonie.PasskeyVaultHarness", category: "sc-generate")
 
     @MainActor

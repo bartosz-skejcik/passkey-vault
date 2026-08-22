@@ -155,6 +155,25 @@ struct SavePasswordFormView: View {
                 .accessibilityIdentifier("savePasswordForm.status")
         }
         .padding()
+        // Plan 44-04, Task 3 (`sc-save`'s own receiver-side byte-match proof): the ONLY way to
+        // learn what password the SYSTEM actually filled into `passwordField` (via the "Strong
+        // Password" QuickType affordance, configuration X) -- `secureTextFields.value` in
+        // XCUITest never exposes real plaintext for a secure field, and this codebase's own
+        // T-44-06 discipline forbids ever writing a real password to `os_log`, even `.private`,
+        // even from a test-only harness. `password` (the `@State` bound to BOTH user typing AND
+        // AutoFill's own `UIControl.Event.editingChanged` fill, `PVAutoFillTextField.Coordinator
+        // .textChanged`) is instead persisted to THIS harness's own `UserDefaults.standard` --
+        // never App Group (this app carries no App Group entitlement, by design,
+        // `PasskeyVaultHarness.entitlements`'s own header), never a device-persistent log -- so
+        // `scripts/ios-autofill-e44.sh sc-save` can read it back via a plain `simctl get_app_
+        // container ... data` file read, entirely off-device from the harness process's own
+        // memory. TEST-ONLY, same discipline as every other file in this directory (never
+        // distributed, Debug-only).
+        .onChange(of: password) { _, newValue in
+            guard !newValue.isEmpty else { return }
+            UserDefaults.standard.set(newValue, forKey: "pv-e44-04-sc-save-observed-password")
+            UserDefaults.standard.synchronize()
+        }
     }
 
     /// Unfocuses BOTH fields first (never merely disables the button), THEN removes them from the

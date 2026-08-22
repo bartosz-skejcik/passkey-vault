@@ -1,0 +1,9 @@
+{
+  "found": false,
+  "rowCount": 0,
+  "debug": {
+    "decryptFailures": 0,
+    "parseFailures": 0,
+    "observedTypesAndUsernameLengths": []
+  }
+}

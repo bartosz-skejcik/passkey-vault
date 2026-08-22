@@ -1,6 +1,6 @@
 //
 //  SavePasswordConfirmView.swift
-//  PasskeyVaultAutoFill
+//  Shared (target membership: BOTH PasskeyVault and PasskeyVaultAutoFill)
 //
 //  Plan 44-04 (SAVE-01), Task 2. The ONE UI screen shown for the `.userInitiated`/
 //  `.formDidDisappear` save events -- `.generatedPasswordFilled` skips this entirely per the SDK
@@ -14,6 +14,15 @@
 //  screen's own accent -- a NEW password being SAVED is this app's own "successful write" semantic,
 //  the same token `PVColors.xcassets/PVSuccess.colorset` already carries elsewhere in this codebase
 //  for a completed, positive vault mutation.
+//
+//  MOVED from `PasskeyVaultAutoFill/` to `Shared/` in Task 3 (44-04-PLAN.md), mirroring
+//  `GeneratePasswordOfferView.swift`'s own precedent (44-05): zero extension-specific dependency,
+//  and `Shared/` already compiles into `PasskeyVaultAutoFill` (`scripts/audit-ios-extension-asset-
+//  resolution.py` PASS both before and after this move), so this is a zero-cost relocation that
+//  ALSO makes this view visible to `PasskeyVault` -- required for `SavePasswordConfirmPreviewHost
+//  .swift`'s own SAVE-04 direct-invocation pixel-proof route (Task 3's RED control, and the
+//  `did-not-fire` GREEN fallback if live system routing into `prepareInterface(for:
+//  ASSavePasswordRequest)` is never observed).
 //
 
 import SwiftUI
