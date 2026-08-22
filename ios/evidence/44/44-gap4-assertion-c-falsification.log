@@ -1,0 +1,39 @@
+=== Assertion (C) falsification, orchestrator, 2026-08-22T20:12:31Z ===
+Tree: bea4a85c4e38c86543b68dccd62e7c96d111d17e
+
+--- [1] clean tree: gate must PASS ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3, 1 line(s) before the decision)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+PASS
+== assertion (C): the sole decide( call's isUnlocked: argument is DERIVED from that lock check, not a literal ==
+PASS (isUnlocked: lockState == .unlocked references 'lockState')
+
+OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
+exit=0
+
+--- [2] MUTATION (the one (A)+(B) missed): lock check LEFT IN PLACE, only its result discarded
+        let preflight = SavePasswordPreflight.decide(isUnlocked: true)
+        Real impact: a locked vault reaches the save confirmation UI.
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3, 1 line(s) before the decision)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+PASS
+== assertion (C): the sole decide( call's isUnlocked: argument is DERIVED from that lock check, not a literal ==
+FAIL -- decide(isUnlocked: true) does not reference 'lockState', the identifier bound by the lock check at window-relative line 3 -- the lock check runs but its result is discarded, so a locked vault still reaches the confirmation UI
+
+OVERALL: FAIL -- see the failing assertion(s) above
+exit=1
+
+--- [3] byte-identical revert: gate must PASS again ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3, 1 line(s) before the decision)
+== assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
+PASS
+== assertion (C): the sole decide( call's isUnlocked: argument is DERIVED from that lock check, not a literal ==
+PASS (isUnlocked: lockState == .unlocked references 'lockState')
+
+OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
+exit=0
+
+git diff --stat after revert (empty == byte-identical):

@@ -226,6 +226,30 @@ if [ -n "$check_line" ]; then
   fi
 fi
 
+if [ -n "$check_line" ]; then
+  say "== assertion (C): the sole decide( call's isUnlocked: argument is DERIVED from that lock check, not a literal =="
+  # Assertions (A)/(B) are positional: they prove a real lock check sits just before the decision
+  # and that no UI/session-key read precedes it. Neither proves the decision CONSUMES the check's
+  # result. Orchestrator falsification, 2026-08-22: leaving the checkAndExpireIfNeeded( line
+  # untouched and rewriting only the argument to `isUnlocked: true` -- a locked-device attacker
+  # reaches the confirm sheet -- passed (A) and (B) and exited 0. Presence and ordering are not
+  # consumption. (C) closes that: the argument must reference the identifier the check binds.
+  bound_ident="$(sed -n "${check_line}p" "$STRIPPED_FILE" | sed -n 's/^[[:space:]]*let[[:space:]]\{1,\}\([A-Za-z_][A-Za-z0-9_]*\)[[:space:]]*=.*$/\1/p')"
+  decide_arg="$(sed -n "${decide_line}p" "$STRIPPED_FILE" | sed -n 's/.*SavePasswordPreflight\.decide([[:space:]]*isUnlocked:[[:space:]]*\(.*\))[[:space:]]*$/\1/p')"
+  if [ -z "$bound_ident" ]; then
+    say "FAIL -- the lock check at window-relative line ${check_line} does not bind its result to a let-identifier, so the decision below it cannot be shown to consume it"
+    FAIL=1
+  elif [ -z "$decide_arg" ]; then
+    say "FAIL -- could not extract the isUnlocked: argument of the sole decide( call at window-relative line ${decide_line}; refusing to report PASS on an unparsed decision argument"
+    FAIL=1
+  elif ! printf '%s' "$decide_arg" | grep -qE "(^|[^A-Za-z0-9_])${bound_ident}([^A-Za-z0-9_]|$)"; then
+    say "FAIL -- decide(isUnlocked: ${decide_arg}) does not reference '${bound_ident}', the identifier bound by the lock check at window-relative line ${check_line} -- the lock check runs but its result is discarded, so a locked vault still reaches the confirmation UI"
+    FAIL=1
+  else
+    say "PASS (isUnlocked: ${decide_arg} references '${bound_ident}')"
+  fi
+fi
+
 say ""
 if [ "$FAIL" -ne 0 ]; then
   say "OVERALL: FAIL -- see the failing assertion(s) above"
