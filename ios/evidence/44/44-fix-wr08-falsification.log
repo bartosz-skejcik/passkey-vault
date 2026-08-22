@@ -1,41 +1,68 @@
-=== WR-08 fix falsification transcript ===
-Date: 2026-08-22T18:53:13Z
+=== WR-08 gate re-anchoring falsification transcript (44-VERIFICATION.md gap 1) ===
+Date: 2026-08-22T19:50:27Z
+Tree: HEAD=2e632ab (worktree main checkout, branch ios/spike)
 
---- Step 1: gate on unmodified tree (expect PASS, exit 0) ---
-== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1161 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
-PASS (found at window-relative line 3)
+SUPERSEDES the prior transcript at this same path (recorded 2026-08-22T18:53:13Z, before
+commit 1fe55a0 / WR-01 added a second SessionLifecycle.checkAndExpireIfNeeded( call inside
+runSavePipeline). 44-VERIFICATION.md's verifier proved that prior transcript stale: its own
+Step 2 ("comment out the check -> FAIL") no longer reproduced the gate's real behaviour,
+because assertion (A) had silently re-anchored onto the WR-01 in-closure re-check instead of
+the pre-UI check it was written to protect. This transcript re-proves all three mutations
+against the RE-ANCHORED script (anchored on the sole SavePasswordPreflight.decide( call,
+never on textual-first-match) and against the CURRENT tree.
+
+--- Step 0: gate on the unmodified tree (expect PASS, exit 0) ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3, 1 line(s) before the decision)
 == assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
 PASS
 
 OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
 EXIT=0
 
---- Step 2: commented out SessionLifecycle.checkAndExpireIfNeeded( inside
-    prepareInterface(for: ASSavePasswordRequest), replaced with a hardcoded .unlocked.
-    Expect assertion (A) FAIL, non-zero exit. ---
-== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1164 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
-FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found in prepareInterface(for: ASSavePasswordRequest)'s own body
+--- Step 1 (this gap's own headline mutation -- 44-VERIFICATION.md's exact proof that the
+    PRE-fix gate was vacuous): pre-UI lock check deleted outright, replaced with
+    `let preflight = SavePasswordPreflight.decide(isUnlocked: true)`. The WR-01 in-closure
+    re-check (runSavePipeline) is left completely intact -- this is what made the pre-fix
+    gate wrongly report PASS. Expect assertion (A) FAIL, non-zero exit. ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 3), within 10 lines before it (lines 1001-1206 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found within 10 lines before SavePasswordPreflight.decide( (window-relative line 3) -- the lock-state decision is not fed by a real lock check this close to it
 
 OVERALL: FAIL -- see the failing assertion(s) above
 EXIT=1
 
---- Step 3: reverted step 2's plant byte-identically, then planted a throwaway
-    presentSavePasswordConfirm( call BEFORE the real checkAndExpireIfNeeded( call.
-    Expect assertion (B) FAIL, non-zero exit, naming the out-of-order call. ---
-== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1164 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
-PASS (found at window-relative line 6)
+--- Step 2 (the ORIGINAL WR-08 mutation, re-run against the current tree): the pre-UI
+    SessionLifecycle.checkAndExpireIfNeeded( call commented out entirely (both call sites
+    otherwise untouched). Confirms the re-anchored gate still catches the regression WR-08
+    was originally built for -- the re-anchoring did not trade one blind spot for another.
+    Expect assertion (A) FAIL, non-zero exit. ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found within 10 lines before SavePasswordPreflight.decide( (window-relative line 4) -- the lock-state decision is not fed by a real lock check this close to it
+
+OVERALL: FAIL -- see the failing assertion(s) above
+EXIT=1
+
+--- Step 3: a throwaway presentSavePasswordConfirm( call inserted BEFORE the real
+    top-of-function checkAndExpireIfNeeded( call. Expect assertion (A) PASS (the check
+    still feeds decide( within the window) but assertion (B) FAIL, non-zero exit.
+    naming the out-of-order UI presentation. ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 5), within 10 lines before it (lines 1001-1208 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 4, 1 line(s) before the decision)
 == assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
 FAIL -- a UI presentation or session-key read occurs BEFORE the lock check:
-5:        presentSavePasswordConfirm(serviceIdentifier: , username: , onConfirm: {}, onCancel: {})
+3:        presentSavePasswordConfirm(serviceIdentifier: , username: , onConfirm: {}, onCancel: {})
 
 OVERALL: FAIL -- see the failing assertion(s) above
 EXIT=1
 
---- Step 4: reverted the plant byte-identically. Expect PASS again. ---
-== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines 982-1161 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
-PASS (found at window-relative line 3)
+--- Step 4: revert confirmed byte-identical (git diff --stat empty); gate on the clean tree
+    once more (expect PASS, exit 0) ---
+== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line 4), within 10 lines before it (lines 1001-1207 of ios/PasskeyVault/PasskeyVaultAutoFill/CredentialProviderViewController.swift) ==
+PASS (found at window-relative line 3, 1 line(s) before the decision)
 == assertion (B): no present*(/SessionKeyReader.importUserKey( call appears BEFORE that check ==
 PASS
 
 OVERALL: PASS -- prepareInterface(for: ASSavePasswordRequest) checks the lock state first, before any UI/session-key read
 EXIT=0
+
+==> ALL THREE mutations correctly failed the re-anchored gate; the clean tree passes before and after every mutation; the working tree is byte-identical to the pre-transcript state.

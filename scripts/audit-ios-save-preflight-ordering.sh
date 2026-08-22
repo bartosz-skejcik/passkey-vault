@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# audit-ios-save-preflight-ordering.sh -- WR-08 (44-REVIEW.md). `SavePasswordOverrideTests.swift`
+# audit-ios-save-preflight-ordering.sh -- WR-08 (44-REVIEW.md), RE-ANCHORED by the 44-VERIFICATION.md
+# gap-1 fix (44-gap-closure, see git log for the fixing commit). `SavePasswordOverrideTests.swift`
 # exercises `SavePasswordPreflight.decide(isUnlocked:)` in isolation -- a two-case identity mapping
 # (`decide(false) == .refuseLocked`, `decide(true) == .proceed`) that is the function restated, not
 # evidence for the actual T-43-12 security claim (44-04-SUMMARY.md coverage entry D1): that
@@ -15,23 +16,60 @@
 # single call site with a known generous gap to its neighbour -- never a general "find where a
 # function ends" scanner, the CR-02/CR-03 trap `35-REVIEW.md` named).
 #
+# THE BUG THIS RE-ANCHOR FIXES (44-VERIFICATION.md gap 1, reproduced independently before this fix
+# and confirmed still reproducing on the pre-fix script): assertion (A) originally located the
+# lock check via `grep -nF 'SessionLifecycle.checkAndExpireIfNeeded(' | head -1` over the WHOLE
+# bounded function body -- i.e. "whichever call happens to come first textually". The WR-01 fix
+# (commit 1fe55a0) added a SECOND `SessionLifecycle.checkAndExpireIfNeeded(` call inside the
+# `runSavePipeline` closure (a re-check run AFTER the user confirms the sheet, WR-01's own stated
+# purpose). That second call is declared textually EARLIER in the body than the point where
+# `presentSavePasswordConfirm(` is actually invoked (Swift closures are declared where written,
+# invoked later) -- so `head -1`'s single anchor was never wrong about WHICH call it found (it is
+# still, correctly, the FIRST checkAndExpireIfNeeded( in the body), but that anchor is USELESS as a
+# proxy for "the pre-UI check" once TWO calls exist with different runtime roles. Deleting the real
+# top-of-function pre-UI check (this gate's headline mutation, see the falsification log) left the
+# closure's re-check as the sole match; assertion (A) still found *a* call and still reported PASS,
+# because "any match" was never the right question.
+#
+# THE FIX: anchor on WHAT THE CHECK FEEDS, not on textual position. `SavePasswordPreflight.decide(`
+# is the single call whose `isUnlocked:` argument is the actual security decision (T-43-12) --
+# there is exactly one such call in the body, immediately consuming the pre-UI check's result. This
+# script now (a) requires `SavePasswordPreflight.decide(` to appear EXACTLY ONCE (ambiguous or
+# absent -> hard ERROR, never a silent skip), then (b) requires
+# `SessionLifecycle.checkAndExpireIfNeeded(` to appear within a small, bounded window of lines
+# STRICTLY BEFORE that one `decide(` call (MAX_ANCHOR_GAP below -- the real, measured gap in the
+# current tree is 1 line; the window is a generous multiple of that, never unbounded). A call
+# living anywhere else in the body (e.g. inside a later closure, feeding nothing) can no longer
+# satisfy assertion (A), because it is not the call `decide(` actually consumes. This is positional
+# in the sense that matters (proximity to the thing it must feed), not order-of-textual-appearance
+# in the whole window -- the exact distinction the original `head -1` anchor collapsed.
+#
 # Two assertions, both against the bounded body of
 # `override func prepareInterface(for request: ASSavePasswordRequest)`:
 #
-#   (A) `SessionLifecycle.checkAndExpireIfNeeded(` appears in the body at all (a call site that
-#       stopped calling it produces no compile error -- this is the failure mode T-43-12 exists to
-#       prevent from ever reaching production silently).
+#   (A) A `SessionLifecycle.checkAndExpireIfNeeded(` call appears within `MAX_ANCHOR_GAP` lines
+#       BEFORE the single `SavePasswordPreflight.decide(` call in the body -- i.e. the lock check
+#       genuinely feeds the security decision, not merely "some call with this name exists
+#       somewhere in the function".
 #   (B) No `present*(`-shaped call (a UI presentation) and no `SessionKeyReader.importUserKey(`
-#       call (a session-key read) appears BEFORE the first `SessionLifecycle.checkAndExpireIfNeeded(`
-#       occurrence in the body -- i.e. the lock check is not merely present, but runs first.
+#       call (a session-key read) appears BEFORE that anchored check -- i.e. the lock check is not
+#       merely present, but runs first.
 #
-# Falsified both directions this session (transcript: ios/evidence/44/44-fix-wr08-falsification.log):
-#   1. `SessionLifecycle.checkAndExpireIfNeeded(` temporarily commented out inside the function body
-#      -> assertion (A) FAILS, non-zero exit, naming the missing call.
-#   2. A throwaway `presentSavePasswordConfirm(` call temporarily inserted BEFORE the real
-#      `checkAndExpireIfNeeded` call -> assertion (B) FAILS, non-zero exit, naming the out-of-order
-#      call.
-#   Both mutations reverted byte-identically; exit 0 confirmed again after each revert.
+# Falsified (transcript: ios/evidence/44/44-fix-wr08-falsification.log, RE-RECORDED against the
+# current tree and this re-anchored script -- the prior transcript at this same path was stale,
+# predating the WR-01 regression this re-anchor fixes, per 44-VERIFICATION.md gap 1 item 4):
+#   1. The pre-UI lock check deleted outright, replaced with
+#      `let preflight = SavePasswordPreflight.decide(isUnlocked: true)` (the EXACT mutation
+#      44-VERIFICATION.md's verifier used to prove the pre-fix gate vacuous, with the WR-01
+#      in-closure re-check left intact) -> assertion (A) FAILS, non-zero exit: no
+#      `checkAndExpireIfNeeded(` call within MAX_ANCHOR_GAP lines before the sole `decide(` call.
+#   2. The ORIGINAL WR-08 mutation re-run against the current tree: `SessionLifecycle.checkAndExpireIfNeeded(`
+#      commented out entirely (both call sites untouched otherwise) -> assertion (A) FAILS,
+#      non-zero exit, naming the missing anchor.
+#   3. A throwaway `presentSavePasswordConfirm(` call temporarily inserted BEFORE the real
+#      top-of-function `checkAndExpireIfNeeded` call -> assertion (B) FAILS, non-zero exit, naming
+#      the out-of-order call.
+#   All three mutations reverted byte-identically; exit 0 confirmed again after each revert.
 #
 # Never relies on bash's post-pipe exit-code array (zsh is this project's shell -- landmine L-3).
 # Missing-input precheck FAILS LOUDLY, never skips (T-41-42's own discipline, reused here).
@@ -127,16 +165,53 @@ trap 'rm -f "$WINDOW_FILE" "$STRIPPED_FILE"' EXIT
 strip_comments_and_strings "$WINDOW_FILE" > "$STRIPPED_FILE"
 
 FAIL=0
-
-check_line="$(grep -nF 'SessionLifecycle.checkAndExpireIfNeeded(' "$STRIPPED_FILE" | head -1 | cut -d: -f1 || true)"
 say() { printf '%s\n' "$*"; }
 
-say "== assertion (A): SessionLifecycle.checkAndExpireIfNeeded( appears in the body (lines ${start_line}-${end_line} of $SRC_FILE) =="
+# --- Anchor: the single SavePasswordPreflight.decide( call, not "any" checkAndExpireIfNeeded( ---
+# See this file's own header for why textual-first-match ("head -1" over the whole window) is the
+# defect this replaces. `decide(` is required EXACTLY ONCE: zero means the decision call itself was
+# removed/renamed (the whole gate has no anchor left to check against); more than one is ambiguous
+# about which call the lock check must feed. Either case is a hard ERROR, never a silent skip.
+DECIDE_PATTERN='SavePasswordPreflight\.decide\('
+decide_matches="$(grep -nE "$DECIDE_PATTERN" "$STRIPPED_FILE" || true)"
+decide_count=0
+if [ -n "$decide_matches" ]; then
+  decide_count="$(printf '%s\n' "$decide_matches" | wc -l | tr -d ' ')"
+fi
+if [ "$decide_count" -ne 1 ]; then
+  echo "ERROR: expected exactly one 'SavePasswordPreflight.decide(' call in prepareInterface(for: ASSavePasswordRequest)'s body (lines ${start_line}-${end_line} of $SRC_FILE), found ${decide_count} -- this gate's anchor is ambiguous or the decision call itself is missing/renamed; refusing to report PASS with no unambiguous anchor to check against" >&2
+  exit 1
+fi
+decide_line="$(printf '%s\n' "$decide_matches" | cut -d: -f1)"
+
+# The real, measured gap in the current tree is 1 line (checkAndExpireIfNeeded( on the line
+# immediately before decide(). MAX_ANCHOR_GAP is a generous multiple of that -- bounded, never
+# unbounded -- so a genuinely unrelated, distant checkAndExpireIfNeeded( call earlier in the body
+# (e.g. belonging to a neighbouring closure) cannot be mistaken for the one feeding this decision.
+MAX_ANCHOR_GAP=10
+gap_window_start=$(( decide_line - MAX_ANCHOR_GAP ))
+if [ "$gap_window_start" -lt 1 ]; then
+  gap_window_start=1
+fi
+
+check_matches="$(sed -n "${gap_window_start},${decide_line}p" "$STRIPPED_FILE" | grep -nF 'SessionLifecycle.checkAndExpireIfNeeded(' || true)"
+check_line=""
+if [ -n "$check_matches" ]; then
+  # Closest match to decide_line within the small window (the window is already bounded to
+  # MAX_ANCHOR_GAP lines, so "last match in the window" IS "closest to decide_line" -- not a
+  # head/tail-over-an-absence-proving-command; this selects among KNOWN-PRESENT matches).
+  check_rel_line="$(printf '%s\n' "$check_matches" | awk -F: '{ln=$1} END{if (NR>0) print ln}')"
+  if [ -n "$check_rel_line" ]; then
+    check_line=$(( gap_window_start + check_rel_line - 1 ))
+  fi
+fi
+
+say "== assertion (A): a SessionLifecycle.checkAndExpireIfNeeded( call feeds the sole SavePasswordPreflight.decide( call (window-relative line ${decide_line}), within ${MAX_ANCHOR_GAP} lines before it (lines ${start_line}-${end_line} of $SRC_FILE) =="
 if [ -z "$check_line" ]; then
-  say "FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found in prepareInterface(for: ASSavePasswordRequest)'s own body"
+  say "FAIL -- no SessionLifecycle.checkAndExpireIfNeeded( call found within ${MAX_ANCHOR_GAP} lines before SavePasswordPreflight.decide( (window-relative line ${decide_line}) -- the lock-state decision is not fed by a real lock check this close to it"
   FAIL=1
 else
-  say "PASS (found at window-relative line $check_line)"
+  say "PASS (found at window-relative line $check_line, $(( decide_line - check_line )) line(s) before the decision)"
 fi
 
 if [ -n "$check_line" ]; then
