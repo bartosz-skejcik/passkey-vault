@@ -586,7 +586,14 @@ PY
       restored=1
     fi
   }
-  trap restore EXIT
+  # WR-07 (44-REVIEW.md): `trap` is process-global in bash -- `trap restore EXIT` here used to
+  # REPLACE cleanup_sc_generate's own EXIT handler (installed above), not compose with it, and the
+  # later `trap - EXIT` REMOVED it entirely, leaving no EXIT handler at all for the rest of this
+  # function. Any later failure (or normal completion) then orphaned the throwaway pv-server and
+  # left its temp DB directory on disk -- the script's own port precheck then refuses to run next
+  # time. Compose instead of replace, and restore the outer handler instead of removing it.
+  restore_and_cleanup_sc_generate() { restore; cleanup_sc_generate; }
+  trap restore_and_cleanup_sc_generate EXIT
 
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-red-build.log build "PV_PROBE_E44_05_OFFER"
   xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -598,7 +605,7 @@ PY
   echo "==> sc-generate: RED control screenshot -- $red_dest"
 
   restore
-  trap - EXIT
+  trap cleanup_sc_generate EXIT
   echo "==> sc-generate: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-05-restore-build.log build
 
@@ -1001,7 +1008,10 @@ sc_save_direct_invocation_pixel_proof() {
       restored=1
     fi
   }
-  trap restore EXIT
+  # WR-07 (44-REVIEW.md): compose with cleanup_sc_save's own EXIT handler rather than replacing
+  # it -- see the sc-generate command's identical fix above for the full rationale.
+  restore_and_cleanup_sc_save() { restore; cleanup_sc_save; }
+  trap restore_and_cleanup_sc_save EXIT
 
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-red-build.log build "PV_PROBE_E44_04_CONFIRM"
   xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -1013,7 +1023,7 @@ sc_save_direct_invocation_pixel_proof() {
   echo "==> sc-save: RED control screenshot -- $red_dest"
 
   restore
-  trap - EXIT
+  trap cleanup_sc_save EXIT
   echo "==> sc-save: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-04-restore-build.log build
 
@@ -1393,7 +1403,10 @@ sc_insert_direct_invocation_proof() {
       restored=1
     fi
   }
-  trap restore EXIT
+  # WR-07 (44-REVIEW.md): compose with cleanup_sc_insert's own EXIT handler rather than replacing
+  # it -- see the sc-generate command's identical fix above for the full rationale.
+  restore_and_cleanup_sc_insert() { restore; cleanup_sc_insert; }
+  trap restore_and_cleanup_sc_insert EXIT
 
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-red-build.log build "PV_PROBE_E44_06_INSERT"
   xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -1405,7 +1418,7 @@ sc_insert_direct_invocation_proof() {
   echo "==> sc-insert: RED control screenshot -- $red_dest"
 
   restore
-  trap - EXIT
+  trap cleanup_sc_insert EXIT
   echo "==> sc-insert: RED control -- reverted $view_file, rebuilding to restore the real (non-probe) artifact"
   build_with_l10_retry "$udid" "PasskeyVault" /tmp/pv-e44-06-restore-build.log build
 
