@@ -474,11 +474,16 @@ pub fn generate_character_password_from_rules(
         ));
     }
 
-    let target_length = match rules.min_length {
-        Some(explicit_min) => explicit_min.max(min_bound),
-        None => CHAR_DEFAULT_LENGTH.max(min_bound),
-    };
-    let length = target_length.min(effective_max);
+    // CR-03 (44-REVIEW.md): `minlength` is a FLOOR, not a target -- the
+    // generator must draw as long a password as the rules permit, capped
+    // by the app's own default policy, not collapse to the shortest legal
+    // length whenever a site states a minimum. Preferring
+    // `CHAR_DEFAULT_LENGTH` (20) over the stated `min_length` (when it is
+    // smaller) and only THEN clamping down to `effective_max` is what
+    // makes `minlength: 10; maxlength: 20;` produce 20, not 10.
+    let preferred_length =
+        CHAR_DEFAULT_LENGTH.max(min_bound).max(rules.min_length.unwrap_or(0));
+    let length = preferred_length.min(effective_max);
 
     // Slot assignment: one Required(class) slot per required class, the
     // rest General -- then CSPRNG-shuffle the ASSIGNMENT (Fisher-Yates,
@@ -851,6 +856,11 @@ mod tests {
     /// confirming this test then FAILS) is recorded in this plan's
     /// SUMMARY, then reverted -- this test's own load-bearing-ness is
     /// therefore demonstrated, not merely asserted.
+    /// CR-03 (44-REVIEW.md): with `maxlength` unset, `minlength: 12` is a
+    /// FLOOR permitting up to `CHAR_DEFAULT_LENGTH` (20) -- the generated
+    /// password is 20 characters, not 12; this test's length assertion is
+    /// updated to the corrected semantics (the class-inclusion guarantee
+    /// this test exists for is unaffected by exactly which length wins).
     #[test]
     fn generate_with_all_four_required_classes_and_min_length_12_guarantees_inclusion() {
         let rules = PasswordRules {
@@ -868,8 +878,8 @@ mod tests {
                 .expect("required classes fitting within min_length must succeed");
             assert_eq!(
                 password.chars().count(),
-                12,
-                "length must be exactly the requested min_length: {password}"
+                CHAR_DEFAULT_LENGTH,
+                "length must be the app's own default, minlength is a floor not a target: {password}"
             );
             assert!(
                 password.chars().any(|c| CHARSET_LOWERCASE.contains(c)),
@@ -910,12 +920,17 @@ mod tests {
         }
     }
 
+    /// CR-03 (44-REVIEW.md): `minlength` is a FLOOR, never the generator's
+    /// target length. A `min_length` below `CHAR_DEFAULT_LENGTH` (20), with
+    /// no `maxlength` stated, must produce the app's own default length --
+    /// NOT `CHAR_MIN_LENGTH` (8), which is this test's pre-CR-03 name and
+    /// assertion; both are updated to the corrected semantics.
     #[test]
-    fn generate_clamps_a_too_small_min_length_up_to_char_min_length() {
+    fn generate_with_a_too_small_min_length_produces_the_default_length() {
         let rules = PasswordRules { min_length: Some(3), ..Default::default() };
         let password = generate_character_password_from_rules(&rules)
             .expect("a too-small min_length must be clamped up, not rejected");
-        assert_eq!(password.chars().count(), CHAR_MIN_LENGTH);
+        assert_eq!(password.chars().count(), CHAR_DEFAULT_LENGTH);
     }
 
     #[test]
@@ -1063,5 +1078,54 @@ mod tests {
             });
             assert!(result.is_ok(), "rules text panicked: {rules_text:?}");
         }
+    }
+
+    /// CR-03 (44-REVIEW.md): stating `minlength` used to become the TARGET
+    /// length, not a floor -- discarding the app's own `CHAR_DEFAULT_LENGTH`
+    /// (20) even when `maxlength` permitted it. The phase's own committed
+    /// live evidence showed `minlength: 10; maxlength: 20; ...` producing a
+    /// 10-character password. It must produce 20.
+    #[test]
+    fn generate_with_minlength_10_and_maxlength_20_produces_the_default_20_not_the_minimum() {
+        let rules = PasswordRules {
+            min_length: Some(10),
+            max_length: Some(20),
+            ..Default::default()
+        };
+        let password = generate_character_password_from_rules(&rules)
+            .expect("minlength: 10; maxlength: 20; must be satisfiable");
+        assert_eq!(
+            password.chars().count(),
+            20,
+            "minlength must be a floor, not the target -- maxlength permits the app's own default"
+        );
+    }
+
+    /// A stated `minlength` with no `maxlength` at all must still produce
+    /// the app's own default length, not collapse to the minimum.
+    #[test]
+    fn generate_with_minlength_8_and_no_maxlength_produces_more_than_8() {
+        let rules = PasswordRules { min_length: Some(8), ..Default::default() };
+        let password = generate_character_password_from_rules(&rules)
+            .expect("minlength: 8; with no maxlength must be satisfiable");
+        assert_eq!(
+            password.chars().count(),
+            CHAR_DEFAULT_LENGTH,
+            "with no maxlength constraint, the default length must be used, not the stated minimum"
+        );
+    }
+
+    /// A `maxlength` below the app's own default must clamp DOWN to
+    /// `maxlength`, never up past it.
+    #[test]
+    fn generate_with_maxlength_below_default_clamps_down_to_maxlength() {
+        let rules = PasswordRules {
+            min_length: Some(8),
+            max_length: Some(15),
+            ..Default::default()
+        };
+        let password = generate_character_password_from_rules(&rules)
+            .expect("minlength: 8; maxlength: 15; must be satisfiable");
+        assert_eq!(password.chars().count(), 15);
     }
 }
