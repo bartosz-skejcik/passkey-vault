@@ -475,6 +475,19 @@ assert_interop() {
   # expect_ok=false: the ONLY failure mode is an explicit ok=true appearing (the falsification
   # did not actually break anything) -- an explicit ok=false line, or no /assert/finish line at
   # all, are BOTH valid "fails visibly" outcomes for a corrupted, unconditionally-unusable item.
+  #
+  # 43-VERIFICATION.md WARNING A: the absence branch above is non-vacuous ONLY if there is
+  # POSITIVE evidence the harness genuinely engaged rp-fixture for THIS ceremony -- otherwise a
+  # harness that never ran at all (crashed before driving anything, or was never invoked) would
+  # ALSO produce "no /assert/finish line" and be misread as a passing falsification. This was
+  # true by accident, not by construction: the ONE captured corrupt-leg transcript happens to
+  # show `/challenge/assert ... status=issued`, but nothing above required that line to be
+  # present. Require it explicitly -- this project's own recurring L-3/L-9 defect shape ("a
+  # missing input classified as a verdict", also named L-40 in ios/IOS-SPIKE-LOG.md).
+  if ! grep -qE "RPFIXTURE\|route=/challenge/assert rp_id=localhost status=issued" "$target"; then
+    echo "FAIL: interop -- no RPFIXTURE /challenge/assert status=issued line for rp_id=localhost in $target -- cannot distinguish 'the harness genuinely ran and failed closed' from 'the harness never ran at all' (43-VERIFICATION.md WARNING A)" >&2
+    return 1
+  fi
   if grep -qE "RPFIXTURE\|route=/assert/finish rp_id=localhost ok=true " "$target"; then
     echo "FAIL: interop -- crates/rp-fixture's own /assert/finish reported ok=true for a corrupted credential (falsification did not fail as designed) in $target" >&2
     return 1
