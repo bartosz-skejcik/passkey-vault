@@ -1,0 +1,63 @@
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.MNBgVYiRhc for the full transcript
+    t =    25.21s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.22s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.24s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    25.76s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.79s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.80s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.81s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    25.82s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.84s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.86s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.88s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.40s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    26.41s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    26.42s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    26.42s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.43s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    26.45s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    26.47s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    26.49s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    27.01s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    27.04s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    27.05s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    27.06s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    27.07s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    27.09s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    27.11s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    27.13s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    27.65s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    27.68s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    27.69s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    27.70s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    27.71s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    27.73s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    27.75s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    27.77s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    28.29s Checking existence of `"savePasswordForm.status" StaticText`
+    t =    28.32s Find the "savePasswordForm.status" StaticText
+    t =    28.33s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =    28.43s Added attachment named 'final-state-status=Submitted-screenshot'
+    t =    28.43s Requesting snapshot of accessibility hierarchy for app with pid 27692
+    t =    28.47s Requesting snapshot of accessibility hierarchy for app with pid 27692
+    t =    28.49s Added attachment named 'final-state-status=Submitted-hierarchy'
+    t =    28.49s Tear Down
+Test Case '-[PasskeyVaultUITests.SavePasswordFormHarnessUITests testDriveSavePasswordForm]' passed (28.512 seconds).
+Test Suite 'SavePasswordFormHarnessUITests' passed at 2026-08-22 5:41:51.903 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 28.512 (28.513) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 5:41:51.904 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 28.512 (28.513) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 5:41:51.904 PM.
+	 Executed 1 test, with 0 failures (0 unexpected) in 28.512 (28.514) seconds
+2026-08-22 17:41:52.239 xcodebuild[27696:14063903] [MT] IDETestOperationsObserverDebug: 30.963 elapsed -- Testing started completed.
+2026-08-22 17:41:52.239 xcodebuild[27696:14063903] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 17:41:52.239 xcodebuild[27696:14063903] [MT] IDETestOperationsObserverDebug: 30.963 sec, +30.963 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_5-41-06-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+
+## PVDIAG| markers from the extension process (subsystem cloud.blonie.PasskeyVault), this run

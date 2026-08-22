@@ -38,10 +38,23 @@ struct PasskeyVaultHarnessApp: App {
             // the SAME screen -- `NativeSignInView`'s own accessibility identifiers
             // (`nativeSignIn.button`/`nativeSignIn.status`) are unchanged, so
             // `NativeAppSignInUITests` keeps working unmodified.
-            VStack(spacing: 32) {
-                NativeSignInView()
-                Divider()
-                NativeCreateView()
+            //
+            // Phase 44 (44-03-PLAN.md), Task 1: wrapped in a `ScrollView` -- three stacked
+            // sections plus the keyboard covering the bottom ~40% of the screen while the new
+            // `SavePasswordFormView`'s password field is focused pushed `savePasswordForm.submit`
+            // off-screen with no way to scroll to it (a real, in-scope bug found live: XCUITest's
+            // own "Computed hit point {-1, -1} after scrolling to visible" against a bare,
+            // non-scrollable `VStack`). Rule 1 fix -- the harness must genuinely be reachable by a
+            // real tap, not merely present in the view hierarchy.
+            ScrollView {
+                VStack(spacing: 32) {
+                    NativeSignInView()
+                    Divider()
+                    NativeCreateView()
+                    Divider()
+                    SavePasswordFormView()
+                }
+                .padding(.vertical, 32)
             }
         }
     }

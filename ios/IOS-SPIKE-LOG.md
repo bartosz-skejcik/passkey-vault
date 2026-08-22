@@ -6567,3 +6567,62 @@ Phase 43 closed after one gap-closure cycle. Owed to a human / later work:
 3. **L-14 remains the milestone's ship blocker** — re-probed live 2026-08-22, still exits 65 with
    the same `UniffiHandleMap…deinit` / `EarlyPerfInliner` crash. **Every Phase 43 proof is a Debug
    build**; no claim in this phase covers Release.
+
+## Phase 44 — Open Questions 1/2 settled
+
+**2026-08-22.** `scripts/ios-autofill-e44.sh probe` (Plan 44-03, Task 1) settled, live, on the
+pinned simulator (`iPhone 16` / iOS 26.5 SDK, Xcode 26.6): does a real text-entry surface —
+`SavePasswordFormView.swift`'s two genuine `UIViewRepresentable`-wrapped `UITextField`s
+(`.textContentType(.username)`, `.textContentType(.newPassword)` + a real
+`UITextInputPasswordRules` descriptor: `minlength: 10; maxlength: 20; required: lower; required:
+upper; required: digit;`) — actually cause the system to invoke `PasskeyVaultAutoFill`'s two new
+`prepareInterface(for: ASSavePasswordRequest)` / `prepareInterface(for:
+ASGeneratePasswordsRequest)` overrides (iOS 26.2+, this milestone's own new floor)? Info.plist's
+`ASCredentialProviderExtensionCapabilities` dict carries all three new keys
+(`ProvidesTextToInsert`, `SupportsSavePasswordCredentials`, `SupportsGeneratePasswordCredentials`)
+so this measures a genuinely capability-declared extension, never L-7's own known-broken,
+capability-less template precedent.
+
+**Finding: NEITHER override fired, under either of two configurations tried.**
+
+1. **`.userInitiated`-shaped trigger**: type into both fields, tap "Submit" (unfocuses both
+   fields via `resignFirstResponder()`).
+2. **`.formDidDisappear`-shaped trigger**: the SAME Submit action, additionally removing both
+   fields from the SwiftUI view hierarchy 0.3s later (`ASSavePasswordRequestEvent`'s own header
+   doc names "a form is submitted or removed from the screen" as this event's trigger condition —
+   this harness gives the system that literal removal signal, not merely a resigned keyboard).
+
+`xcrun simctl spawn <udid> log show --predicate 'subsystem == "cloud.blonie.PasskeyVault" AND
+category == "fill"'`, scoped to each run's own start timestamp, captured **zero** `PVDIAG|` lines
+in either configuration — not merely zero matching lines, the `PasskeyVaultAutoFill` extension
+process itself never appears in `launchctl list` output captured immediately after either run. The
+harness's own `PVHARNESS|stage=submit`/`PVHARNESS|stage=form-removed` markers DID fire (confirming
+the harness itself worked as designed — the field values were real, Submit was genuinely tapped,
+both trigger shapes were genuinely exercised), so the absence is informative, not a broken harness.
+
+**Log-capture pipeline sanity-checked, same session**: `grep 'PVDIAG|' ios/evidence/43/e43-10-*.log`
+shows this exact technique (same subsystem `cloud.blonie.PasskeyVault`, category `fill`) DID
+capture real `PVDIAG|method=viewDidLoad`/`viewWillAppear`/`viewDidAppear` lines from Phase 43's own
+session earlier the SAME day on the SAME simulator — the zero-line result above is not an artifact
+of a broken query.
+
+**What was NOT tried, honestly disclosed**: a real `UIViewController`-level `viewWillDisappear`/
+navigation-away dismissal (e.g. a `NavigationStack` pop, or a presented sheet's dismissal) —
+`SavePasswordFormView` lives inside a single always-visible `ScrollView` screen with no navigation
+container, so its own SwiftUI-conditional field removal is the closest signal this harness can
+produce without a larger restructure; it is NOT proven equivalent to a genuine
+`UIViewController` disappearance, which is the shape `ASSavePasswordRequestEventFormDidDisappear`'s
+own header doc most naturally reads as describing. A second, unruled-out possibility: this
+heuristic may simply behave differently — or not be exercised at all — on the iOS Simulator versus
+a real device, a distinction this project has already recorded elsewhere (Phase 43's own L-14/SC2
+real-device-vs-simulator divergences). Neither alternative was tested this session.
+
+**Resolution recorded in Task 2's checkpoint** (44-03-PLAN.md): given this negative finding, Plans
+44-04/44-05/44-06 do not proceed exactly as originally written — see the checkpoint's own
+`did-not-fire` branch for the fallback strategy (direct override invocation from a host/extension
+test target, bypassing system routing; an explicit "system routing into this override is unproven
+on this toolchain" statement carried into `ios/IOS-SPIKE-LOG.md` and each plan's own SUMMARY).
+
+Evidence: `ios/evidence/44/44-03-probe.log` (the `scripts/ios-autofill-e44.sh probe` run, exit 0,
+both verdicts printed decisively); `PVHARNESS|` markers confirmed via a separate `log show` capture
+against subsystem `cloud.blonie.PasskeyVaultHarness`.

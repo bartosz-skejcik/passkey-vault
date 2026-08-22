@@ -86,10 +86,45 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     // they existed to answer a question, the question is answered, and keeping them would ship a
     // deprecated spelling that `scripts/audit-ios-autofill-deprecated-apis.sh` correctly refuses.
 
-    /// Never implemented in production (no `ProvidesTextToInsert` capability declared) -- logged
-    /// purely for completeness of "every AS* override this class can implement".
+    /// Never implemented in production (no `ProvidesTextToInsert` capability declared, though Plan
+    /// 44-03 has since ADDED it to Info.plist for the SAVE-01/02/03 tracer -- this override is
+    /// still diagnostic-only, `#if DEBUG`-gated). Logged purely for completeness of "every AS*
+    /// override this class can implement". Plan 44-03's own `<action>` text: there is no method
+    /// PARAMETER to inspect here (unlike the two new overrides below, which each receive a real
+    /// request object) -- `self`/`extensionContext` expose no per-invocation context either
+    /// (`ASCredentialProviderExtensionContext`'s own public surface carries no property describing
+    /// "what triggered this call"). Logging that absence plainly is itself part of settling Open
+    /// Question 1/2 for SAVE-03 -- carried forward honestly into Plan 44-06 rather than assumed.
     override func prepareInterfaceForUserChoosingTextToInsert() {
-        Self.diagLogger.log("PVDIAG|method=prepareInterfaceForUserChoosingTextToInsert")
+        Self.diagLogger.log("PVDIAG|method=prepareInterfaceForUserChoosingTextToInsert context=none-available")
+        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    }
+
+    /// Phase 44 (44-03-PLAN.md), SAVE-01/02: DEBUG-only diagnostic, mirroring the pattern above --
+    /// never implemented for real yet (Plans 44-04/44-05 own the real save/generate handling).
+    /// `NS_SWIFT_NAME(prepareInterface(for:))` on `-prepareInterfaceForSavePasswordRequest:`
+    /// confirmed against the real SDK header (`ASCredentialProviderViewController.h`, this
+    /// machine's Xcode 26.6 / iPhoneSimulator SDK), never assumed by eye (L-1/L-43's own
+    /// discipline) -- the plan's own literal signature matched verbatim, no L-43-shaped surprise
+    /// this time. `event`/`serviceIdentifier` are logged; the credential (username/password) is
+    /// NEVER logged, in any privacy tier (T-44-06).
+    override func prepareInterface(for request: ASSavePasswordRequest) {
+        Self.diagLogger.log(
+            "PVDIAG|method=prepareInterface(for:ASSavePasswordRequest) event=\(String(describing: request.event), privacy: .public) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private)"
+        )
+        extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    }
+
+    /// Phase 44 (44-03-PLAN.md), SAVE-02: DEBUG-only diagnostic, same discipline as the save
+    /// override above. `passwordFieldPasswordRules` LENGTH is logged (`.public` -- a bounded
+    /// integer, no content), never the raw rules string itself, even though rules text is not
+    /// secret in the same sense a password is -- mirrors T-41-12/T-41-15's inherited discipline of
+    /// keeping every per-invocation string payload `.private` on this diagnostic path by default.
+    override func prepareInterface(for request: ASGeneratePasswordsRequest) {
+        let rulesLength = request.passwordFieldPasswordRules?.count ?? -1
+        Self.diagLogger.log(
+            "PVDIAG|method=prepareInterface(for:ASGeneratePasswordsRequest) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private) passwordFieldPasswordRulesLength=\(rulesLength, privacy: .public)"
+        )
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 

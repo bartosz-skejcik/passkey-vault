@@ -52,6 +52,19 @@
 				<true/>
 				<key>ShowsConfigurationUI</key>
 				<true/>
+				<!-- Phase 44 (44-03-PLAN.md), SAVE-01/02/03: declared TOGETHER per
+				     44-RESEARCH.md's own citation of Apple's worked Info.plist example, so this
+				     tracer measures a genuinely capability-declared extension, not L-7's own
+				     known-broken, capability-less template precedent.
+				     SupportsGeneratePasswordCredentialsWithUI deliberately OMITTED -- its
+				     documented default is `true` (the interactive UI path, never the silent
+				     one), which is the wanted behavior here. -->
+				<key>ProvidesTextToInsert</key>
+				<true/>
+				<key>SupportsSavePasswordCredentials</key>
+				<true/>
+				<key>SupportsGeneratePasswordCredentials</key>
+				<true/>
 			</dict>
 		</dict>
 	</dict>
