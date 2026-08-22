@@ -6626,3 +6626,126 @@ on this toolchain" statement carried into `ios/IOS-SPIKE-LOG.md` and each plan's
 Evidence: `ios/evidence/44/44-03-probe.log` (the `scripts/ios-autofill-e44.sh probe` run, exit 0,
 both verdicts printed decisively); `PVHARNESS|` markers confirmed via a separate `log show` capture
 against subsystem `cloud.blonie.PasskeyVaultHarness`.
+
+## Phase 44 -- Task 1b (checkpoint resolution, run 2): the two-entry-point landmine, and a real
+## positive finding for the generate-with-UI path
+
+**2026-08-22, same session.** The orchestrator did NOT accept the `did-not-fire` resolution above
+as final. Two facts, checked independently before resolving the checkpoint: the AutoFill provider
+IS elected on the pinned simulator (`pluginkit -m -p
+com.apple.authentication-services-credential-provider-ui` prints
+`+ cloud.blonie.PasskeyVault.AutoFill(1.0)`), and the installed `.appex` genuinely carries all six
+capability keys. Neither election nor capabilities explained the silence -- so the tracer's own
+instrumentation was suspect, not the system.
+
+**Landmine L-44: `44-03-PLAN.md`'s own Task 1 instrumented only the UI-presenting
+`prepareInterface(for: AS...)` pair; the system calls a DIFFERENT, silent method FIRST for both
+save and generate, and Task 1's harness interaction could never have reached either UI-presenting
+override.** From the real SDK header
+(`$(xcrun --sdk iphonesimulator --show-sdk-path)/System/Library/Frameworks/AuthenticationServices.framework/Headers/ASCredentialProviderViewController.h`,
+this machine's Xcode 26.6 / iPhoneSimulator 26.5 SDK, lines ~309-392):
+
+- Line 320: `-performSavePasswordRequestWithoutUserInteractionIfPossible:`
+  (`NS_SWIFT_NAME(performWithoutUserInteractionIfPossible(savePasswordRequest:))`, `ios(26.2)`).
+  Doc, line 309: *"When this method is called, your extension's view controller is not present on
+  the screen. You can request user interaction by calling `cancelRequest(with:)`, using
+  `ASExtensionError.userInteractionRequired`."* -- THIS is the system's real first entry point for
+  a save. `prepareInterfaceForSavePasswordRequest:` (line 335,
+  `NS_SWIFT_NAME(prepareInterface(for:))`) is reached ONLY after this method escalates via
+  `userInteractionRequired`. Task 1's own diagnostic override on the UI-presenting method alone was
+  therefore unreachable by construction -- the harness's Submit tap could never have triggered it,
+  regardless of field configuration.
+- Line 357: `-performGeneratePasswordsRequestWithoutUserInteraction:`
+  (`NS_SWIFT_NAME(performWithoutUserInteraction(generatePasswordsRequest:))`, `ios(26.2)`). Doc,
+  lines 344-345: *"When this method is called, your extension's view controller is not present on
+  the screen. `ASExtensionError.userInteractionRequired` will not be honored and treated as a
+  failure."* Doc on the UI-presenting sibling (`prepareInterfaceForGeneratePasswordsRequest:`, line
+  388), line 372: *"This flow can only be initiated by the user. It will not be triggered from
+  `-performGeneratePasswordsRequestWithoutUserInteraction:`"* -- the two generate paths are
+  DISJOINT, not an escalation chain like save. Typing/submitting a form (Task 1's own approach)
+  could never have reached the UI-presenting generate override under any field configuration
+  either; only a genuinely user-initiated system affordance can.
+
+Root cause of Task 1's negative finding, per this reading: an instrumentation gap (wrong entry
+points measured), not a genuine platform absence. `44-RESEARCH.md`, `ROADMAP.md`, and this plan's
+own titles all name `prepareInterfaceForSavePasswordRequest:`/
+`prepareInterfaceForGeneratePasswordsRequest:` as if they were the system's own entry points -- a
+real trap, in the L-1/L-43 family (the header/plan prose read as complete, but the ACTUAL dispatch
+chain has a silent-first step neither source called out plainly at a glance).
+
+**Task 1b**: both missing silent-path overrides added to `CredentialProviderViewController.swift`,
+mirroring the existing `PVDIAG|` diagnostic pattern. The save override cancels with
+`.userInteractionRequired` (matches the header's own documented escalation -- this is real
+production design Plan 44-04 builds its own confirm UI against, not a probe hack); the generate
+override cancels with `.userCanceled` (the header rules out `.userInteractionRequired` here).
+`NS_SWIFT_NAME` spellings for both confirmed against the real header text quoted above, then
+verified again by a clean `xcodebuild build` (both `PasskeyVault` and `PasskeyVaultHarness`
+schemes) -- no L-43-shaped surprise this time; the header's own selector-to-Swift-name mapping
+matched what the checkpoint resolution predicted, verbatim.
+
+**Run 2 probe** (`scripts/ios-autofill-e44.sh probe --run2`, new evidence file
+`ios/evidence/44/44-03-probe-run2.log`, run 1's file untouched), driving the SAME
+`SavePasswordFormHarnessUITests.testDriveSavePasswordForm` PLUS a new
+`testDriveGeneratePasswordAffordance` method (taps the new-password field WITHOUT typing, then
+polls for a system strong-password affordance and taps it if found):
+
+| Path | Method | Result |
+|------|--------|--------|
+| save, silent | `performWithoutUserInteractionIfPossible(savePasswordRequest:)` | DID NOT FIRE |
+| save, UI | `prepareInterface(for: ASSavePasswordRequest)` | DID NOT FIRE |
+| generate, silent | `performWithoutUserInteraction(generatePasswordsRequest:)` | **FIRED** |
+| generate, UI | `prepareInterface(for: ASGeneratePasswordsRequest)` | DID NOT FIRE |
+
+**Save path: still negative, honestly, under the same two field-interaction shapes Task 1 tried
+(Submit-triggered resign + form removal).** Neither the silent nor the UI save override fired in
+run 2 either. This is now a genuinely settled negative for THIS harness's interaction shape (typing
++ Submit) -- the earlier "wrong entry point" explanation is ruled out (the silent override IS now
+instrumented, and it still did not fire), so the honest remaining hypothesis is that this harness's
+save-trigger shape (a plain `UIViewRepresentable` `UITextField` pair inside a SwiftUI `ScrollView`,
+resigned + removed from the hierarchy) does not produce whatever signal the system's own save-detection
+heuristic actually watches for -- most likely a real `UIViewController`-level
+`viewWillDisappear`/navigation-pop dismissal, which this single-screen harness structurally cannot
+produce without a larger restructure (same caveat Task 1's own entry already recorded, still
+unresolved).
+
+**Generate path: a genuine, decisive, POSITIVE, receiver-side finding.** Tapping the new-password
+field (with no typing) surfaced a real system button, accessibility-identified
+`GenerateStrongPasswordButton`, labeled "Strong Password" -- found and tapped by
+`testDriveGeneratePasswordAffordance` at test-relative t=9.38s. `performWithoutUserInteraction
+(generatePasswordsRequest:)` fired ~0.9s later (log timestamp 17:52:34.815, tap at ~17:52:33.9),
+logging `serviceIdentifier=vault.blonie.cloud passwordFieldPasswordRulesLength=80` -- `80` is the
+EXACT byte length of `SavePasswordFormView`'s own rules descriptor string
+(`"minlength: 10; maxlength: 20; required: lower; required: upper; required: digit;"`, verified via
+`printf '%s' "..." | wc -c` -> `80`), positively confirming this is our OWN request object, our OWN
+service identifier, our OWN rules string reaching the extension -- not a coincidental log line.
+
+**The UI-presenting generate override (`prepareInterface(for: ASGeneratePasswordsRequest)`) did
+NOT fire in this same run, even though the affordance WAS tapped and the silent override WAS
+called.** Honest reading, not yet independently confirmed: this diagnostic-only run answers the
+silent call with `.userCanceled` (per the checkpoint resolution's own instruction, since
+`.userInteractionRequired` is documented as not honored here) -- it is plausible the system reads
+`.userCanceled` as "this provider declines to generate," and never escalates to the interactive
+`prepareInterface(for:)` at all, filling its OWN system-generated strong password directly instead
+(never observed independently this session -- the harness's password field content after the tap
+was not captured). This is a genuine open question for Plan 44-05, not resolved here: whether a
+DIFFERENT silent-override response (e.g. actually calling
+`completeGeneratePasswordRequest(results:completionHandler:)` from the silent handler, since its
+own doc frames it as attempting to "generate passwords based on developer-specified rules" without
+presenting UI) is required to make our own passwords appear as QuickType-bar candidates, OR whether
+the interactive UI path is reachable at all via this exact user gesture, OR via a different one
+(e.g. long-press context menu "Suggest Password" on the field, not tried this session).
+
+**What was tried and what was not, this run**: the QuickType-bar "Strong Password" tap was tried
+and DID surface a real, driveable system button -- confirmed positively. The interactive
+`prepareInterface(for: ASGeneratePasswordsRequest)` override remains NOT YET PROVEN reachable by
+ANY driveable harness gesture on this toolchain -- recorded plainly as unresolved, never
+substituted with the silent override's positive result as if it answered the same question.
+
+**Resolution re-presented in Task 2's checkpoint** (44-03-PLAN.md), given this new evidence: see
+the checkpoint's own re-presentation for the three-way branch decision, now backed by a
+per-path/per-override table instead of a single flat verdict.
+
+Evidence: `ios/evidence/44/44-03-probe-run2.log` (the `scripts/ios-autofill-e44.sh probe --run2`
+run, exit 0, all four verdicts printed decisively); full XCUITest transcript retained at
+`/tmp/pv-e44-run2-full.log` (session-local, not committed) confirms the `GenerateStrongPasswordButton`
+tap sequence quoted above.

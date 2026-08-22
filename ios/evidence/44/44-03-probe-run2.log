@@ -1,0 +1,65 @@
+## XCUITest drive (exit 0) -- see /var/folders/pm/7cfyh_553n554l9880l7y2rw0000gn/T/tmp.eThoRAT3PV for the full transcript
+    t =    24.43s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    24.45s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    24.47s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    24.99s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.02s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.03s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.05s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    25.06s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.08s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.10s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.11s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    25.64s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.66s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.68s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.69s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    25.71s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    25.73s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    25.74s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    25.76s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.28s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    26.31s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    26.33s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    26.34s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.35s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    26.37s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    26.39s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    26.41s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.93s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    26.95s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    26.97s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    26.98s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    26.99s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save Password"'
+    t =    27.01s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Not Now"'
+    t =    27.03s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Continue"'
+    t =    27.05s Get number of matches for: Elements matching predicate 'label CONTAINS[cd] "Save"'
+    t =    27.57s Checking existence of `"savePasswordForm.status" StaticText`
+    t =    27.58s Find the "savePasswordForm.status" StaticText
+    t =    27.59s Find the Application 'cloud.blonie.PasskeyVaultHarness'
+    t =    27.68s Added attachment named 'final-state-status=Submitted-screenshot'
+    t =    27.68s Requesting snapshot of accessibility hierarchy for app with pid 31948
+    t =    27.72s Requesting snapshot of accessibility hierarchy for app with pid 31948
+    t =    27.73s Added attachment named 'final-state-status=Submitted-hierarchy'
+    t =    27.74s Tear Down
+Test Case '-[PasskeyVaultUITests.SavePasswordFormHarnessUITests testDriveSavePasswordForm]' passed (27.762 seconds).
+Test Suite 'SavePasswordFormHarnessUITests' passed at 2026-08-22 5:53:04.032 PM.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 39.502 (39.505) seconds
+Test Suite 'PasskeyVaultUITests.xctest' passed at 2026-08-22 5:53:04.032 PM.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 39.502 (39.505) seconds
+Test Suite 'Selected tests' passed at 2026-08-22 5:53:04.032 PM.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 39.502 (39.507) seconds
+2026-08-22 17:53:20.758 xcodebuild[31839:14086042] [MT] IDETestOperationsObserverDebug: 58.450 elapsed -- Testing started completed.
+2026-08-22 17:53:20.758 xcodebuild[31839:14086042] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-08-22 17:53:20.758 xcodebuild[31839:14086042] [MT] IDETestOperationsObserverDebug: 58.450 sec, +58.450 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/pv-dd/Logs/Test/Test-PasskeyVault-2026.08.22_5-52-07-+0200.xcresult
+
+** TEST SUCCEEDED **
+
+Testing started
+
+## PVDIAG| markers from the extension process (subsystem cloud.blonie.PasskeyVault), this run
+2026-08-22 17:52:34.762776+0200 0xd6f523   Default     0x23e42de            31953  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=viewDidLoad
+2026-08-22 17:52:34.815383+0200 0xd6f523   Default     0x0                  31953  0    PasskeyVaultAutoFill: (PasskeyVaultAutoFill.debug.dylib) [cloud.blonie.PasskeyVault:fill] PVDIAG|method=performWithoutUserInteraction(generatePasswordsRequest:) serviceIdentifier=vault.blonie.cloud passwordFieldPasswordRulesLength=80
