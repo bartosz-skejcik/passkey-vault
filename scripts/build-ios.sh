@@ -12,7 +12,7 @@
 # ios/IOS-SPIKE-LOG.md §3): that tool reports bare "arm64" for BOTH the
 # device and simulator slices of this crate, so a check built on it cannot
 # fail. vtool -show-build distinguishes them by their actual Mach-O load
-# command: with IPHONEOS_DEPLOYMENT_TARGET=18.0 both slices carry
+# command: with IPHONEOS_DEPLOYMENT_TARGET=26.2 both slices carry
 # LC_BUILD_VERSION and differ in its platform field (`platform IOS` vs
 # `platform IOSSIMULATOR`). Before that floor was set, the device slice
 # carried the legacy LC_VERSION_MIN_IPHONEOS instead -- see WR-02 below.
@@ -170,7 +170,7 @@ DEVICE_LIB="target/aarch64-apple-ios/release/libpv_ffi.a"
 # slices" defect landmine L-2 is about.
 #
 # The device expectation is `platform IOS` (LC_BUILD_VERSION), NOT
-# `LC_VERSION_MIN_IPHONEOS`: with IPHONEOS_DEPLOYMENT_TARGET=18.0 set below
+# `LC_VERSION_MIN_IPHONEOS`: with IPHONEOS_DEPLOYMENT_TARGET=26.2 set below
 # (WR-02), the linker emits the modern load command. The old expectation was
 # only ever satisfiable because the floor was silently 10.0.
 DEVICE_EXPECT='^[[:space:]]*platform[[:space:]]+IOS$'
@@ -359,7 +359,7 @@ fi
 # measured on the committed XCFramework BEFORE this line existed:
 #   ios-arm64            : LC_VERSION_MIN_IPHONEOS   version 10.0
 #   ios-arm64-simulator  : LC_BUILD_VERSION platform IOSSIMULATOR minos 14.0
-# against `IPHONEOS_DEPLOYMENT_TARGET = 18.0` in project.pbxproj (4 places).
+# against `IPHONEOS_DEPLOYMENT_TARGET = 26.2` in project.pbxproj (8 places).
 # 35-CONTEXT.md:130-132 flagged exactly this ("Raising the Rust-side floor
 # needs IPHONEOS_DEPLOYMENT_TARGET set explicitly in the build script's
 # environment") and it was never done.
@@ -371,7 +371,7 @@ fi
 # the bottom of this script. The gate was NOT weakened to accept both
 # spellings; it asserts the one that is now true, and both slices are
 # re-proven falsifiable by `--verify-falsifiable`.
-export IPHONEOS_DEPLOYMENT_TARGET=18.0
+export IPHONEOS_DEPLOYMENT_TARGET=26.2
 echo "==> IPHONEOS_DEPLOYMENT_TARGET=$IPHONEOS_DEPLOYMENT_TARGET (must match project.pbxproj)"
 
 # rustc reads IPHONEOS_DEPLOYMENT_TARGET from the environment at compile

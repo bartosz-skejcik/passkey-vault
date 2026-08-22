@@ -130,7 +130,11 @@ exactly the line that gets cut.
   to edit instead). Gates TOTP QR scanning (`TotpScanView.swift`, this task); scan card remains
   ungated because it remains unbuilt (see DR-38-F).
 - **The app cannot be built in Release** — landmine **L-14**, a `swift-frontend` crash in generated
-  UniFFI code. Debug only; do not try to work around it.
+  UniFFI code. Debug only; do not try to work around it. **UPDATE, Phase 44 (`DR-44-A` addendum,
+  `ios/IOS-SPIKE-LOG.md` §1o):** re-probed twice at the new iOS 26.2 deployment floor, both runs
+  `** BUILD SUCCEEDED **`, zero crash markers — not yet confirmed durable across a future session,
+  but no longer demonstrated-broken as of this plan. Read the addendum before treating this bullet
+  as still current.
 - **`.planning/` never survives this worktree.** Anything that matters goes in this file,
   `ios/evidence/`, or `docs/`.
 - **`pv-server`'s `family_wide_sharing.rs` has a pre-existing test-isolation flake, found by
@@ -2300,11 +2304,48 @@ unreachable on any supported OS version — there is no longer any live OS versi
 any device could run where the fallback branch is selectable. Stated explicitly here rather than
 left implicit.
 
-**5. Addendum (Task 2): the six now-dead `#available(iOS 26.0, *)` branches and
-`AvailableFallbackCreateButton` were removed in the same plan; the `project.pbxproj`/
-`build-ios.sh` floor change was verified via `vtool` on a rebuilt `pv_ffi*.o` object (L-9); the
-L-14 Release-configuration crash was re-probed live post-raise and the result recorded below,
-unsoftened, whichever way it goes.**
+**5. Addendum (Task 2), the six now-dead `#available(iOS 26.0, *)` branches and
+`AvailableFallbackCreateButton` were removed in the same plan (`ItemListView.swift`,
+`PVDesign.swift`).**
+
+**Floor change verified through the build system, not the file.** `caffeinate -i bash
+scripts/build-ios.sh` reported `deployment floor for aarch64-apple-ios-sim is unrecorded or
+differs from 26.2 -- cleaning` AND the identical line for `aarch64-apple-ios` — L-9's own stamp
+mechanism actually fired a real `cargo clean --release --target ...` for BOTH triples (3589 files
+removed for the sim triple), not a `Finished ... in 0.3s` no-op. `vtool -show-build-version`
+against a NAMED, non-first `pv_ffi*.o` object extracted from the rebuilt
+`libpv_ffi-554da463dc6567f1.a` archive (`pv_ffi-554da463dc6567f1.pv_ffi.8d9c1ff36d2991a9-cgu.08.rcgu.o`
+— the exact object the build script's own vtool slice gate independently matched, per its own
+log line `OK: ios-arm64 (pv_ffi-554da463dc6567f1...)`) reports `LC_BUILD_VERSION platform IOS
+minos 26.2`. `xcodebuild -showBuildSettings | grep IPHONEOS_DEPLOYMENT_TARGET` reports `26.2`.
+
+**L-14 re-probed live, twice, this session — RESULT: NEWLY-FIXED, not still-crashing.** `xcodebuild
+build -configuration Release -project ios/PasskeyVault/PasskeyVault.xcodeproj -scheme PasskeyVault
+-destination "platform=iOS Simulator,id=$(cat /private/tmp/pv16.udid)"` — **exit 0, `** BUILD
+SUCCEEDED **`**, both runs (`ios/evidence/44/44-01-l14-reprobe.log`,
+`ios/evidence/44/44-01-l14-reprobe-run2.log`). Zero occurrences of `UniffiHandleMap`, `crash`,
+`Fatal error`, or `Segmentation` in either log — the prior signature (mangled
+`UniffiHandleMap...deinit` symbol, `EarlyPerfInliner` pass,
+`isCallerAndCalleeLayoutConstraintsCompatible` unbounded-recursion shape, generated-file location
+`pv_ffi.swift:406:25`) that reproduced identically across the 2026-08-16 original, the 2026-08-20
+Phase 42 re-probe, and the 2026-08-22 Phase 43 re-probe does not appear here. Both new logs show a
+genuine fresh Whole-Module-Optimization Swift compile of every source file in both the `PasskeyVault`
+and `PasskeyVaultAutoFill` targets (`SwiftDriverJobDiscovery`, full file lists, both targets),
+confirming this is not a stale/cached build silently reporting success.
+
+**Stated plainly, per this project's own QA-01 standard: raising the deployment floor changed
+something about L-14 that three prior re-probes at the 18.0 floor never showed.** This is recorded
+as an honest, reproduced (2/2) observation, not a theory of WHY — the most plausible mechanism is
+that the Swift target triple itself changed (`arm64-apple-ios26.2-simulator` in this session's
+logs, vs. `arm64-apple-ios18.0-simulator` at the old floor), which can select a different
+`swift-frontend` optimization/codegen path for the SAME generated UniFFI bindings, but this record
+does not claim that mechanism as verified — only the OUTCOME (build succeeds, twice, where it
+previously crashed, consistently, three times) is the load-bearing fact. **L-14 is no longer
+demonstrated-broken on this toolchain as of this plan.** Whether it is durably fixed (vs.
+coincidentally avoided by this specific floor/SDK/toolchain combination) is not settled by two
+re-probes alone — a future session should re-confirm before removing L-14 from the "Known open
+items" list entirely; this record does not do that removal itself, only reports the new
+observation where it belongs (DR-44-A, the record that caused the floor change).**
 
 ### DR-44-B -- SAVE-02 password-rules translation: **DECIDED -- extend the Rust generator, additive**
 
