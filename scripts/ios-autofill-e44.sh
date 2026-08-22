@@ -875,7 +875,12 @@ cmd_sc_save() {
       receiver_side_pass=1
       echo "PASS: sc-save -- an INDEPENDENT pv-wasm client decrypted a server-visible login item for ${sc_save_username}, byte-matching the harness's own separately-captured fill value (SHA-256 digest compared, never plaintext; $after_file)"
     elif [ -z "$observed_password_sha256" ]; then
-      echo "PARTIAL: sc-save -- a server-visible, independently-decrypted login item for ${sc_save_username} exists ($after_file), but the harness never captured its own ground-truth fill value this run -- presence proven, byte-match NOT proven this run"
+      # WR-06 (44-REVIEW.md): this branch used to print PARTIAL and fall through without
+      # `exit 1`, so a run in which the harness never captured its own ground truth could still
+      # report overall success -- the flagship receiver-side byte-match claim never having been
+      # evaluated. Missing ground truth is now fatal, never a silent downgrade.
+      echo "FAIL: sc-save -- the harness never captured its own ground-truth fill value this run; the byte-match proof did not run ($after_file has a server-visible item, but there is nothing to compare it against)" >&2
+      exit 1
     else
       echo "FAIL: sc-save -- the server-visible item's decrypted password does NOT byte-match the harness's own observed fill value" >&2
       exit 1
@@ -933,6 +938,16 @@ PY
   fi
 
   sc_save_direct_invocation_pixel_proof "$udid" "$skip_red_control" "$confirm_presented" "$pv_success_hex" "$pv_bg_hex"
+
+  # WR-06 (44-REVIEW.md): defense in depth -- receiver_side_pass was assigned above but never
+  # consulted before this function's own exit, so a future edit that reintroduced a silent
+  # fall-through would still report overall success. Every path that sets it to 1 already exits
+  # non-zero on any other outcome (see above), so this should be unreachable with 0 -- but refuse
+  # explicitly rather than trust that invariant silently.
+  if [ "$receiver_side_pass" != "1" ]; then
+    echo "FAIL: sc-save -- receiver-side byte match was not established (receiver_side_pass=$receiver_side_pass)" >&2
+    exit 1
+  fi
 
   exit 0
 }
