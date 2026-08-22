@@ -100,6 +100,30 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 
+    /// Phase 44 (44-03-PLAN.md Task 1b / checkpoint resolution): the SYSTEM'S ACTUAL first entry
+    /// point for a save -- `44-03-PLAN.md`'s own Task 1 instrumented ONLY `prepareInterface(for:
+    /// ASSavePasswordRequest)` below, which the SDK header
+    /// (`ASCredentialProviderViewController.h`, this machine's Xcode 26.6 / iPhoneSimulator 26.5
+    /// SDK, "Attempt to save a password credential" doc block) states plainly is reached ONLY
+    /// AFTER this method answers `userInteractionRequired` -- "When this method is called, your
+    /// extension's view controller is not present on the screen. You can request user interaction
+    /// by calling `cancelRequest(with:)`, using `ASExtensionError.userInteractionRequired`."
+    /// Task 1's own UI path was therefore unreachable by construction -- see the landmine recorded
+    /// in `ios/IOS-SPIKE-LOG.md`. This is NOT a probe hack: cancelling with
+    /// `.userInteractionRequired` to escalate into `prepareInterface(for: ASSavePasswordRequest)`
+    /// IS the real design Plan 44-04 will build its own confirm UI against, so this override's
+    /// behavior ships as-is (still `#if DEBUG`-gated here only because the escalation target below
+    /// remains diagnostic-only until Plan 44-04 lands). `NS_SWIFT_NAME` confirmed against the real
+    /// header (`performSavePasswordRequestWithoutUserInteractionIfPossible:` ->
+    /// `performWithoutUserInteractionIfPossible(savePasswordRequest:)`), never assumed by eye
+    /// (L-1/L-43's own discipline).
+    override func performWithoutUserInteractionIfPossible(savePasswordRequest request: ASSavePasswordRequest) {
+        Self.diagLogger.log(
+            "PVDIAG|method=performWithoutUserInteractionIfPossible(savePasswordRequest:) event=\(String(describing: request.event), privacy: .public) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private)"
+        )
+        extensionContext.cancelRequest(withError: ASExtensionError(.userInteractionRequired))
+    }
+
     /// Phase 44 (44-03-PLAN.md), SAVE-01/02: DEBUG-only diagnostic, mirroring the pattern above --
     /// never implemented for real yet (Plans 44-04/44-05 own the real save/generate handling).
     /// `NS_SWIFT_NAME(prepareInterface(for:))` on `-prepareInterfaceForSavePasswordRequest:`
@@ -107,7 +131,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
     /// machine's Xcode 26.6 / iPhoneSimulator SDK), never assumed by eye (L-1/L-43's own
     /// discipline) -- the plan's own literal signature matched verbatim, no L-43-shaped surprise
     /// this time. `event`/`serviceIdentifier` are logged; the credential (username/password) is
-    /// NEVER logged, in any privacy tier (T-44-06).
+    /// NEVER logged, in any privacy tier (T-44-06). Per the checkpoint resolution above, this
+    /// method is now reached ONLY after `performWithoutUserInteractionIfPossible(savePasswordRequest:)`
+    /// escalates via `userInteractionRequired` -- never called directly by the system.
     override func prepareInterface(for request: ASSavePasswordRequest) {
         Self.diagLogger.log(
             "PVDIAG|method=prepareInterface(for:ASSavePasswordRequest) event=\(String(describing: request.event), privacy: .public) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private)"
@@ -115,11 +141,37 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
         extensionContext.cancelRequest(withError: ASExtensionError(.failed))
     }
 
+    /// Phase 44 (44-03-PLAN.md Task 1b / checkpoint resolution): the SILENT entry point the system
+    /// calls FIRST for password generation -- distinct from, and per the SDK header UNRELATED to,
+    /// the interactive `prepareInterface(for: ASGeneratePasswordsRequest)` below. Header doc,
+    /// verbatim: "When this method is called, your extension's view controller is not present on
+    /// the screen. `ASExtensionError.userInteractionRequired` will not be honored and treated as a
+    /// failure." -- so, unlike the save path above, this method must NOT escalate via
+    /// `userInteractionRequired`; it cancels with `.userCanceled` instead. Diagnostic-only for now
+    /// (Plan 44-05 owns the real behaviour); the header also states this silent path can never
+    /// itself trigger the interactive `prepareInterface(for: ASGeneratePasswordsRequest)` variant
+    /// ("This flow can only be initiated by the user. It will not be triggered from
+    /// `-performGeneratePasswordsRequestWithoutUserInteraction:`") -- the interactive path is
+    /// reached only via the system's own user-initiated "Suggest Strong Password" affordance, a
+    /// SEPARATE trigger this override cannot manufacture. `NS_SWIFT_NAME` confirmed against the
+    /// real header (`performGeneratePasswordsRequestWithoutUserInteraction:` ->
+    /// `performWithoutUserInteraction(generatePasswordsRequest:)`), never assumed by eye.
+    override func performWithoutUserInteraction(generatePasswordsRequest request: ASGeneratePasswordsRequest) {
+        let rulesLength = request.passwordFieldPasswordRules?.count ?? -1
+        Self.diagLogger.log(
+            "PVDIAG|method=performWithoutUserInteraction(generatePasswordsRequest:) serviceIdentifier=\(request.serviceIdentifier.identifier, privacy: .private) passwordFieldPasswordRulesLength=\(rulesLength, privacy: .public)"
+        )
+        extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled))
+    }
+
     /// Phase 44 (44-03-PLAN.md), SAVE-02: DEBUG-only diagnostic, same discipline as the save
     /// override above. `passwordFieldPasswordRules` LENGTH is logged (`.public` -- a bounded
     /// integer, no content), never the raw rules string itself, even though rules text is not
     /// secret in the same sense a password is -- mirrors T-41-12/T-41-15's inherited discipline of
     /// keeping every per-invocation string payload `.private` on this diagnostic path by default.
+    /// Per the checkpoint resolution above, the header states this is reached ONLY via the
+    /// system's own user-initiated "Suggest Strong Password" affordance -- never as an escalation
+    /// from `performWithoutUserInteraction(generatePasswordsRequest:)` above.
     override func prepareInterface(for request: ASGeneratePasswordsRequest) {
         let rulesLength = request.passwordFieldPasswordRules?.count ?? -1
         Self.diagLogger.log(
