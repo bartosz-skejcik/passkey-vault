@@ -6824,3 +6824,78 @@ Evidence: `ios/evidence/44/44-05-sc-generate-pvfill.log`,
 `ios/evidence/44/44-05-sc-generate-candidate-compliance.log` (empty -- honest, the candidate was
 never read via the interactive screen since it never appeared), full `sc-generate` transcript in
 44-05-SUMMARY.md.
+
+## 22. Phase 44, Plan 44-06 -- SAVE-03 (text-to-insert) implemented; the text-to-insert entry
+## point still does not fire live, own driving mechanism now genuinely attempted (2026-08-22)
+
+Plan 44-03 (Task 1) recorded `prepareInterfaceForUserChoosingTextToInsert()` as never having
+fired, with no context available to inspect and no dedicated driving mechanism attempted -- this
+plan's own job was to own finding one, then decide honestly what SAVE-04's pixel proof and SAVE-03's
+receiver-correctness proof mean given the answer.
+
+**The real implementation** (`CredentialProviderViewController.prepareInterfaceForUserChoosingTextToInsert()`,
+moved out of Plan 44-03's `#if DEBUG` diagnostic stub): runs the same unlock-gating sequence every
+other entry point runs, scans the cold cache (`AppGroupCiphertextCacheStore`, no network call) via
+the new `Shared/TextToInsertDispatch.swift` for genuine `type == "totp"` items, bounds the result
+to 5 and sorts by name, presents `Shared/TextToInsertListView.swift` (`PVAccent`), and on selection
+recomputes the code FRESH (never the row's last-rendered value) before calling
+`completeRequest(withTextToInsert:completionHandler:)`.
+
+**A genuine driving attempt, this session** (`testDriveTextToInsertAffordance`, new
+`SavePasswordFormHarnessUITests.swift` method): a new harness field
+(`savePasswordForm.otpField`, `.textContentType(.oneTimeCode)` -- the content type Apple's own
+`ProvidesTextToInsert` doc comment ties to "a list of any insertable text with selectable fields")
+tapped with no typing, polled both for a direct QuickType suggestion AND the "Passwords"
+keyboard-accessory -> "PasskeyVault" provider-row chain `testDriveGeneratePasswordOffer`'s own
+header already established as this codebase's second, independent trigger shape. Seeded against a
+REAL, isolated `pv-server` with one real, server-visible TOTP item created by an INDEPENDENT
+`pv-wasm` client (`scripts/ios-autofill-e43-sc4-probe.mjs create-totp`, new this plan), then a REAL
+sign-in + REAL sync pull (`TotpInsertSc6Seeder.swift`, `PasskeyInteropSeeder.swift`'s own
+established shape) -- so the cached item genuinely existed for the override to find, unlike Plan
+44-03's own probe which had nothing to offer at all.
+
+**Live result, unchanged from Plan 44-03**: `prepareInterfaceForUserChoosingTextToInsert()` did NOT
+fire (`ios/evidence/44/44-06-sc-insert-pvfill.log`, empty). Neither trigger shape (direct QuickType
+suggestion, "Passwords" accessory -> provider row) reached our own `textToInsert.row.*`
+identifiers within the poll windows tried. This is now a genuinely re-attempted negative, not an
+untried one -- the honest answer this plan's own `<live_findings>` authorized as acceptable.
+
+**SAVE-04 + receiver-correctness consequence, both via the SAME pre-authorized direct-invocation
+fallback** (`TextToInsertListPreviewHost.swift`, `PasskeyVault` app target, `PV_PROBE_E44_06_INSERT`
+-- `TextToInsertListView.swift` placed in `Shared/` from the start for exactly this reason, not
+moved after the fact like `GeneratePasswordOfferView.swift`/`SavePasswordConfirmView.swift` needed):
+renders the REAL production view with a fixture RFC 6238 SHA1 vector
+(`GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ`), and a REAL XCUITest tap on the row
+(`TextToInsertPreviewHostUITests.testTapPreviewRow`) exercises the SAME
+`TextToInsertDispatch.freshCode` call `completeTextToInsert` makes, captured to `UserDefaults`
+(never a log line, T-44-14) for an independent `scripts/totp-oracle.py` comparison:
+```
+==> sc-insert: direct-invocation selection observed at t=1787421662
+PASS: sc-insert -- the inserted code matches an INDEPENDENT RFC 6238 oracle for the same secret/time
+```
+LIVE FINDING this session: `UserDefaults.synchronize()` is a documented no-op on modern iOS and does
+NOT force an immediate disk flush -- the first attempt raced the plist write and lost
+(`observed-code` present, `observed-time` absent moments later). Fixed with a bounded poll
+(`scripts/ios-autofill-e44.sh`'s own `sc_insert_direct_invocation_proof`), not a longer single
+sleep, since the actual flush latency is not a fixed constant.
+
+RED control (W4, the genuinely unresolved-asset shape, `--tolerance 2`):
+```
+FAIL -- PVAccent (#CD4C00): 0 matching samples (need >= 200 to count as painted)
+FAIL -- PVBackground (#FCFBFA): 24 matching samples (need >= 200 to count as painted)
+```
+GREEN (real render, reverted byte-identical -- `git diff` empty on `TextToInsertListView.swift`):
+```
+PASS -- PVAccent (#CD4C00): 657 matching samples (need >= 200 to count as painted)
+PASS -- PVBackground (#FCFBFA): 324453 matching samples (need >= 200 to count as painted)
+```
+Screenshots: `ios/evidence/44/44-06-sc-insert-list-RED.png` /
+`ios/evidence/44/44-06-sc-insert-list-GREEN.png`. Disclosure, stated plainly: system routing into
+`prepareInterfaceForUserChoosingTextToInsert()` remains UNPROVEN on this toolchain across every
+trigger shape tried by this project so far -- this pixel proof and the receiver-correctness proof
+both show the real override logic (decode, filter, recompute, complete) is correct when invoked,
+never that the system invokes it this way in production.
+
+Evidence: `ios/evidence/44/44-06-sc-insert-pvfill.log` (empty),
+`ios/evidence/44/44-06-sc-insert-totp-fixture.json` (the independently-known fixture secret/
+algorithm/digits/period), full `sc-insert` transcript in 44-06-SUMMARY.md.
