@@ -6275,6 +6275,22 @@ individually-cited, live evidence; #14's red state is investigated to its root c
 pre-existing, DEBUG-only diagnostic addition from this same phase (not this plan's own change), and
 recorded unsoftened rather than the phase being marked complete over it.
 
+**CORRECTION, 2026-08-22 (same day) — #14 is GREEN, 14/14, not 13/14.** The paragraph above and
+item #14 are left unedited as the honest record of this gate's state at the moment this plan's
+Task 2 ran. They are now stale: §19a's real-device measurement (Bartek's iOS 27.0 captures across
+password fills, Safari assertion, and registration in Discord and on X) answered the exact question
+`cf1dfad`'s diagnostic pair existed to settle — the two deprecated overloads never fired on real
+iOS 27 hardware while their sibling `PVDIAG` lines in the same logs did. `da4a836`
+(2026-08-22T13:30:30+02:00) removed the diagnostic pair on that basis (commit message: "`audit-ios-
+autofill-deprecated-apis` was correctly red on them and is green again; `check-ios-gate.sh` exits 0
+across all seven sub-gates"). Independently re-run twice since — once by 43-VERIFICATION.md's own
+verifier pass, once again for this correction: `bash scripts/audit-ios-autofill-deprecated-apis.sh`
+→ `PASS: no deprecated AuthenticationServices spelling found across 118 Swift file(s) ... (0
+skipped)`, exit 0; `bash scripts/check-ios-gate.sh` → exit 0, all seven sub-gates individually
+`PASS[...]`. Gate #14 is GREEN. This phase's whole-gate state is **14/14**, not "thirteen-of-
+fourteen green" — `.planning/WINDOWS.md` entry 21 (which tracked this same deviation) is closed for
+the identical reason.
+
 ### ROADMAP Phase 43's six success criteria, answered one by one
 
 **SC1 — OPT-01 decision record committed alone, before any passkey code.** Re-verified by commit

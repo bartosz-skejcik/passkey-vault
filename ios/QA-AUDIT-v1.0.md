@@ -954,11 +954,105 @@ and what does not as precisely as the record allows.
 
 ---
 
+## Addendum — Phase 43 rows (added 2026-08-22, post-hoc, per 43-VERIFICATION.md WARNING B)
+
+**Why this section exists and what it is not.** Everything above this addendum is Phase 42's own
+closing verdict (2026-08-21), unedited. At that time Phase 43 was genuinely absent
+(`summaries=0`) and its exclusion from `gate_qa_register`'s coverage check — hardcoded at
+`scripts/check-qa-audit-register.sh:245-246` and `scripts/qa-audit-inventory.sh:109-110` — was
+correct: the ROADMAP's own SC1 text scopes this register to *"faz 35-41"* literally, and Phase 43
+is explicitly conditional (*"Ta faza ma pelne prawo zakonczyc sie 'nie zrobione'"*). Phase 43 has
+since run to completion (`43-VERIFICATION.md`, 2026-08-22, score 4/6 truths verified + 2 present-
+but-behaviorally-unverified), so an absent Phase 43 section is no longer an accurate description of
+this worktree — 43-VERIFICATION.md's own WARNING recorded exactly this staleness. Per DR-42-C ("the
+audit records; it does not repair"), this addendum **adds rows**; it does **not** edit
+`scripts/check-qa-audit-register.sh`/`scripts/qa-audit-inventory.sh` to require a Phase 43 section
+(those three baseline-pinned scripts are Phase 42's own protected artifacts) — `gate_qa_register`
+will continue to report Phase 43 excluded, correctly, by the letter of SC1's own literal scope. This
+section exists so a reader of this committed file alone (QA-05's own "self-contained" discipline)
+is not misled by the stale "absent is valid" bullet below, now corrected.
+
+**Audited plans:** 43-01 through 43-11 (43-11 never executed — `.planning/ROADMAP.md` marks it
+unchecked, 10/11, transparently). Source: `43-VERIFICATION.md` (2026-08-22, independently
+re-executed every gate/audit/build/test cited, not carried over from any SUMMARY), cross-referenced
+against `ios/IOS-SPIKE-LOG.md` §9–§20/§19a. Do not manufacture green: two of six truths are
+`⚠️ PRESENT_BEHAVIOR_UNVERIFIED` and stay that way below, not upgraded.
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| SC1: OPT-01 decision record committed FIRST, alone, before any passkey code | OPT-01 | real-bytes | `43-VERIFICATION.md:104` | "`git show --stat b355d35` → touches `ios/IOS-SPIKE-LOG.md` ONLY (126 insertions, 1 file)... `git merge-base --is-ancestor b355d35 <each>` → true for all three" | critical | verified |
+| SC2: assertion in a REAL third-party app via `ASCredentialProviderViewController`, dual-signal receiver-side proof | OPT-03 | live-simulator | `43-VERIFICATION.md:105` | "`RPFIXTURE\|route=/assert/finish rp_id=vault.blonie.cloud ok=true reason=verified` + `PVHARNESS\|stage=complete status=ok`... corrupt leg → `ok=false reason=\"An OpenSSL Error has occurred\"` + `status=failed`" | critical | present + wired, mechanism verified — **⚠️ see the honest caveat row immediately below; not upgraded to `verified`** |
+| **Honest caveat on SC2 (verifier's own wording, not softened here):** the app is `ios/PasskeyVaultHarness` (this project's OWN app) and the RP is `vault.blonie.cloud` (this project's OWN domain) — a disclosed controlled stand-in, not a genuinely external third party. Bartek's own real-device attestation (Discord + X, iPhone 16 / iOS 27.0) corroborates the mechanism but covers **REGISTRATION only** — SC2's own ROADMAP clause is **assertion** (sign-in), which no captured artifact in this phase exercises against a genuinely external app | OPT-03 | n/a | `43-VERIFICATION.md:59-60` | "Note the attestation covers REGISTRATION in those apps; SC2's own clause is ASSERTION (sign-in)" | warning | gap — routed to human verification, not a code defect (nothing in this repo can close it) |
+| SC3: assertion in Safari on a REAL page, asserted receiver-side by an independent `webauthn-rs` verdict | OPT-03 | live-simulator | `43-VERIFICATION.md:106` | "`data-ok` is set from `finishJson.ok` (`crates/rp-fixture/src/main.rs:246`), i.e. from `webauthn-rs`'s own verdict — genuinely receiver-side" | critical | present + wired, mechanism verified — **⚠️ see the honest caveat row immediately below; not upgraded to `verified`** |
+| **Honest caveat on SC3:** the RP is `crates/rp-fixture` on `localhost` — a disclosed stand-in "SHAPED LIKE a third party — never a genuinely external RP". Unlike SC2, no operator attestation names a specific external SITE at all | OPT-03 | n/a | `43-VERIFICATION.md:68-71` | "no attestation names an external site" | warning | gap — routed to human verification |
+| SC4: registration → `passkey`-typed vault item, visible server-side, independently reproduced by the verifier's own re-run | OPT-03 | live-run | `43-VERIFICATION.md:107` | "the verifier's own `sc5-register` leg... a direct `GET /api/vault/items` via a real `pv-wasm` client printed `{\"rowCount\":1,\"passkeyRowCount\":1}`" | critical | verified |
+| SC5: two-direction interop, both directions asserted receiver-side against `crates/rp-fixture` | OPT-03 | live-run | `43-VERIFICATION.md:108` | "Direction 2... `/register/finish ok=true reason=registered` AND `/assert/finish ok=true reason=verified`. Direction 1... REPRODUCED by the verifier — the spec's line-281 receiver-side assertion `#rp-fixture-result data-ok=\"true\"` passed on all 3 attempts" | critical | verified (substance) — **see GAP 1 row below: the falsification leg's own regression test was RED at verification time, since fixed** |
+| SC6: OPT-04 (PRF/`hmac_secret`) deferred with a named reason; product compiles/behaves identically without it | OPT-04 | live-run | `43-VERIFICATION.md:109` | "`cargo test --workspace` → exit 0, 0 `test result: FAILED` across 31 test binaries... Sole `prf` hit in the shipped Swift surface is `PasskeyRegistrationConfirmView.swift:6`, a comment citing the decision record" | critical | verified |
+
+### GAP 1 (resolved 2026-08-22, same day as this addendum) — the falsification leg's root cause and fix
+
+**Finding, as recorded by the verifier:** `extension/e2e/ios-created-passkey-assertion.spec.ts`'s
+own named verify command was RED — the positive leg reproduced (3/3), the falsification leg
+(post-corruption) timed out 3/3 waiting for a `data-ok="false"` that never arrived, because
+`#rp-fixture-result` stayed `"pending"` indefinitely.
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| Root cause, confirmed by direct source read (not inference): once a corrupted item is dropped from `vault.list`, `page-bridge.content.ts`'s own `broker()` has no matching credential and falls through to the REAL native `navigator.credentials.get()` (its own documented D-11 discipline) — which then waits on the browser's own security-key UI indefinitely; there is no synthetic "no candidate" rejection anywhere in that chain | SC5 | real-bytes | `extension/entrypoints/page-bridge.content.ts:324-336` | "Timeout (null), explicit fallthrough, or a relay/ceremony error -- D-11: always fall through to the real native result, never a dead-ended promise or a fabricated error" | critical | verified — root cause, not the symptom |
+| Fix: `crates/rp-fixture`'s `index()` page gained an opt-in `abort_ms` query param wired to a real WebAuthn Level 2 `AbortSignal` — absent by default (every pre-existing caller unaffected); the spec's corrupt leg opts in (`abort_ms=8000`), turning the genuine "cannot complete" outcome into a deterministic, receiver-observed `data-ok="false"` instead of an unbounded hang | SC5 | real-bytes | `crates/rp-fixture/src/main.rs:137-161` | "Exists ONLY for a caller that needs a genuine \"this ceremony structurally cannot complete\" outcome to settle to a real, page-JS-observed `data-ok=\"false\"` instead of waiting forever" | critical | verified |
+| Non-vacuousness hardening (WARNING A's own lesson applied here too): the falsification leg now additionally asserts `data-ok`'s textContent contains `AbortError` (proving the false came from the abort, not an unrelated exception) AND that rp-fixture's own captured stdout shows a `/challenge/assert ... status=issued` line for THIS ceremony (proving genuine engagement) with no `/assert/finish ... ok=true` line | SC5 | real-bytes | `extension/e2e/ios-created-passkey-assertion.spec.ts:369-394` | `expect(newFixtureLog).toMatch(/RPFIXTURE\|route=\/challenge\/assert rp_id=localhost status=issued/)` | warning | verified |
+| Live re-run, both legs, twice consecutively (stability, not "worked once") | SC5 | live-run | `ios/evidence/43/43-09-direction1.log` | "1 passed (1.9m)" / "EXIT=0" (run 1, `ios/evidence/43/43-09-direction1.log`), "1 passed (2.0m)" / "EXIT=0" (run 2, `ios/evidence/43/43-09-direction1-run2.log`) -- two consecutive full live runs, zero flakes | critical | verified |
+| Evidence transcript re-recorded under `ios/evidence/43/` (was the only live proof in this phase with none — the verifier's own "missing" item) | SC5 | n/a | `ios/evidence/43/43-09-direction1.log.fixture-stdout` | "RPFIXTURE\|route=/assert/finish rp_id=localhost ok=true reason=verified" (plain leg) then, for the corrupt leg, `/challenge/assert ... status=issued` with NO subsequent `/assert/finish` line at all | info | verified |
+
+### GAP 2 (resolved 2026-08-22, same day) — stale closing-record state, corrected
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| `ios/IOS-SPIKE-LOG.md` §20 recorded gate #14 (`audit-ios-autofill-deprecated-apis.sh`) RED and "thirteen-of-fourteen green"; `da4a836` (same day, 13:30 CEST) made it 14/14 but §20 was never amended | QA-05 (durable-sink discipline) | real-bytes | `ios/IOS-SPIKE-LOG.md` (correction appended after the original §20 paragraph, original left unedited per this file's own "found-and-corrected" precedent) | "Gate #14 is GREEN. This phase's whole-gate state is **14/14**, not \"thirteen-of-fourteen green\"" | warning | resolved — found-and-corrected, independently re-run: `bash scripts/audit-ios-autofill-deprecated-apis.sh` → exit 0, `bash scripts/check-ios-gate.sh` → exit 0, all seven sub-gates |
+| `.planning/WINDOWS.md` entry 21 tracked the identical deviation, still `status: open` | QA-05 | n/a | `.planning/WINDOWS.md` row 21 | `status: fixed`, `reason: resolved by da4a836` | warning | resolved (this file is `.planning/`, on-disk only, never committed — QA-05) |
+
+### WARNING A (resolved 2026-08-22, same day) — `assert_interop`'s corrupt-leg predicate hardened
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| `assert_interop`'s absence-tolerant corrupt-leg branch accepted "no `/assert/finish` line" unconditionally — non-vacuous only by accident (the one captured transcript happens to show `/challenge/assert status=issued`, but nothing required it) | SC5 (dir. 2) | n/a | `scripts/ios-autofill-e43.sh:463-496` (function body, pre-fix shape shown by the excerpt) | "the absence branch above is non-vacuous ONLY IF there is POSITIVE evidence the harness genuinely engaged" (fix comment, same file, post-fix) | warning | resolved |
+| Fix: require an explicit `/challenge/assert rp_id=localhost status=issued` line before accepting the absence branch | SC5 (dir. 2) | real-bytes | `scripts/ios-autofill-e43.sh:463-496` | `if ! grep -qE "RPFIXTURE\|route=/challenge/assert rp_id=localhost status=issued" "$target"; then` | warning | verified — real corrupt-leg evidence still passes: `bash scripts/ios-autofill-e43.sh interop --assert-only ios/evidence/43/43-09-interop-corrupt.log --expect-ok false` → exit 0 |
+| Falsification demonstration (QA-02's own "shown red before believed" standard, applied to a bash predicate): a synthetic log where rp-fixture booted but the ceremony never ran (no `/challenge/assert` line at all) — OLD predicate PASSED it (exit 0, wrongly); NEW predicate FAILS it (exit 1, correctly) | SC5 (dir. 2) | real-bytes | scratch fixture (a two-line synthetic log: `RPFIXTURE\|route=boot ...` only) | "FAIL: interop -- no RPFIXTURE /challenge/assert status=issued line ... cannot distinguish 'the harness genuinely ran and failed closed' from 'the harness never ran at all'" | critical | verified — before/after both demonstrated live via `git stash` (old code: `OLD-PREDICATE-EXIT=0`; new code: exit 1) |
+
+### §19 / §19a — the two evidence-quality lessons this phase paid for (WARNING B's own required content)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| §19: a real, user-visible defect (the AutoFill extension's confirm screen painted a fully legible view tree with every colour silently substituted — a literal blank white sheet) survived THREE independent green proof surfaces simultaneously: `audit-ios-colour-tokens.sh` (checks a colorset exists SOMEWHERE, not target membership), `NativeAppRegisterUITests.swift` (XCUITest's accessibility-identifier lookup finds and taps a control regardless of whether anything was ever painted), and two rounds of manual code review (confirmed every `Color("PV...")` named a real colorset — true and irrelevant, since none of the three checks asked "does THIS target's own bundle contain it") | QA-01/QA-03 | real-bytes + live-simulator | `ios/IOS-SPIKE-LOG.md:6115-6129` | "evidence that measures the wrong thing -- every proof surface was green, and none of them could have caught this class of bug, because none of them measured target-scoped resolution or actual painted pixels" | critical | resolved — `scripts/audit-ios-extension-asset-resolution.py` (static, target-membership-aware) + `scripts/measure-ios-color-token.py` (pixel-level, one-shot) both driven RED-then-GREEN; `gate_asset_resolution` is now a standing seventh sub-gate |
+| §19a: a `#if DEBUG` diagnostic (`cf1dfad`) added purely to answer an empirically open question ("does iOS 27 reintroduce the deprecated `ASPasswordCredentialIdentity` overloads?") is DEBT once the question is answered, not evidence to keep — Bartek's real-device captures across password fills, Safari assertion, and Discord/X registration never showed the deprecated method names firing, while sibling `PVDIAG` lines in the same logs did (proving the diagnostic was live and capable of printing) | QA-01 | real-bytes (real hardware) | `ios/IOS-SPIKE-LOG.md:6396-6399` | "A diagnostic that has discharged its question is debt, not evidence -- the finding belongs in this log, not in the shipped class" | warning | resolved — removed by `da4a836`; see GAP 2 above |
+
+### L-14 — independently reconfirmed by Phase 43, not caused or fixed by it (cross-reference, not a new finding)
+
+| claim / guard | requirement | evidence tier | ref | excerpt | severity | disposition |
+|---|---|---|---|---|---|---|
+| Phase 43's own verifier re-probed L-14 (already tracked as this milestone's gap #27, `ios/QA-AUDIT-v1.0.md` closing-verdict table above) live, independent of Phase 42's original probe — byte-identical crash signature, ~6 days and two phases later | n/a (ship-blocker, pre-existing) | real-bytes | `43-VERIFICATION.md:203` | "exit 65, `Please submit a bug report`, `EarlyPerfInliner` on `UniffiHandleMap...deinit`, `pv_ffi.swift:406:25`... two identical `isCallerAndCalleeLayoutConstraintsCompatible` frames" | critical — ship blocker (pre-existing, unchanged) | open — same disposition as gap #27 above; every Phase 43 proof is therefore also a Debug build, restated honestly in `43-VERIFICATION.md`'s own closing judgment, not upgraded or downgraded by this addendum |
+
+### Remaining honest gaps (not closed by this addendum — human verification, per `43-VERIFICATION.md`)
+
+| # | Finding | file:line | Severity | Owner |
+|---|---|---|---|---|
+| 28 | SC2 — no captured artifact of a passkey SIGN-IN (assertion) in a genuinely external third-party app; attestation covers registration only | `43-VERIFICATION.md:72-75` | warning | human (Bartek, real device) |
+| 29 | SC3 — no captured artifact of a passkey SIGN-IN on a genuinely external site in Safari; no attestation names a site at all | `43-VERIFICATION.md:76-78` | warning | human (Bartek, real device) |
+| 30 | 43-11 — never executed; the Face ID-gating observation and the production-data-untouched pre/post-flight protocol were never exercised (Bartek's own device testing discharged much of the PRODUCT question via Discord/X, but not this plan's own EVIDENCE/safety design) | `43-VERIFICATION.md:79-81` | warning | human (Bartek, real device, throwaway account) |
+| 31 | L-14 — three recorded remediation options awaiting Bartek's own product/tooling call | `43-VERIFICATION.md:82-84` | critical — ship blocker | human (Bartek) |
+
+---
+
 ## Out-of-coverage phases (recorded here for completeness, never audited)
 
 - **Phase 42** — the phase performing this audit; out of coverage by construction (see "Audit scope"
   above).
-- **Phase 43** — conditional per the ROADMAP; an absent Phase 43 is valid, not a gap.
+- **Phase 43** — conditional per the ROADMAP, and WAS absent (`summaries=0`) when Phase 42's own
+  closing verdict above was written — that bullet was true when written. Phase 43 has since run to
+  completion; **its rows are now recorded in the "Addendum — Phase 43 rows" section above.**
+  `gate_qa_register`'s own mechanical exclusion of phase 43 is UNCHANGED (see the addendum's own
+  opening note for why) and remains correct by SC1's literal "faz 35-41" scope — this bullet is
+  corrected for honesty, not for the gate's behavior.
 
 ## Intended state at the end of plan 42-05
 
