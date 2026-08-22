@@ -88,6 +88,12 @@
 //! | `FfiInviteChannel::unwrap_collection_key` | `Result<Arc<FfiCollectionKey>,_>` | serde_json/AAD mismatch — złapane jako `Err` (40-04) |
 //! | `provider_get_assertion`        | `Result<FfiProviderAssertionResult,_>` | — `?`-propagowane tylko z `pv_provider::get_assertion_ctap2`, ten sam kształt co `wrap_user_key` (43-02) |
 //! | `provider_make_credential`      | `Result<FfiProviderRegistrationResult,_>` | — `?`-propagowane tylko z `pv_provider::make_credential_ctap2`, ten sam kształt co `provider_get_assertion` (43-04) |
+//! | `totp_now`                      | `Result<FfiTotpCode,_>` | NIE — `totp_rs`'s dekodowanie base32 i `period == 0` zwracane jako `Err`, brak znanej ścieżki panic (WR-10, 44-REVIEW.md: brakujący wpis sprzed tej naprawy) |
+//! | `generate_character_password`   | `Result<String,_>`    | NIE — bounds/empty-alphabet zwracane jako `Err` PRZED jakimkolwiek `uniform_random_index`; `n` gwarantowane `> 0` (44-02) |
+//! | `generate_passphrase`           | `Result<String,_>`    | NIE — bounds zwracane jako `Err`; `EFF_WORDLIST.len()` to stała `> 0` (44-02) |
+//! | `generator_bounds`              | `Result<FfiGeneratorBounds,_>` | NIE — czysta konstrukcja ze stałych, `Result` tylko dla spójności sygnatury (WR-01), infallible dziś (44-02) |
+//! | `generate_password_from_rules`  | `Result<String,_>`    | NIE po naprawie CR-01 (44-REVIEW.md) — pusty charset zwracany jako `Err`, nigdy `%` przez zero; PRZED naprawą: TAK, `required: ascii-printable` panikował (`RANGE % 0`) (44-05, WR-10) |
+//! | `FfiWrappingKey::from_password_probe_unchecked` | `Result<Arc<Self>,_>` | argon2/serde — złapane jako `Err`, ten sam kształt co `from_password`, celowo pomija TYLKO `validate_kdf_params`'s górny limit (`kdf-probe` feature, domyślnie wyłączony; WR-10, 44-REVIEW.md: brakujący wpis sprzed tej naprawy) |
 //!
 //! `export_user_key_for_session` to JEDYNY eksport bez `Result`, świadomie:
 //! jego całe ciało to `expose().to_vec()`. Jedyna droga do paniki byłaby
@@ -1041,5 +1047,114 @@ mod tests {
         assert_eq!(hex(&auth_hash), EXPECTED_AUTH_HASH_HEX, "INFO_AUTH_HASH derivation output moved -- re-check crates/pv-core/src/keys.rs's INFO_AUTH_HASH constant");
         assert_eq!(hex(&pw_unlock), EXPECTED_PW_UNLOCK_HEX, "INFO_PW_UNLOCK derivation output moved -- re-check crates/pv-core/src/keys.rs's INFO_PW_UNLOCK constant");
         assert_ne!(auth_hash, pw_unlock, "domain separation: INFO_AUTH_HASH and INFO_PW_UNLOCK must diverge");
+    }
+
+    /// WR-10 (44-REVIEW.md): the module header's own "Pełny audyt wszystkich `#[uniffi::export]`"
+    /// table is the artifact that would have forced the question "can this panic?" for CR-01 --
+    /// a stale completeness claim in a safety document is worse than no document. This test scans
+    /// every `.rs` file in this crate for a `pub fn`/`pub fn` (inside an `impl` block) directly
+    /// preceded by `#[uniffi::export]` (a free function) or reachable inside an `impl` block whose
+    /// own `impl` line is directly preceded by `#[uniffi::export]` (a method/constructor,
+    /// brace-depth tracked, never a line-window guess -- the exact CR-02/CR-03 (35-REVIEW.md)
+    /// extraction trap this project's own gates already avoid elsewhere), and asserts every such
+    /// name has its own row in THIS file's own header table.
+    #[test]
+    fn every_uniffi_export_has_a_panic_audit_table_row() {
+        fn extract_fn_name(line: &str) -> Option<String> {
+            let line = line.trim_start().trim_start_matches("pub ");
+            let rest = line.strip_prefix("fn ")?;
+            let name: String =
+                rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if name.is_empty() { None } else { Some(name) }
+        }
+
+        fn scan(src: &str, exported: &mut Vec<String>) {
+            let lines: Vec<&str> = src.lines().collect();
+            let mut i = 0;
+            let mut in_exported_impl = false;
+            let mut impl_depth: i32 = 0;
+            while i < lines.len() {
+                let line = lines[i].trim();
+                if in_exported_impl {
+                    impl_depth += line.matches('{').count() as i32;
+                    impl_depth -= line.matches('}').count() as i32;
+                    if let Some(name) = extract_fn_name(line) {
+                        exported.push(name);
+                    }
+                    if impl_depth <= 0 {
+                        in_exported_impl = false;
+                    }
+                    i += 1;
+                    continue;
+                }
+                if line == "#[uniffi::export]" {
+                    let mut j = i + 1;
+                    while j < lines.len() && lines[j].trim().is_empty() {
+                        j += 1;
+                    }
+                    if j < lines.len() {
+                        let next = lines[j].trim();
+                        if next.starts_with("impl ") {
+                            in_exported_impl = true;
+                            impl_depth = next.matches('{').count() as i32
+                                - next.matches('}').count() as i32;
+                            i = j + 1;
+                            continue;
+                        } else if let Some(name) = extract_fn_name(next) {
+                            exported.push(name);
+                            i = j + 1;
+                            continue;
+                        }
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        // Every source file in this crate, including feature-gated probe modules (`kdf_probe.rs`,
+        // `panic_probe.rs`) -- the header's own claim is "Pełny audyt wszystkich `#[uniffi::export]`
+        // w tym crate", not "...in the default feature set", and `ffi06_synthetic_panic_probe`
+        // already has a row despite being feature-gated the same way.
+        let sources: &[&str] = &[
+            include_str!("lib.rs"),
+            include_str!("wire.rs"),
+            include_str!("generator.rs"),
+            include_str!("sharing.rs"),
+            include_str!("provider.rs"),
+            include_str!("totp.rs"),
+            include_str!("kdf_probe.rs"),
+            include_str!("panic_probe.rs"),
+        ];
+        let mut exported: Vec<String> = Vec::new();
+        for src in sources {
+            scan(src, &mut exported);
+        }
+        assert!(!exported.is_empty(), "the export scanner itself found nothing -- it is broken, not the crate");
+
+        // Table rows: lines starting with `//! | \`` in this file's own header. A method row is
+        // written `Type::method` -- compare against the part after the LAST `::`.
+        let table_names: Vec<String> = include_str!("lib.rs")
+            .lines()
+            .filter(|l| l.trim_start().starts_with("//! | `"))
+            .filter_map(|l| {
+                let after_first_tick = l.splitn(2, '`').nth(1)?;
+                let inner = after_first_tick.splitn(2, '`').next()?;
+                Some(inner.rsplit("::").next().unwrap_or(inner).to_string())
+            })
+            .collect();
+        assert!(!table_names.is_empty(), "the table-row scanner itself found nothing -- it is broken, not the header");
+
+        let mut missing: Vec<String> = exported
+            .iter()
+            .filter(|name| !table_names.iter().any(|t| t == *name))
+            .cloned()
+            .collect();
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "these #[uniffi::export]ed functions/methods have no row in this file's own \
+             panic-audit table (WR-10, 44-REVIEW.md): {missing:?}"
+        );
     }
 }
