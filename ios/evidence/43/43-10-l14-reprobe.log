@@ -1,0 +1,31 @@
+L-14 re-probe, Plan 43-10 Task 1, 2026-08-22
+Command: xcodebuild -project ios/PasskeyVault/PasskeyVault.xcodeproj -scheme PasskeyVault \
+  -configuration Release -destination "platform=iOS Simulator,id=$(cat /private/tmp/pv16.udid)" build
+Exit status: 65 (confirmed via `echo $?` immediately after the command, captured to a log file)
+
+Result: STILL CRASHING. Same shape as the original 2026-08-16 finding (ios/evidence/38/L14-RELEASE-BUILD-CRASH.md)
+and the 2026-08-20 Phase 42 re-probe (ios/IOS-SPIKE-LOG.md §8d item 1).
+
+Crash excerpt:
+
+Stack dump:
+1.	Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)
+2.	Compiling with effective version 5.10
+3.	While evaluating request ExecuteSILPipelineRequest(Run pipelines { PrepareOptimizationPasses, EarlyModulePasses, HighLevel,Function+EarlyLoopOpt, HighLevel,Module+StackPromote, MidLevel,Function, ClosureSpecialize, LowLevel,Function, LateLoopOpt, SIL Debug Info Generator } on SIL for PasskeyVault)
+4.	While running pass #1009953 SILFunctionTransform "EarlyPerfInliner" on SILFunction "@$s12PasskeyVault15UniffiHandleMap33_3020C04B17195456C4681D445E4E403DLLCfD".
+ for 'deinit' (at /Users/j5on/.work/projects/passkey-vault-ios/ios/PasskeyVault/build/swift-bindings/pv_ffi.swift:406:25)
+Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
+4  swift-frontend           0x0000000103be744c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+5  swift-frontend           0x0000000103be744c isCallerAndCalleeLayoutConstraintsCompatible(swift::FullApplySite) + 236
+6  swift-frontend           0x0000000103be6ff0 swift::getEligibleFunction(swift::FullApplySite, swift::InlineSelection, swift::IsSelfRecursiveAnalysis*) + 1988
+...
+** BUILD FAILED **
+
+Confirmed identical to the original finding: same mangled symbol (`UniffiHandleMap...deinit`),
+same generated-file location (`pv_ffi.swift:406:25`), same unbounded-recursion shape (frames 4/5
+at the identical address `0x0000000103be744c`), same pass name `EarlyPerfInliner` (pass number
+differs run to run -- #54311 originally, #982547 in the 2026-08-20 re-probe, #1009953 here --
+which is expected and not itself meaningful; the crash signature is what is compared, not the
+pass counter). None of L-14's three recorded options (bump the UniFFI pin; isolate the generated
+bindings into their own -Onone module; report upstream + pin the toolchain) have been applied.
+L-14 remains OPEN and remains the milestone's ship blocker, unchanged from Phase 42's own finding.

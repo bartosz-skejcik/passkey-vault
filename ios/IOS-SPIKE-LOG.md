@@ -2206,6 +2206,57 @@ that adds `crates/pv-provider/src/ceremony.rs` CTAP2 code, `crates/pv-ffi/src/pr
 `ASPasskey*`-touching Swift line, per SC1's commit-order requirement (mirrors `35-01`'s own
 verification discipline for `IOS-06`).
 
+## 1n. OPT-04 closure — build+absence proof, 2026-08-22
+
+### OPT-04 — PRF-through-the-provider and largeBlob: **DEFERRED SCOPE CONFIRMED SHIPPED-NOTHING**
+
+Sibling entry to §1m, closing the OPT-04 half of that same decision record: the deferred scope
+(OPT-02 PRF unlock, PRF-through-provider, `largeBlob`) reaches zero shipped symbols in either the
+Rust workspace build or the iOS app/extension build, and the workspace still compiles green.
+
+**1. `cargo build --workspace` — PASS.** Compiles `pv-core`, `pv-provider`, `rp-fixture`, `pv-ffi`,
+`pv-wasm`, `pv-server` clean, `Finished 'dev' profile ... target(s) in 8.30s`.
+
+**2. `.hmac_secret(` grep — exactly the two pre-existing call sites, never a third.**
+`grep -n '\.hmac_secret(' crates/pv-provider/src/ceremony.rs` returns lines 96 and 228 only, both
+inside the two functions that predate this phase (`create_provider_credential`,
+`get_provider_assertion`). The two NEW CTAP2 entry points this phase added
+(`get_assertion_ctap2` at line 308, `make_credential_ctap2` at line 431) carry only comments
+(`// NEVER .hmac_secret(...) -- OPT-01 scopes PRF out of Phase 43`, lines 304/420/489) — zero calls.
+
+**3. L-14 re-probed live, THIS session, not carried forward.** `xcodebuild -project
+ios/PasskeyVault/PasskeyVault.xcodeproj -scheme PasskeyVault -configuration Release -destination
+"platform=iOS Simulator,id=$(cat /private/tmp/pv16.udid)" build` — **exit 65, STILL CRASHING.**
+Identical crash signature to the 2026-08-16 original (`ios/evidence/38/L14-RELEASE-BUILD-CRASH.md`)
+and the 2026-08-20 Phase 42 re-probe (§8d item 1 above): same mangled symbol
+(`UniffiHandleMap...deinit`), same generated-file location (`pv_ffi.swift:406:25`), same
+unbounded-recursion shape (`isCallerAndCalleeLayoutConstraintsCompatible`, two frames at the
+identical address), same pass name `EarlyPerfInliner` (pass number differs run to run — expected,
+not itself meaningful). **Recorded unsoftened: L-14 remains OPEN and remains the milestone's ship
+blocker.** None of its three recorded options (bump the UniFFI pin; isolate the generated bindings
+into their own `-Onone` module; report upstream + pin the toolchain) have been applied. Full
+transcript: `ios/evidence/43/43-10-l14-reprobe.log`.
+
+**4. OPT-02-scoped symbol grep — zero hits in the shipped Swift surface.** `grep -rn "largeBlob"
+ios/PasskeyVault ios/PasskeyVaultHarness` — no matches. `grep -rln "PRF\|prf"
+ios/PasskeyVault/PasskeyVault ios/PasskeyVault/PasskeyVaultAutoFill` — the ONE hit
+(`PasskeyRegistrationConfirmView.swift`) is a source-comment cross-reference to this very decision
+record ("decision record: 'provider: yes; PRF/OPT-02: no'"), not a functional symbol or code path.
+No native RP-client PRF unlock path exists anywhere in the shipped app or extension targets.
+
+**5. Test-only surfaces confirmed absent from production paths.** `grep -n "rp-fixture\|
+PasskeyVaultHarness" Dockerfile` — no matches (positive control: the same file's own `grep -n
+"pv-server" Dockerfile` finds three hits, confirming the grep itself is live, not vacuously
+matching against an empty/wrong file). No `.github/`/docker-compose reference to either surface
+either. `crates/rp-fixture` (43-03) and `ios/PasskeyVaultHarness` (43-08) are test-only surfaces
+this phase added; both are confirmed absent from every production build/deploy path.
+
+**OPT-04 is closed.** The deferred scope shipped zero new symbols, the workspace build is green,
+and this phase's own test-only surfaces never touch production. L-14's current, honestly re-probed
+state is a SEPARATE, pre-existing landmine (found 2026-08-16, Phase 38) that this phase's own work
+neither caused nor fixed — it remains Bartek's own call among its three recorded options, unchanged
+by Phase 43.
+
 ---
 
 ## 2. Verified against reality (2026-08-11)
