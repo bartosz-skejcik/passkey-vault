@@ -125,6 +125,7 @@ export default function RegisterForm({
           id="register-email"
           data-testid="register-email"
           type="email"
+          autoComplete="username"
           required
           className="input input-bordered w-full"
           value={email}
@@ -141,6 +142,7 @@ export default function RegisterForm({
           id="register-password"
           data-testid="register-password"
           type="password"
+          autoComplete="new-password"
           required
           className="input input-bordered w-full font-mono"
           value={password}
@@ -163,6 +165,7 @@ export default function RegisterForm({
           id="register-confirm-password"
           data-testid="register-confirm-password"
           type="password"
+          autoComplete="new-password"
           required
           className="input input-bordered w-full font-mono"
           value={confirmPassword}

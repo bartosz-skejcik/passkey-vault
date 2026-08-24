@@ -240,6 +240,7 @@ export default function UnlockOverlay() {
                   id="unlock-password"
                   data-testid="unlock-password"
                   type="password"
+                  autoComplete="current-password"
                   required
                   autoFocus={showPrfExplainer}
                   className="input input-bordered w-full font-mono"

@@ -489,6 +489,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
                 <input
                   id="pv-ext-unlock-email"
                   type="email"
+                  autoComplete="username"
                   required
                   className="input input-bordered w-full"
                   value={email}
@@ -519,6 +520,7 @@ export default function ExtUnlockBridge({ nonce, mode }: { nonce: string; mode: 
                     <input
                       id="pv-ext-unlock-password"
                       type="password"
+                      autoComplete="current-password"
                       required
                       className="input input-bordered w-full font-mono"
                       value={password}

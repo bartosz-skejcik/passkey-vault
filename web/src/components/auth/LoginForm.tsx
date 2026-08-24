@@ -123,6 +123,7 @@ export default function LoginForm({
           id="login-email"
           data-testid="login-email"
           type="email"
+          autoComplete="username"
           required
           className="input input-bordered w-full"
           value={email}
@@ -153,6 +154,7 @@ export default function LoginForm({
           id="login-password"
           data-testid="login-password"
           type="password"
+          autoComplete="current-password"
           required
           className="input input-bordered w-full font-mono"
           value={password}
